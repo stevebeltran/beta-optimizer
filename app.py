@@ -9371,7 +9371,7 @@ body{{background:transparent;overflow:hidden}}
             except Exception:
                 pass
 
-            _qr_buf = _io_qr.BytesIO()
+            _qr_buf = io.BytesIO()
             _qr_img.save(_qr_buf, format="PNG")
             import base64 as _b64
             _qr_b64 = _b64.b64encode(_qr_buf.getvalue()).decode()
