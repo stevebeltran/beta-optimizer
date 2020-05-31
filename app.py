@@ -4530,6 +4530,24 @@ def _render_in_app_faq():
     )
 
 
+def _is_call_density_station(station):
+    _raw = re.sub(r"\s+", " ", str((station or {}).get("name") or "").strip())
+    if not _raw:
+        return True
+    if bool(
+        st.session_state.get("allow_generated_station_names", False)
+        or st.session_state.get("show_generated_station_names", False)
+    ):
+        return False
+    _source = str((station or {}).get("source") or "").strip().upper()
+    if _source == "CALL_DENSITY":
+        return True
+    _low = _raw.lower()
+    if _low.startswith("call-density "):
+        return True
+    return False
+
+
 def main():
     _presence_heartbeat_fragment()
     if not st.session_state['csvs_ready']:
@@ -9400,23 +9418,6 @@ body{{background:transparent;overflow:hidden}}
             def _rank_station_role(station_type):
                 _stype = str(station_type or "").upper()
                 return "Guardian" if "GUARD" in _stype else "Responder"
-
-            def _is_call_density_station(station):
-                _raw = re.sub(r"\s+", " ", str((station or {}).get("name") or "").strip())
-                if not _raw:
-                    return True
-                if bool(
-                    st.session_state.get("allow_generated_station_names", False)
-                    or st.session_state.get("show_generated_station_names", False)
-                ):
-                    return False
-                _source = str((station or {}).get("source") or "").strip().upper()
-                if _source == "CALL_DENSITY":
-                    return True
-                _low = _raw.lower()
-                if _low.startswith("call-density "):
-                    return True
-                return False
 
             def _get_visible_station_rows(station_rows):
                 _rows = list(station_rows or [])
