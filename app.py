@@ -474,18 +474,6 @@ if call_data and station_data:
     for name in best_resp_names: st.sidebar.write(f"🚁 {name} (Responder)")
     for name in best_guard_names: st.sidebar.write(f"🦅 {name} (Guardian)")
     
-    # --- TIME SAVINGS METRIC ---
-    if simulate_traffic:
-        avg_drone_speed = 60 # mph
-        avg_ground_speed = 35 * (1 - (traffic_level / 100))
-        if avg_ground_speed > 0:
-            drone_t = (2 / avg_drone_speed) * 60
-            ground_t = ((2 * 1.4) / avg_ground_speed) * 60 
-            time_saved = ground_t - drone_t
-            st.sidebar.info(f"⏱️ **Efficiency Gain:** Drone arrives **{time_saved:.1f} minutes** before ground units on average for a 2-mile call.")
-        else:
-            st.sidebar.info("⏱️ **Efficiency Gain:** Ground units are completely stalled (0 mph).")
-
     # --- UI SELECTION ---
     active_resp_names = ctrl_col2.multiselect("🚁 Active Responders (2-Mile)", options=df_stations_all['name'].tolist(), default=best_resp_names)
     active_guard_names = ctrl_col2.multiselect("🦅 Active Guardians (8-Mile)", options=df_stations_all['name'].tolist(), default=best_guard_names)
@@ -533,11 +521,32 @@ if call_data and station_data:
                 <span style="font-size: 1.3em; background: rgba(0,0,0,0.2); padding: 2px 10px; border-radius: 4px;">{h_label}</span>
             </div>""", unsafe_allow_html=True)
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Incident Points", f"{total_calls:,}")
-    m2.metric("Response Capacity %", f"{calls_covered_perc:.1f}%")
-    m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
-    m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
+    # --- DYNAMIC METRICS CALCULATION ---
+    if simulate_traffic:
+        m1, m2, m3, m4, m5 = st.columns(5)
+        
+        # Calculate Time Savings for the 5th column
+        avg_drone_speed = 60 # mph
+        avg_ground_speed = 35 * (1 - (traffic_level / 100))
+        if avg_ground_speed > 0:
+            drone_t = (2 / avg_drone_speed) * 60
+            ground_t = ((2 * 1.4) / avg_ground_speed) * 60 
+            time_saved = ground_t - drone_t
+            gain_val = f"{time_saved:.1f} min"
+        else:
+            gain_val = "Stalled"
+            
+        m1.metric("Total Incident Points", f"{total_calls:,}")
+        m2.metric("Response Capacity %", f"{calls_covered_perc:.1f}%")
+        m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
+        m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
+        m5.metric("Efficiency Gain (2-mi)", gain_val)
+    else:
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Incident Points", f"{total_calls:,}")
+        m2.metric("Response Capacity %", f"{calls_covered_perc:.1f}%")
+        m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
+        m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
 
     # --- KML EXPORT ---
     kml_data = generate_kml(
@@ -632,7 +641,7 @@ if call_data and station_data:
             hoverinfo='name'
         ))
 
-       # --- NEW TRAFFIC DIAMOND LAYER ---
+        # --- NEW TRAFFIC DIAMOND LAYER ---
         if simulate_traffic:
             ground_speed_mph = 35 * (1 - (traffic_level / 100))
             if ground_speed_mph > 0:
@@ -643,7 +652,7 @@ if call_data and station_data:
                     lat=list(g_lats),
                     lon=list(g_lons),
                     mode='lines',
-                    line=dict(color='red', width=2), # <-- Removed the dash property here
+                    line=dict(color='red', width=2), 
                     fill='toself',
                     fillcolor='rgba(255, 0, 0, 0.1)',
                     name=f"Ground Reach ({drive_time_min} min)",
@@ -683,4 +692,3 @@ if call_data and station_data:
 
 else:
     st.info("👋 Upload CSV data to begin. The map will auto-detect matching jurisdictions from the library.")
-
