@@ -76,7 +76,7 @@ STATION_COLORS = [
 ]
 
 def get_circle_coords(lat, lon, r_mi=2.0):
-    """Generates Lat/Lon coordinates for a circle."""
+    """Generates Lat/Lon coordinates for a circle. Uses a visual approximation suitable for <10 miles."""
     angles = np.linspace(0, 2*np.pi, 100)
     c_lats = lat + (r_mi/69.172) * np.sin(angles)
     c_lons = lon + (r_mi/(69.172 * np.cos(np.radians(lat)))) * np.cos(angles)
@@ -219,6 +219,7 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
         print(f"Clipping warning: {e}")
         calls_in_city = gdf_calls_utm
         
+    # Precise UTM Conversions for distance
     radius_resp_m = 3218.69   # 2 Miles
     radius_guard_m = 12874.75 # 8 Miles
     
@@ -387,6 +388,7 @@ if call_data and station_data:
                     for _ in range(k_responder):
                         best_gain, best_idx = -1, -1
                         for i in range(n):
+                            # Prevents station from hosting both a Guardian and a Responder
                             if i in greedy_r or i in greedy_g: continue
                             gain = np.logical_or(covered_calls, resp_matrix[i]).sum() - covered_calls.sum()
                             if gain > best_gain: best_gain, best_idx = gain, i
