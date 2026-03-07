@@ -1,30 +1,18 @@
-# BRINC COS Drone Deployment Optimizer V2
+# BRINC Drone Deployment Optimizer V2
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import geopandas as gpd
 from shapely.geometry import Point
-from shapely.ops import unary_union
-import shapely.wkt
 import plotly.graph_objects as go
 import simplekml
 import pulp
-import os
 
 st.set_page_config(page_title="BRINC Drone Optimizer V2", layout="wide")
 
-RADIUS_RESP_MI = 2
-RADIUS_GUARD_MI = 8
-
 RESP_METERS = 3218.69
 GUARD_METERS = 12874.75
-
-# -------------------------------
-
-# Utility Functions
-
-# -------------------------------
 
 def get_circle_coords(lat, lon, r_mi=2):
 
@@ -32,6 +20,7 @@ def get_circle_coords(lat, lon, r_mi=2):
 angles = np.linspace(0, 2*np.pi, 120)
 
 c_lats = lat + (r_mi/69.172) * np.sin(angles)
+
 c_lons = lon + (r_mi/(69.172*np.cos(np.radians(lat)))) * np.cos(angles)
 
 return c_lats, c_lons
@@ -45,39 +34,31 @@ kml = simplekml.Kml()
 fol_stations = kml.newfolder(name="Stations")
 fol_coverage = kml.newfolder(name="Coverage")
 
-for i,row in stations.iterrows():
+for i, row in stations.iterrows():
 
     p = fol_stations.newpoint(name=row["name"])
-    p.coords=[(row["lon"],row["lat"])]
+    p.coords = [(row["lon"], row["lat"])]
 
     if i in responders:
-        r=2
-        color=simplekml.Color.blue
-
+        radius = 2
+        color = simplekml.Color.blue
     elif i in guardians:
-        r=8
-        color=simplekml.Color.orange
-
+        radius = 8
+        color = simplekml.Color.orange
     else:
         continue
 
-    lats,lons=get_circle_coords(row["lat"],row["lon"],r)
-    ring=list(zip(lons,lats))
+    lats, lons = get_circle_coords(row["lat"], row["lon"], radius)
+    ring = list(zip(lons, lats))
     ring.append(ring[0])
 
-    poly=fol_coverage.newpolygon(name=row["name"])
-    poly.outerboundaryis=ring
-    poly.style.linestyle.color=color
-    poly.style.polystyle.color=simplekml.Color.changealphaint(60,color)
+    poly = fol_coverage.newpolygon(name=row["name"])
+    poly.outerboundaryis = ring
+    poly.style.linestyle.color = color
+    poly.style.polystyle.color = simplekml.Color.changealphaint(60, color)
 
 return kml.kml()
 ```
-
-# -------------------------------
-
-# Precompute Spatial Engine
-
-# -------------------------------
 
 @st.cache_resource
 def precompute(df_calls, df_stations):
@@ -95,25 +76,19 @@ stations = gpd.GeoDataFrame(
     crs="EPSG:4326"
 ).to_crs(3857)
 
-calls_xy=np.vstack([calls.geometry.x, calls.geometry.y]).T
-stations_xy=np.vstack([stations.geometry.x, stations.geometry.y]).T
+calls_xy = np.vstack([calls.geometry.x, calls.geometry.y]).T
+stations_xy = np.vstack([stations.geometry.x, stations.geometry.y]).T
 
-dx=calls_xy[:,0][:,None]-stations_xy[:,0]
-dy=calls_xy[:,1][:,None]-stations_xy[:,1]
+dx = calls_xy[:, 0][:, None] - stations_xy[:, 0]
+dy = calls_xy[:, 1][:, None] - stations_xy[:, 1]
 
-dist=np.sqrt(dx**2+dy**2)
+dist = np.sqrt(dx**2 + dy**2)
 
-resp_matrix=(dist<=RESP_METERS).T
-guard_matrix=(dist<=GUARD_METERS).T
+resp_matrix = (dist <= RESP_METERS).T
+guard_matrix = (dist <= GUARD_METERS).T
 
-return calls,stations,resp_matrix,guard_matrix
+return resp_matrix, guard_matrix
 ```
-
-# -------------------------------
-
-# MCLP SOLVER
-
-# -------------------------------
 
 def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard):
 
@@ -128,11 +103,11 @@ y = pulp.LpVariable.dicts("call", range(n_calls), 0, 1, pulp.LpBinary)
 
 model += pulp.lpSum(y[i] for i in range(n_calls))
 
-model += pulp.lpSum(x[i] for i in range(n_stations)) <= (num_resp+num_guard)
+model += pulp.lpSum(x[i] for i in range(n_stations)) <= (num_resp + num_guard)
 
 for call in range(n_calls):
 
-    cover=[]
+    cover = []
 
     for s in range(n_stations):
 
@@ -144,21 +119,18 @@ for call in range(n_calls):
 
 model.solve(pulp.PULP_CBC_CMD(msg=0))
 
-selected=[i for i in range(n_stations) if pulp.value(x[i])==1]
+selected = [i for i in range(n_stations) if pulp.value(x[i]) == 1]
 
-return selected
+responders = selected[:num_resp]
+guardians = selected[num_resp:num_resp + num_guard]
+
+return responders, guardians
 ```
 
-# -------------------------------
-
-# MAP
-
-# -------------------------------
-
-def render_map(df_calls, stations, responders, guardians):
+def render_map(df_calls, df_stations, responders, guardians):
 
 ```
-fig=go.Figure()
+fig = go.Figure()
 
 fig.add_trace(go.Scattermapbox(
     lat=df_calls.lat,
@@ -168,16 +140,14 @@ fig.add_trace(go.Scattermapbox(
     name="Calls"
 ))
 
-for i,row in stations.iterrows():
+for i, row in df_stations.iterrows():
 
     if i in responders:
-        color="blue"
-        r=2
-
+        color = "blue"
+        radius = 2
     elif i in guardians:
-        color="orange"
-        r=8
-
+        color = "orange"
+        radius = 8
     else:
         continue
 
@@ -185,68 +155,64 @@ for i,row in stations.iterrows():
         lat=[row.lat],
         lon=[row.lon],
         mode="markers",
-        marker=dict(size=12,color=color),
+        marker=dict(size=12, color=color),
         name=row.name
     ))
 
-    lats,lons=get_circle_coords(row.lat,row.lon,r)
+    lats, lons = get_circle_coords(row.lat, row.lon, radius)
 
     fig.add_trace(go.Scattermapbox(
         lat=lats,
         lon=lons,
         mode="lines",
-        line=dict(width=2,color=color),
+        line=dict(width=2, color=color),
         showlegend=False
     ))
 
 fig.update_layout(
     mapbox_style="open-street-map",
     mapbox_zoom=10,
-    mapbox_center=dict(lat=df_calls.lat.mean(),lon=df_calls.lon.mean()),
+    mapbox_center=dict(lat=df_calls.lat.mean(), lon=df_calls.lon.mean()),
     height=700
 )
 
 return fig
 ```
 
-# -------------------------------
+st.title("Drone Deployment Optimizer V2")
 
-# STREAMLIT UI
-
-# -------------------------------
-
-st.title("🚁 BRINC Drone Deployment Optimizer V2")
-
-calls_file=st.file_uploader("Upload calls.csv")
-stations_file=st.file_uploader("Upload stations.csv")
+calls_file = st.file_uploader("Upload calls.csv")
+stations_file = st.file_uploader("Upload stations.csv")
 
 if calls_file and stations_file:
 
 ```
-df_calls=pd.read_csv(calls_file)
-df_stations=pd.read_csv(stations_file)
+df_calls = pd.read_csv(calls_file)
+df_stations = pd.read_csv(stations_file)
 
 st.success("Files loaded")
 
-num_resp=st.slider("Responder Drones",1,20,3)
-num_guard=st.slider("Guardian Drones",1,20,2)
+num_resp = st.slider("Responder Drones", 1, 20, 3)
+num_guard = st.slider("Guardian Drones", 1, 20, 2)
 
-calls,stations,resp_matrix,guard_matrix=precompute(df_calls,df_stations)
+resp_matrix, guard_matrix = precompute(df_calls, df_stations)
 
 if st.button("Run Optimizer"):
 
-    selected=solve_mclp(resp_matrix,guard_matrix,num_resp,num_guard)
-
-    responders=selected[:num_resp]
-    guardians=selected[num_resp:num_resp+num_guard]
+    responders, guardians = solve_mclp(
+        resp_matrix,
+        guard_matrix,
+        num_resp,
+        num_guard
+    )
 
     st.write("Responder Stations:", responders)
     st.write("Guardian Stations:", guardians)
 
-    fig=render_map(df_calls,df_stations,responders,guardians)
-    st.plotly_chart(fig,use_container_width=True)
+    fig = render_map(df_calls, df_stations, responders, guardians)
+    st.plotly_chart(fig, use_container_width=True)
 
-    kml=generate_kml(df_stations,responders,guardians)
+    kml = generate_kml(df_stations, responders, guardians)
 
     st.download_button(
         "Download Google Earth KML",
