@@ -11,8 +11,8 @@ import itertools
 import glob
 import math
 import simplekml
-from concurrent.futures import ThreadPoolExecutor
-import pulp  # Added PuLP import
+# OPTIMIZATION: Switched to ProcessPoolExecutor to bypass the GIL
+from concurrent.futures import ProcessPoolExecutor
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="brinc COS Drone Optimizer", layout="wide")
@@ -21,23 +21,16 @@ st.set_page_config(page_title="brinc COS Drone Optimizer", layout="wide")
 st.markdown(
     """
     <style>
-    /* 1. Global font size for standard text */
     html, body, [class*="css"]  {
         font-size: 18px !important; 
     }
-
-    /* 2. Change the font size of the Radio Button Options */
     div[role="radiogroup"] label div {
         font-size: 20px !important;
     }
-
-    /* 3. Change the font size of the main Widget Titles */
     .stRadio label p, .stMultiSelect label p {
         font-size: 22px !important;
         font-weight: bold !important;
     }
-
-    /* 4. Change the font size of the Multi-Select box items */
     div[data-baseweb="select"] span {
         font-size: 18px !important;
     }
@@ -140,6 +133,13 @@ def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_na
 
     return kml.kml()
 
+# OPTIMIZATION: Cache the CSV loading so Streamlit doesn't re-read files on every click
+@st.cache_data
+def load_csv_data(call_file, station_file):
+    calls_df = pd.read_csv(call_file).dropna(subset=['lat', 'lon'])
+    stations_df = pd.read_csv(station_file).dropna(subset=['lat', 'lon'])
+    return calls_df, stations_df
+
 # --- INTELLIGENT SCANNER ---
 @st.cache_data
 def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
@@ -215,9 +215,11 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
     gdf_calls = gpd.GeoDataFrame(df_calls, geometry=gpd.points_from_xy(df_calls.lon, df_calls.lat), crs="EPSG:4326")
     gdf_calls_utm = gdf_calls.to_crs(epsg=epsg_code)
     
+    # OPTIMIZATION: Replaced bare except with explicit Exception catching
     try:
         calls_in_city = gdf_calls_utm[gdf_calls_utm.within(city_m)]
-    except:
+    except Exception as e:
+        st.toast(f"Clipping warning: {e}")
         calls_in_city = gdf_calls_utm
         
     radius_resp_m = 3218.69   # 2 Miles
@@ -241,6 +243,7 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
         for i, row in df_stations_all.iterrows():
             s_pt_m = gpd.GeoSeries([Point(row['lon'], row['lat'])], crs="EPSG:4326").to_crs(epsg=epsg_code).iloc[0]
             
+            # Fast vectorized distance math
             dists = np.sqrt((calls_array[:,0] - s_pt_m.x)**2 + (calls_array[:,1] - s_pt_m.y)**2)
             
             resp_matrix[i, :] = dists <= radius_resp_m
@@ -248,11 +251,11 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
 
             full_buf_2m = s_pt_m.buffer(radius_resp_m)
             try: clipped_2m = full_buf_2m.intersection(city_m)
-            except: clipped_2m = full_buf_2m
+            except Exception: clipped_2m = full_buf_2m
 
             full_buf_8m = s_pt_m.buffer(radius_guard_m)
             try: clipped_8m = full_buf_8m.intersection(city_m)
-            except: clipped_8m = full_buf_8m
+            except Exception: clipped_8m = full_buf_8m
                 
             station_metadata.append({
                 'name': row['name'], 'lat': row['lat'], 'lon': row['lon'],
@@ -261,43 +264,6 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
             
     return calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls
 
-# --- PULP EXACT OPTIMIZER ---
-def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard):
-    n_stations, n_calls = resp_matrix.shape
-
-    model = pulp.LpProblem("DroneCoverage", pulp.LpMaximize)
-
-    x_resp = pulp.LpVariable.dicts("resp_station", range(n_stations), 0, 1, pulp.LpBinary)
-    x_guard = pulp.LpVariable.dicts("guard_station", range(n_stations), 0, 1, pulp.LpBinary)
-    y = pulp.LpVariable.dicts("call", range(n_calls), 0, 1, pulp.LpBinary)
-
-    model += pulp.lpSum(y[i] for i in range(n_calls))
-
-    model += pulp.lpSum(x_resp[i] for i in range(n_stations)) <= num_resp
-    model += pulp.lpSum(x_guard[i] for i in range(n_stations)) <= num_guard
-
-    for s in range(n_stations):
-        model += x_resp[s] + x_guard[s] <= 1
-
-    for call in range(n_calls):
-        cover = []
-        for s in range(n_stations):
-            if resp_matrix[s, call]:
-                cover.append(x_resp[s])
-            if guard_matrix[s, call]:
-                cover.append(x_guard[s])
-
-        if cover:
-            model += y[call] <= pulp.lpSum(cover)
-        else:
-            model += y[call] == 0
-
-    model.solve(pulp.PULP_CBC_CMD(msg=0))
-
-    responders = [i for i in range(n_stations) if pulp.value(x_resp[i]) == 1]
-    guardians = [i for i in range(n_stations) if pulp.value(x_guard[i]) == 1]
-
-    return responders, guardians
 
 # --- FILE ROUTING ---
 call_data, station_data = None, None
@@ -314,8 +280,8 @@ if call_data and station_data:
         st.session_state['csvs_ready'] = True
         st.rerun()
 
-    df_calls = pd.read_csv(call_data).dropna(subset=['lat', 'lon'])
-    df_stations_all = pd.read_csv(station_data).dropna(subset=['lat', 'lon'])
+    # OPTIMIZATION: Trigger the cached data loading function
+    df_calls, df_stations_all = load_csv_data(call_data, station_data)
 
     with st.spinner("🌍 Identifying dominant jurisdictions..."):
         master_gdf = find_relevant_jurisdictions(df_calls, df_stations_all, SHAPEFILE_DIR)
@@ -345,7 +311,6 @@ if call_data and station_data:
     active_gdf = master_gdf[master_gdf['DISPLAY_NAME'].isin(selected_names)]
 
     minx, miny, maxx, maxy = active_gdf.to_crs(epsg=4326).total_bounds
-    
     center_lon = (minx + maxx) / 2
     center_lat = (miny + maxy) / 2
     
@@ -393,62 +358,107 @@ if call_data and station_data:
         st.error("⚠️ Over-Deployment: Total requested drones exceed available stations.")
     elif k_responder > 0 or k_guardian > 0:
         
+        station_indices = list(range(n))
+        total_resp_combos = math.comb(n, k_responder)
+        total_guard_combos = math.comb(n - k_responder, k_guardian) if n >= k_responder else 1
+        total_possible = total_resp_combos * total_guard_combos
+        
+        best_score = -1
         best_combo = None
         
-        # --- NEW OPTIMIZATION ROUTING ---
-        if opt_strategy == "Maximize Call Coverage":
-            with st.spinner("🧠 Running exact MCLP Optimizer (PuLP)..."):
-                r_best, g_best = solve_mclp(resp_matrix, guard_matrix, k_responder, k_guardian)
-                best_combo = (tuple(r_best), tuple(g_best))
-        
-        else:
-            # Existing Brute-Force Logic for Land Coverage
-            station_indices = list(range(n))
-            total_resp_combos = math.comb(n, k_responder)
-            total_guard_combos = math.comb(n - k_responder, k_guardian) if n >= k_responder else 1
-            total_possible = total_resp_combos * total_guard_combos
-            
-            best_score = -1
-            
-            def evaluate_combo(rg_combo):
-                r_combo, g_combo = rg_combo
+        def evaluate_combo(rg_combo):
+            r_combo, g_combo = rg_combo
+            if opt_strategy == "Maximize Call Coverage":
+                cov = np.zeros(total_calls, dtype=bool)
+                if r_combo: cov = np.logical_or(cov, resp_matrix[list(r_combo)].any(axis=0))
+                if g_combo: cov = np.logical_or(cov, guard_matrix[list(g_combo)].any(axis=0))
+                score = cov.sum()
+            else:
                 geos = [station_metadata[i]['clipped_2m'] for i in r_combo] + [station_metadata[i]['clipped_8m'] for i in g_combo]
                 score = unary_union(geos).area if geos else 0.0
-                return (score, rg_combo)
+            return (score, rg_combo)
 
-            with st.spinner(f"Optimizing {min(total_possible, 3000)} configurations for area..."):
-                if total_possible > 3000:
-                    st.toast(f"Optimization Mode: Sampling ({total_possible:,} options)")
-                    sampled_combos = []
-                    for _ in range(3000):
-                        chosen = np.random.choice(range(n), k_responder + k_guardian, replace=False)
-                        r_c = tuple(sorted(chosen[:k_responder]))
-                        g_c = tuple(sorted(chosen[k_responder:]))
-                        sampled_combos.append((r_c, g_c))
-                    combos_to_test = list(set(sampled_combos))
-                else:
-                    combos_to_test = []
-                    for r_c in itertools.combinations(station_indices, k_responder):
-                        rem = [x for x in station_indices if x not in r_c]
-                        if k_guardian > 0:
-                            for g_c in itertools.combinations(rem, k_guardian):
-                                combos_to_test.append((r_c, g_c))
-                        else:
-                            combos_to_test.append((r_c, ()))
+        with st.spinner(f"Optimizing..."):
+            
+            # OPTIMIZATION: Greedy Algorithm for Set Cover when combinations are too large
+            if total_possible > 3000:
+                st.toast(f"Switched to Greedy Algorithm mode (Evaluating {total_possible:,} combos is too slow).")
+                
+                greedy_r = []
+                greedy_g = []
+                
+                if opt_strategy == "Maximize Call Coverage":
+                    covered_calls = np.zeros(total_calls, dtype=bool)
+                    
+                    for _ in range(k_responder):
+                        best_gain, best_idx = -1, -1
+                        for i in range(n):
+                            if i in greedy_r or i in greedy_g: continue
+                            gain = np.logical_or(covered_calls, resp_matrix[i]).sum() - covered_calls.sum()
+                            if gain > best_gain: best_gain, best_idx = gain, i
+                        if best_idx != -1:
+                            greedy_r.append(best_idx)
+                            covered_calls = np.logical_or(covered_calls, resp_matrix[best_idx])
+                            
+                    for _ in range(k_guardian):
+                        best_gain, best_idx = -1, -1
+                        for i in range(n):
+                            if i in greedy_r or i in greedy_g: continue
+                            gain = np.logical_or(covered_calls, guard_matrix[i]).sum() - covered_calls.sum()
+                            if gain > best_gain: best_gain, best_idx = gain, i
+                        if best_idx != -1:
+                            greedy_g.append(best_idx)
+                            covered_calls = np.logical_or(covered_calls, guard_matrix[best_idx])
+                            
+                else: # Maximize Land Coverage
+                    current_geom = Polygon()
+                    for _ in range(k_responder):
+                        best_gain, best_idx = -1, -1
+                        for i in range(n):
+                            if i in greedy_r or i in greedy_g: continue
+                            cand = unary_union([current_geom, station_metadata[i]['clipped_2m']])
+                            gain = cand.area - current_geom.area
+                            if gain > best_gain: best_gain, best_idx = gain, i
+                        if best_idx != -1:
+                            greedy_r.append(best_idx)
+                            current_geom = unary_union([current_geom, station_metadata[best_idx]['clipped_2m']])
+                            
+                    for _ in range(k_guardian):
+                        best_gain, best_idx = -1, -1
+                        for i in range(n):
+                            if i in greedy_r or i in greedy_g: continue
+                            cand = unary_union([current_geom, station_metadata[i]['clipped_8m']])
+                            gain = cand.area - current_geom.area
+                            if gain > best_gain: best_gain, best_idx = gain, i
+                        if best_idx != -1:
+                            greedy_g.append(best_idx)
+                            current_geom = unary_union([current_geom, station_metadata[best_idx]['clipped_8m']])
+                
+                best_combo = (tuple(sorted(greedy_r)), tuple(sorted(greedy_g)))
+            
+            else:
+                # OPTIMIZATION: ProcessPoolExecutor for true parallel processing on exact solutions
+                combos_to_test = []
+                for r_c in itertools.combinations(station_indices, k_responder):
+                    rem = [x for x in station_indices if x not in r_c]
+                    if k_guardian > 0:
+                        for g_c in itertools.combinations(rem, k_guardian):
+                            combos_to_test.append((r_c, g_c))
+                    else:
+                        combos_to_test.append((r_c, ()))
 
-                with ThreadPoolExecutor() as executor:
+                with ProcessPoolExecutor() as executor:
                     results = list(executor.map(evaluate_combo, combos_to_test))
                     
                 for score, combo in results:
                     if score > best_score:
                         best_score = score
                         best_combo = combo
-        
-        # --- APPLY BEST COMBO ---
-        if best_combo is not None:
-            r_best, g_best = best_combo
-            best_resp_names = [station_metadata[i]['name'] for i in r_best]
-            best_guard_names = [station_metadata[i]['name'] for i in g_best]
+            
+            if best_combo is not None:
+                r_best, g_best = best_combo
+                best_resp_names = [station_metadata[i]['name'] for i in r_best]
+                best_guard_names = [station_metadata[i]['name'] for i in g_best]
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("🏆 Recommended Deployment")
@@ -509,13 +519,7 @@ if call_data and station_data:
     m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
 
     # --- KML EXPORT ---
-    kml_data = generate_kml(
-        active_gdf, 
-        df_stations_all, 
-        active_resp_names,
-        active_guard_names,
-        calls_in_city
-    )
+    kml_data = generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_names, calls_in_city)
     
     st.sidebar.markdown("---")
     st.sidebar.download_button(
@@ -531,25 +535,46 @@ if call_data and station_data:
     def calculate_zoom(min_lon, max_lon, min_lat, max_lat):
         lon_diff = max_lon - min_lon
         lat_diff = max_lat - min_lat
-        
-        if lon_diff <= 0 or lat_diff <= 0:
-            return 12
-            
+        if lon_diff <= 0 or lat_diff <= 0: return 12
         zoom_lon = np.log2(360 / lon_diff)
         zoom_lat = np.log2(180 / lat_diff)
-        
         best_zoom = min(zoom_lon, zoom_lat) + 1.6
         return min(max(best_zoom, 5), 18)
 
+    dynamic_zoom = calculate_zoom(minx, maxx, miny, maxy)
+
+    mapbox_config = dict(
+        center=dict(lat=center_lat, lon=center_lon),
+        zoom=dynamic_zoom,
+        style="open-street-map"
+    )
+
+    if show_satellite:
+        mapbox_config["style"] = "carto-positron"
+        mapbox_config["layers"] = [
+            {
+                "below": 'traces',
+                "sourcetype": "raster",
+                "sourceattribution": "Esri, Maxar, Earthstar Geographics",
+                "source": ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"]
+            }
+        ]
+
+    # OPTIMIZATION: Render jurisdiction boundary as GeoJSON natively via Mapbox instead of a Scattermapbox trace loop
     if show_boundaries:
         if city_boundary_geom is not None and not city_boundary_geom.is_empty:
-            if isinstance(city_boundary_geom, Polygon):
-                bx, by = city_boundary_geom.exterior.coords.xy
-                fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color="#222", width=3), name="Jurisdiction Boundary", hoverinfo='skip'))
-            elif isinstance(city_boundary_geom, MultiPolygon):
-                for poly in city_boundary_geom.geoms:
-                    bx, by = poly.exterior.coords.xy
-                    fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color="#222", width=3), name="Jurisdiction Boundary", hoverinfo='skip', showlegend=False))
+            geojson_boundary = gpd.GeoSeries([city_boundary_geom]).__geo_interface__
+            
+            if "layers" not in mapbox_config:
+                mapbox_config["layers"] = []
+                
+            mapbox_config["layers"].append({
+                "sourcetype": "geojson",
+                "source": geojson_boundary,
+                "type": "line",
+                "color": "#222222",
+                "line": {"width": 3}
+            })
 
     if show_heatmap and not display_calls.empty:
         fig.add_trace(go.Densitymapbox(
@@ -598,27 +623,6 @@ if call_data and station_data:
             name=lbl, 
             hoverinfo='name'
         ))
-
-    dynamic_zoom = calculate_zoom(minx, maxx, miny, maxy)
-
-    mapbox_config = dict(
-        center=dict(lat=center_lat, lon=center_lon),
-        zoom=dynamic_zoom,
-        style="open-street-map"
-    )
-    
-    if show_satellite:
-        mapbox_config["style"] = "carto-positron"
-        mapbox_config["layers"] = [
-            {
-                "below": 'traces',
-                "sourcetype": "raster",
-                "sourceattribution": "Esri, Maxar, Earthstar Geographics",
-                "source": [
-                    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                ]
-            }
-        ]
 
     fig.update_layout(
         uirevision="LOCKED_MAP",
