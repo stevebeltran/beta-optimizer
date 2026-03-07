@@ -521,16 +521,29 @@ if call_data and station_data:
                 <span style="font-size: 1.3em; background: rgba(0,0,0,0.2); padding: 2px 10px; border-radius: 4px;">{h_label}</span>
             </div>""", unsafe_allow_html=True)
 
-    # --- DYNAMIC METRICS CALCULATION (WITH CORRECT 42 MPH DRONE SPEED) ---
+    # --- DYNAMIC METRICS CALCULATION (ADAPTIVE FOR DRONE TYPE) ---
     if simulate_traffic:
         m1, m2, m3, m4, m5 = st.columns(5)
         
-        # Calculate Time Savings for a 2-mile Responder call
-        responder_speed = 42 # mph
+        # Adapt the math based on which drones are actually deployed
+        if len(active_guard_names) > 0:
+            # If ANY Guardian is deployed, default to the 8-mile response @ 60 MPH
+            eval_dist = 8.0
+            eval_speed = 60.0
+            gain_label = "Efficiency Gain (8-mi)"
+        else:
+            # Only Responders deployed
+            eval_dist = 2.0
+            eval_speed = 42.0
+            gain_label = "Efficiency Gain (2-mi)"
+
         avg_ground_speed = 35 * (1 - (traffic_level / 100))
-        if avg_ground_speed > 0:
-            drone_t = (2 / responder_speed) * 60 # 2 miles @ 42 MPH
-            ground_t = ((2 * 1.4) / avg_ground_speed) * 60 
+        
+        if len(active_resp_names) == 0 and len(active_guard_names) == 0:
+            gain_val = "N/A"
+        elif avg_ground_speed > 0:
+            drone_t = (eval_dist / eval_speed) * 60 
+            ground_t = ((eval_dist * 1.4) / avg_ground_speed) * 60 
             time_saved = ground_t - drone_t
             gain_val = f"{time_saved:.1f} min"
         else:
@@ -540,7 +553,7 @@ if call_data and station_data:
         m2.metric("Response Capacity %", f"{calls_covered_perc:.1f}%")
         m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
         m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
-        m5.metric("Efficiency Gain (2-mi)", gain_val)
+        m5.metric(gain_label, gain_val)
     else:
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Incident Points", f"{total_calls:,}")
