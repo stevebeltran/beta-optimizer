@@ -1,200 +1,256 @@
-# Save this as: brinc_drone_optimizer.py
+# BRINC COS Drone Deployment Optimizer V2
 
 import streamlit as st
 import pandas as pd
-import geopandas as gpd
 import numpy as np
-import plotly.graph_objects as go
-from shapely.geometry import Point, Polygon, MultiPolygon
-import shapely.wkt
+import geopandas as gpd
+from shapely.geometry import Point
 from shapely.ops import unary_union
-import os
-import itertools
-import glob
-import math
+import shapely.wkt
+import plotly.graph_objects as go
 import simplekml
-from concurrent.futures import ThreadPoolExecutor
+import pulp
+import os
 
-st.set_page_config(page_title="brinc COS Drone Optimizer", layout="wide")
+st.set_page_config(page_title="BRINC Drone Optimizer V2", layout="wide")
 
-SHAPEFILE_DIR = "jurisdiction_data"
-os.makedirs(SHAPEFILE_DIR, exist_ok=True)
+RADIUS_RESP_MI = 2
+RADIUS_GUARD_MI = 8
 
-STATION_COLORS = [
-"#E6194B","#3CB44B","#4363D8","#F58231","#911EB4",
-"#800000","#333333","#000075","#808000","#9A6324"
-]
+RESP_METERS = 3218.69
+GUARD_METERS = 12874.75
 
-def get_circle_coords(lat, lon, r_mi=2.0):
-angles = np.linspace(0,2*np.pi,100)
-c_lats = lat + (r_mi/69.172)*np.sin(angles)
-c_lons = lon + (r_mi/(69.172*np.cos(np.radians(lat))))*np.cos(angles)
-return c_lats,c_lons
+# -------------------------------
 
-def generate_kml(active_gdf,df_stations_all,resp_names,guard_names,calls_gdf):
+# Utility Functions
+
+# -------------------------------
+
+def get_circle_coords(lat, lon, r_mi=2):
+
+```
+angles = np.linspace(0, 2*np.pi, 120)
+
+c_lats = lat + (r_mi/69.172) * np.sin(angles)
+c_lons = lon + (r_mi/(69.172*np.cos(np.radians(lat)))) * np.cos(angles)
+
+return c_lats, c_lons
+```
+
+def generate_kml(stations, responders, guardians):
 
 ```
 kml = simplekml.Kml()
 
-fol_bounds = kml.newfolder(name="Jurisdictions")
+fol_stations = kml.newfolder(name="Stations")
+fol_coverage = kml.newfolder(name="Coverage")
 
-for _,row in active_gdf.iterrows():
+for i,row in stations.iterrows():
 
-    geom = row.geometry
+    p = fol_stations.newpoint(name=row["name"])
+    p.coords=[(row["lon"],row["lat"])]
 
-    if isinstance(geom,Polygon):
-        geoms=[geom]
+    if i in responders:
+        r=2
+        color=simplekml.Color.blue
 
-    elif isinstance(geom,MultiPolygon):
-        geoms=list(geom.geoms)
+    elif i in guardians:
+        r=8
+        color=simplekml.Color.orange
 
     else:
         continue
 
-    for g in geoms:
-
-        pol=fol_bounds.newpolygon(name=row.get('DISPLAY_NAME','Boundary'))
-        pol.outerboundaryis=list(g.exterior.coords)
-
-        pol.style.linestyle.color=simplekml.Color.red
-        pol.style.linestyle.width=3
-        pol.style.polystyle.color=simplekml.Color.changealphaint(30,simplekml.Color.red)
-
-fol_stations=kml.newfolder(name="Stations")
-fol_rings=kml.newfolder(name="Coverage")
-
-def add_station(row,radius,color,label):
-
-    p=fol_stations.newpoint(name=f"{label} {row['name']}")
-    p.coords=[(row['lon'],row['lat'])]
-
-    lats,lons=get_circle_coords(row['lat'],row['lon'],radius)
+    lats,lons=get_circle_coords(row["lat"],row["lon"],r)
     ring=list(zip(lons,lats))
     ring.append(ring[0])
 
-    poly=fol_rings.newpolygon(name=row['name'])
+    poly=fol_coverage.newpolygon(name=row["name"])
     poly.outerboundaryis=ring
     poly.style.linestyle.color=color
     poly.style.polystyle.color=simplekml.Color.changealphaint(60,color)
 
-for _,row in df_stations_all[df_stations_all.name.isin(resp_names)].iterrows():
-    add_station(row,2.0,simplekml.Color.blue,"Responder")
-
-for _,row in df_stations_all[df_stations_all.name.isin(guard_names)].iterrows():
-    add_station(row,8.0,simplekml.Color.orange,"Guardian")
-
 return kml.kml()
 ```
 
+# -------------------------------
+
+# Precompute Spatial Engine
+
+# -------------------------------
+
 @st.cache_resource
-def precompute_spatial_data(df_calls,df_stations_all,city_wkt,epsg):
+def precompute(df_calls, df_stations):
 
 ```
-city=shapely.wkt.loads(city_wkt)
-
-gdf_calls=gpd.GeoDataFrame(
+calls = gpd.GeoDataFrame(
     df_calls,
-    geometry=gpd.points_from_xy(df_calls.lon,df_calls.lat),
+    geometry=gpd.points_from_xy(df_calls.lon, df_calls.lat),
     crs="EPSG:4326"
-)
+).to_crs(3857)
 
-gdf_calls=gdf_calls.to_crs(epsg)
-
-calls_in_city=gdf_calls[gdf_calls.within(city)]
-
-total_calls=len(calls_in_city)
-
-radius_resp=3218.69
-radius_guard=12874.75
-
-stations=gpd.GeoDataFrame(
-    df_stations_all,
-    geometry=gpd.points_from_xy(df_stations_all.lon,df_stations_all.lat),
+stations = gpd.GeoDataFrame(
+    df_stations,
+    geometry=gpd.points_from_xy(df_stations.lon, df_stations.lat),
     crs="EPSG:4326"
-).to_crs(epsg)
+).to_crs(3857)
 
-calls_xy=np.array(list(zip(calls_in_city.geometry.x,calls_in_city.geometry.y)))
-stations_xy=np.array(list(zip(stations.geometry.x,stations.geometry.y)))
+calls_xy=np.vstack([calls.geometry.x, calls.geometry.y]).T
+stations_xy=np.vstack([stations.geometry.x, stations.geometry.y]).T
 
 dx=calls_xy[:,0][:,None]-stations_xy[:,0]
 dy=calls_xy[:,1][:,None]-stations_xy[:,1]
 
-dists=np.sqrt(dx**2+dy**2)
+dist=np.sqrt(dx**2+dy**2)
 
-resp_matrix=(dists<=radius_resp).T
-guard_matrix=(dists<=radius_guard).T
+resp_matrix=(dist<=RESP_METERS).T
+guard_matrix=(dist<=GUARD_METERS).T
 
-station_metadata=[]
+return calls,stations,resp_matrix,guard_matrix
+```
+
+# -------------------------------
+
+# MCLP SOLVER
+
+# -------------------------------
+
+def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard):
+
+```
+n_stations = resp_matrix.shape[0]
+n_calls = resp_matrix.shape[1]
+
+model = pulp.LpProblem("DroneCoverage", pulp.LpMaximize)
+
+x = pulp.LpVariable.dicts("station", range(n_stations), 0, 1, pulp.LpBinary)
+y = pulp.LpVariable.dicts("call", range(n_calls), 0, 1, pulp.LpBinary)
+
+model += pulp.lpSum(y[i] for i in range(n_calls))
+
+model += pulp.lpSum(x[i] for i in range(n_stations)) <= (num_resp+num_guard)
+
+for call in range(n_calls):
+
+    cover=[]
+
+    for s in range(n_stations):
+
+        if resp_matrix[s][call] or guard_matrix[s][call]:
+            cover.append(x[s])
+
+    if cover:
+        model += y[call] <= pulp.lpSum(cover)
+
+model.solve(pulp.PULP_CBC_CMD(msg=0))
+
+selected=[i for i in range(n_stations) if pulp.value(x[i])==1]
+
+return selected
+```
+
+# -------------------------------
+
+# MAP
+
+# -------------------------------
+
+def render_map(df_calls, stations, responders, guardians):
+
+```
+fig=go.Figure()
+
+fig.add_trace(go.Scattermapbox(
+    lat=df_calls.lat,
+    lon=df_calls.lon,
+    mode="markers",
+    marker=dict(size=4),
+    name="Calls"
+))
 
 for i,row in stations.iterrows():
 
-    pt=row.geometry
+    if i in responders:
+        color="blue"
+        r=2
 
-    buf2=pt.buffer(radius_resp)
-    buf8=pt.buffer(radius_guard)
+    elif i in guardians:
+        color="orange"
+        r=8
 
-    try:
-        buf2=buf2.intersection(city)
-        buf8=buf8.intersection(city)
-    except:
-        pass
+    else:
+        continue
 
-    station_metadata.append({
-        "name":row["name"],
-        "lat":df_stations_all.iloc[i].lat,
-        "lon":df_stations_all.iloc[i].lon,
-        "clipped_2m":buf2,
-        "clipped_8m":buf8
-    })
+    fig.add_trace(go.Scattermapbox(
+        lat=[row.lat],
+        lon=[row.lon],
+        mode="markers",
+        marker=dict(size=12,color=color),
+        name=row.name
+    ))
 
-display_calls=calls_in_city.sample(min(5000,total_calls)).to_crs(4326)
+    lats,lons=get_circle_coords(row.lat,row.lon,r)
 
-return calls_in_city,display_calls,resp_matrix,guard_matrix,station_metadata,total_calls
+    fig.add_trace(go.Scattermapbox(
+        lat=lats,
+        lon=lons,
+        mode="lines",
+        line=dict(width=2,color=color),
+        showlegend=False
+    ))
+
+fig.update_layout(
+    mapbox_style="open-street-map",
+    mapbox_zoom=10,
+    mapbox_center=dict(lat=df_calls.lat.mean(),lon=df_calls.lon.mean()),
+    height=700
+)
+
+return fig
 ```
 
-def compute_overlap(active_geos,city):
+# -------------------------------
+
+# STREAMLIT UI
+
+# -------------------------------
+
+st.title("🚁 BRINC Drone Deployment Optimizer V2")
+
+calls_file=st.file_uploader("Upload calls.csv")
+stations_file=st.file_uploader("Upload stations.csv")
+
+if calls_file and stations_file:
 
 ```
-if not active_geos:
-    return 0
+df_calls=pd.read_csv(calls_file)
+df_stations=pd.read_csv(stations_file)
 
-union=unary_union(active_geos)
+st.success("Files loaded")
 
-sum_area=sum(g.area for g in active_geos)
+num_resp=st.slider("Responder Drones",1,20,3)
+num_guard=st.slider("Guardian Drones",1,20,2)
 
-overlap=sum_area-union.area
+calls,stations,resp_matrix,guard_matrix=precompute(df_calls,df_stations)
 
-return (overlap/city.area)*100
-```
+if st.button("Run Optimizer"):
 
-st.title("🛰️ BRINC COS Drone Optimizer")
+    selected=solve_mclp(resp_matrix,guard_matrix,num_resp,num_guard)
 
-uploaded=st.file_uploader("Upload calls.csv and stations.csv",accept_multiple_files=True)
+    responders=selected[:num_resp]
+    guardians=selected[num_resp:num_resp+num_guard]
 
-if uploaded:
+    st.write("Responder Stations:", responders)
+    st.write("Guardian Stations:", guardians)
 
-```
-call_file=None
-station_file=None
+    fig=render_map(df_calls,df_stations,responders,guardians)
+    st.plotly_chart(fig,use_container_width=True)
 
-for f in uploaded:
-    if f.name.lower()=="calls.csv":
-        call_file=f
-    if f.name.lower()=="stations.csv":
-        station_file=f
+    kml=generate_kml(df_stations,responders,guardians)
 
-if call_file and station_file:
-
-    df_calls=pd.read_csv(call_file)
-    df_stations=pd.read_csv(station_file)
-
-    if not {"lat","lon"}.issubset(df_calls.columns):
-        st.error("calls.csv must contain lat, lon")
-        st.stop()
-
-    if not {"lat","lon","name"}.issubset(df_stations.columns):
-        st.error("stations.csv must contain name, lat, lon")
-        st.stop()
-
-    st.success("Files loaded successfully.")
+    st.download_button(
+        "Download Google Earth KML",
+        kml,
+        "drone_coverage.kml"
+    )
 ```
