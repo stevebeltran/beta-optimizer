@@ -632,7 +632,7 @@ if call_data and station_data:
             hoverinfo='name'
         ))
 
-        # --- NEW TRAFFIC DIAMOND LAYER ---
+       # --- NEW TRAFFIC DIAMOND LAYER ---
         if simulate_traffic:
             ground_speed_mph = 35 * (1 - (traffic_level / 100))
             if ground_speed_mph > 0:
@@ -643,7 +643,7 @@ if call_data and station_data:
                     lat=list(g_lats),
                     lon=list(g_lons),
                     mode='lines',
-                    line=dict(color='red', width=2, dash='dash'),
+                    line=dict(color='red', width=2), # <-- Removed the dash property here
                     fill='toself',
                     fillcolor='rgba(255, 0, 0, 0.1)',
                     name=f"Ground Reach ({drive_time_min} min)",
@@ -683,3 +683,4 @@ if call_data and station_data:
 
 else:
     st.info("👋 Upload CSV data to begin. The map will auto-detect matching jurisdictions from the library.")
+
