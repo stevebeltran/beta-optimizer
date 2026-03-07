@@ -91,13 +91,6 @@ def get_circle_coords(lat, lon, r_mi=2.0):
     c_lons = lon + (r_mi/(69.172 * np.cos(np.radians(lat)))) * np.cos(angles)
     return c_lats, c_lons
 
-def get_diamond_coords(lat, lon, r_mi=2.0):
-    """Generates diamond coordinates to simulate grid-based ground travel."""
-    angles = np.array([0, np.pi/2, np.pi, 3*np.pi/2, 0])
-    g_lats = lat + (r_mi/69.172) * np.sin(angles)
-    g_lons = lon + (r_mi/(69.172 * np.cos(np.radians(lat)))) * np.cos(angles)
-    return g_lats, g_lons
-
 # --- KML EXPORT FUNCTION ---
 def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_names, calls_gdf):
     kml = simplekml.Kml()
@@ -654,21 +647,40 @@ if call_data and station_data:
             hoverinfo='name'
         ))
 
-        # --- NEW TRAFFIC DIAMOND LAYER ---
+        # --- DYNAMIC TRAFFIC ACCESSIBILITY ZONE ---
         if simulate_traffic:
+            # Shift colors based on the slider intensity
+            if traffic_level < 35:
+                t_color = "#28a745" # Green
+                t_fill = "rgba(40, 167, 69, 0.15)"
+                t_label = "Light Traffic"
+            elif traffic_level < 75:
+                t_color = "#ffc107" # Yellow
+                t_fill = "rgba(255, 193, 7, 0.15)"
+                t_label = "Moderate Traffic"
+            else:
+                t_color = "#dc3545" # Red
+                t_fill = "rgba(220, 53, 69, 0.15)"
+                t_label = "Heavy Traffic"
+
             ground_speed_mph = 35 * (1 - (traffic_level / 100))
+            
             if ground_speed_mph > 0:
                 ground_range_mi = (ground_speed_mph / 60) * drive_time_min
-                g_lats, g_lons = get_diamond_coords(row['lat'], row['lon'], r_mi=ground_range_mi)
+                
+                # Use a smoother Octagon instead of the rigid diamond/square
+                g_angles = np.linspace(0, 2*np.pi, 9) 
+                g_lats = row['lat'] + (ground_range_mi/69.172) * np.sin(g_angles)
+                g_lons = row['lon'] + (ground_range_mi/(69.172 * np.cos(np.radians(row['lat'])))) * np.cos(g_angles)
 
                 fig.add_trace(go.Scattermapbox(
                     lat=list(g_lats),
                     lon=list(g_lons),
                     mode='lines',
-                    line=dict(color='red', width=2), 
+                    line=dict(color=t_color, width=2.5), 
                     fill='toself',
-                    fillcolor='rgba(255, 0, 0, 0.1)',
-                    name=f"Ground Reach ({drive_time_min:.1f} min)",
+                    fillcolor=t_fill,
+                    name=f"Ground Reach ({t_label})",
                     hoverinfo='skip'
                 ))
 
