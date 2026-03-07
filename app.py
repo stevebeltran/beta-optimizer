@@ -473,7 +473,7 @@ if call_data and station_data:
     st.sidebar.subheader("🏆 Recommended Deployment")
     for name in best_resp_names: st.sidebar.write(f"🚁 {name} (Responder)")
     for name in best_guard_names: st.sidebar.write(f"🦅 {name} (Guardian)")
-    
+
     # --- UI SELECTION ---
     active_resp_names = ctrl_col2.multiselect("🚁 Active Responders (2-Mile)", options=df_stations_all['name'].tolist(), default=best_resp_names)
     active_guard_names = ctrl_col2.multiselect("🦅 Active Guardians (8-Mile)", options=df_stations_all['name'].tolist(), default=best_guard_names)
@@ -521,15 +521,15 @@ if call_data and station_data:
                 <span style="font-size: 1.3em; background: rgba(0,0,0,0.2); padding: 2px 10px; border-radius: 4px;">{h_label}</span>
             </div>""", unsafe_allow_html=True)
 
-    # --- DYNAMIC METRICS CALCULATION ---
+    # --- DYNAMIC METRICS CALCULATION (WITH CORRECT 42 MPH DRONE SPEED) ---
     if simulate_traffic:
         m1, m2, m3, m4, m5 = st.columns(5)
         
-        # Calculate Time Savings for the 5th column
-        avg_drone_speed = 60 # mph
+        # Calculate Time Savings for a 2-mile Responder call
+        responder_speed = 42 # mph
         avg_ground_speed = 35 * (1 - (traffic_level / 100))
         if avg_ground_speed > 0:
-            drone_t = (2 / avg_drone_speed) * 60
+            drone_t = (2 / responder_speed) * 60 # 2 miles @ 42 MPH
             ground_t = ((2 * 1.4) / avg_ground_speed) * 60 
             time_saved = ground_t - drone_t
             gain_val = f"{time_saved:.1f} min"
@@ -621,11 +621,11 @@ if call_data and station_data:
         if s_name in active_resp_names:
             clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=2.0)
             lbl = f"{s_name} (Responder)"
-            drive_time_min = 2
+            drive_time_min = (2.0 / 42.0) * 60 # 2 miles @ 42 MPH
         elif s_name in active_guard_names:
             clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=8.0)
             lbl = f"{s_name} (Guardian)"
-            drive_time_min = 8
+            drive_time_min = (8.0 / 60.0) * 60 # 8 miles @ 60 MPH
         else:
             continue
 
@@ -655,7 +655,7 @@ if call_data and station_data:
                     line=dict(color='red', width=2), 
                     fill='toself',
                     fillcolor='rgba(255, 0, 0, 0.1)',
-                    name=f"Ground Reach ({drive_time_min} min)",
+                    name=f"Ground Reach ({drive_time_min:.1f} min)",
                     hoverinfo='skip'
                 ))
 
