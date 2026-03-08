@@ -403,86 +403,10 @@ if call_data and station_data:
     simulate_traffic = st.sidebar.toggle("Show Ground Response Gap", value=False)
     traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
 
-    # ==========================================
-    # --- BUDGET IMPACT MODULE INJECTION ---
-    # ==========================================
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("💰 Budget Impact")
-    
-    # Infer daily calls by assuming the dataset is a year of data. Default to at least 1.
-    inferred_daily_calls = max(1, int(total_calls / 365)) if total_calls > 0 else 20
-    max_slider_val = max(100, inferred_daily_calls * 3) # Make sure slider has enough headroom
-    
-    calls_per_day = st.sidebar.slider("ESTIMATED DAILY CALLS", min_value=1, max_value=max_slider_val, value=inferred_daily_calls)
-    
-    # NEW: Deflection rate slider (defaults to 30%)
-    deflection_rate = st.sidebar.slider("DRONE-ONLY RESOLUTION (%)", min_value=0, max_value=100, value=30) / 100.0
-    
-    cost_officer = 82
-    cost_drone = 6
-    savings_per_call = cost_officer - cost_drone
-    
-    # Calculate Dynamic Capex based on slider values
-    capex_responder_total = k_responder * 80000
-    capex_guardian_total = k_guardian * 160000
-    fleet_capex = capex_responder_total + capex_guardian_total
-    
-    # Only render financials if at least one drone is selected
-    if fleet_capex > 0:
-        # Apply the 30% ratio (or whatever is selected) to the daily calls
-        daily_drone_only_calls = calls_per_day * deflection_rate
-        annual_savings = savings_per_call * daily_drone_only_calls * 365
-        
-        # Avoid division by zero if the user drops the resolution slider to 0%
-        if daily_drone_only_calls > 0:
-            fleet_break_even_months = fleet_capex / (savings_per_call * daily_drone_only_calls * 30.4)
-            break_even_text = f"{fleet_break_even_months:.1f} MONTHS"
-        else:
-            break_even_text = "N/A (0% RESOLUTION)"
-        
-        # High-visibility overall savings & Fleet metrics
-        st.sidebar.markdown(f"""
-        <div style="background: rgba(0, 255, 0, 0.05); border: 1px solid #00ff00; padding: 15px; border-radius: 4px; text-align: center; margin-bottom: 15px; box-shadow: 0px 0px 10px rgba(0, 255, 0, 0.1);">
-            <h6 style="color: #888; margin: 0; font-size: 0.8rem; letter-spacing: 1px;">ANNUAL TAXPAYER SAVINGS</h6>
-            <h2 style="color: #00ff00; margin: 0; font-family: 'Consolas', monospace; text-shadow: 0 0 10px rgba(0,255,0,0.5);">${annual_savings:,.0f}</h2>
-            <hr style="border-color: #00ff00; opacity: 0.3; margin: 10px 0;">
-            <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
-                <span style="color: #888;">FLEET CAPEX:</span>
-                <span style="color: #fff; font-weight: bold;">${fleet_capex:,.0f}</span>
-            </div>
-            <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
-                <span style="color: #888;">BREAK-EVEN:</span>
-                <span style="color: #00ff00; font-weight: bold;">{break_even_text}</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Responder Sub-Block (Only show if count > 0)
-        if k_responder > 0:
-            st.sidebar.markdown(f"""
-            <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
-                <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">RESPONDER <span style="color:#fff; font-size:0.9rem;">(x{k_responder})</span></h5>
-                <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">2 MI RADIUS</span></div>
-                <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$80,000</span></div>
-                <div style="color: #888; font-size: 0.85rem;">SUBTOTAL: <span style="color:#00ffff; font-weight:bold;">${capex_responder_total:,.0f}</span></div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-        # Guardian Sub-Block (Only show if count > 0)
-        if k_guardian > 0:
-            st.sidebar.markdown(f"""
-            <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
-                <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">GUARDIAN <span style="color:#fff; font-size:0.9rem;">(x{k_guardian})</span></h5>
-                <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">8 MI RADIUS</span></div>
-                <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$160,000</span></div>
-                <div style="color: #888; font-size: 0.85rem;">SUBTOTAL: <span style="color:#00ffff; font-weight:bold;">${capex_guardian_total:,.0f}</span></div>
-            </div>
-            """, unsafe_allow_html=True)
-
-    else:
-        # Prompt the user if they drop all sliders to 0
-        st.sidebar.info("🚁 Select at least one drone above to calculate budget impact.")
-    # ==========================================
+    # --- BUDGET IMPACT PLACEHOLDER ---
+    # We reserve the space here in the sidebar, but fill it later 
+    # once 'calls_covered_perc' has been calculated!
+    budget_placeholder = st.sidebar.container()
 
     best_resp_names, best_guard_names = [], []
     
@@ -579,6 +503,85 @@ if call_data and station_data:
                 if not over.is_empty: inters.append(over)
         if not city_m.is_empty:
             overlap_perc = (unary_union(inters).area / city_m.area * 100) if inters else 0.0
+
+    # ==========================================
+    # --- BUDGET IMPACT MODULE (INJECTED TO SIDEBAR) ---
+    # ==========================================
+    with budget_placeholder:
+        st.markdown("---")
+        st.subheader("💰 Budget Impact")
+        
+        # Infer daily calls by assuming the dataset is a year of data. Default to at least 1.
+        inferred_daily_calls = max(1, int(total_calls / 365)) if total_calls > 0 else 20
+        max_slider_val = max(100, inferred_daily_calls * 3) 
+        
+        calls_per_day = st.slider("TOTAL DAILY CALLS (CITYWIDE)", min_value=1, max_value=max_slider_val, value=inferred_daily_calls)
+        deflection_rate = st.slider("DRONE-ONLY RESOLUTION (%)", min_value=0, max_value=100, value=30) / 100.0
+        
+        cost_officer = 82
+        cost_drone = 6
+        savings_per_call = cost_officer - cost_drone
+        
+        capex_responder_total = k_responder * 80000
+        capex_guardian_total = k_guardian * 160000
+        fleet_capex = capex_responder_total + capex_guardian_total
+        
+        if fleet_capex > 0:
+            # ONLY apply savings to calls that actually fall inside the drone coverage rings
+            effective_coverage_rate = calls_covered_perc / 100.0
+            covered_daily_calls = calls_per_day * effective_coverage_rate
+            daily_drone_only_calls = covered_daily_calls * deflection_rate
+            
+            annual_savings = savings_per_call * daily_drone_only_calls * 365
+            
+            if daily_drone_only_calls > 0:
+                fleet_break_even_months = fleet_capex / (savings_per_call * daily_drone_only_calls * 30.4)
+                break_even_text = f"{fleet_break_even_months:.1f} MONTHS"
+            else:
+                break_even_text = "N/A (NO CALLS COVERED)"
+            
+            st.markdown(f"""
+            <div style="background: rgba(0, 255, 0, 0.05); border: 1px solid #00ff00; padding: 15px; border-radius: 4px; text-align: center; margin-bottom: 15px; box-shadow: 0px 0px 10px rgba(0, 255, 0, 0.1);">
+                <h6 style="color: #888; margin: 0; font-size: 0.8rem; letter-spacing: 1px;">ANNUAL TAXPAYER SAVINGS</h6>
+                <h2 style="color: #00ff00; margin: 0; font-family: 'Consolas', monospace; text-shadow: 0 0 10px rgba(0,255,0,0.5);">${annual_savings:,.0f}</h2>
+                <hr style="border-color: #00ff00; opacity: 0.3; margin: 10px 0;">
+                <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
+                    <span style="color: #888;">ACTIVE COVERAGE:</span>
+                    <span style="color: #fff; font-weight: bold;">{calls_covered_perc:.1f}%</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
+                    <span style="color: #888;">FLEET CAPEX:</span>
+                    <span style="color: #fff; font-weight: bold;">${fleet_capex:,.0f}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
+                    <span style="color: #888;">BREAK-EVEN:</span>
+                    <span style="color: #00ff00; font-weight: bold;">{break_even_text}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if k_responder > 0:
+                st.markdown(f"""
+                <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
+                    <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">RESPONDER <span style="color:#fff; font-size:0.9rem;">(x{k_responder})</span></h5>
+                    <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">2 MI RADIUS</span></div>
+                    <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$80,000</span></div>
+                    <div style="color: #888; font-size: 0.85rem;">SUBTOTAL: <span style="color:#00ffff; font-weight:bold;">${capex_responder_total:,.0f}</span></div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            if k_guardian > 0:
+                st.markdown(f"""
+                <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
+                    <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">GUARDIAN <span style="color:#fff; font-size:0.9rem;">(x{k_guardian})</span></h5>
+                    <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">8 MI RADIUS</span></div>
+                    <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$160,000</span></div>
+                    <div style="color: #888; font-size: 0.85rem;">SUBTOTAL: <span style="color:#00ffff; font-weight:bold;">${capex_guardian_total:,.0f}</span></div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("🚁 Select at least one drone above to calculate budget impact.")
+    # ==========================================
 
     st.markdown("---")
     if show_health:
