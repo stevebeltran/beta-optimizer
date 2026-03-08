@@ -404,8 +404,6 @@ if call_data and station_data:
     traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
 
     # --- BUDGET IMPACT PLACEHOLDER ---
-    # We reserve the space here in the sidebar, but fill it later 
-    # once 'calls_covered_perc' has been calculated!
     budget_placeholder = st.sidebar.container()
 
     best_resp_names, best_guard_names = [], []
@@ -511,7 +509,6 @@ if call_data and station_data:
         st.markdown("---")
         st.subheader("💰 Budget Impact")
         
-        # Infer daily calls by assuming the dataset is a year of data. Default to at least 1.
         inferred_daily_calls = max(1, int(total_calls / 365)) if total_calls > 0 else 20
         max_slider_val = max(100, inferred_daily_calls * 3) 
         
@@ -525,20 +522,31 @@ if call_data and station_data:
         capex_responder_total = k_responder * 80000
         capex_guardian_total = k_guardian * 160000
         fleet_capex = capex_responder_total + capex_guardian_total
+        total_drones = k_responder + k_guardian
         
         if fleet_capex > 0:
-            # ONLY apply savings to calls that actually fall inside the drone coverage rings
             effective_coverage_rate = calls_covered_perc / 100.0
             covered_daily_calls = calls_per_day * effective_coverage_rate
             daily_drone_only_calls = covered_daily_calls * deflection_rate
             
-            annual_savings = savings_per_call * daily_drone_only_calls * 365
-            
             if daily_drone_only_calls > 0:
-                fleet_break_even_months = fleet_capex / (savings_per_call * daily_drone_only_calls * 30.4)
+                monthly_savings = savings_per_call * daily_drone_only_calls * 30.4
+                annual_savings = monthly_savings * 12
+                fleet_break_even_months = fleet_capex / monthly_savings
                 break_even_text = f"{fleet_break_even_months:.1f} MONTHS"
+                
+                # Calculate average savings per drone per month to find unit ROI
+                savings_per_drone_per_mo = monthly_savings / total_drones
+                resp_be_months = 80000 / savings_per_drone_per_mo
+                guard_be_months = 160000 / savings_per_drone_per_mo
+                
+                resp_be_text = f"{resp_be_months:.1f} MO"
+                guard_be_text = f"{guard_be_months:.1f} MO"
             else:
-                break_even_text = "N/A (NO CALLS COVERED)"
+                annual_savings = 0
+                break_even_text = "N/A"
+                resp_be_text = "N/A"
+                guard_be_text = "N/A"
             
             st.markdown(f"""
             <div style="background: rgba(0, 255, 0, 0.05); border: 1px solid #00ff00; padding: 15px; border-radius: 4px; text-align: center; margin-bottom: 15px; box-shadow: 0px 0px 10px rgba(0, 255, 0, 0.1);">
@@ -566,7 +574,8 @@ if call_data and station_data:
                     <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">RESPONDER <span style="color:#fff; font-size:0.9rem;">(x{k_responder})</span></h5>
                     <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">2 MI RADIUS</span></div>
                     <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$80,000</span></div>
-                    <div style="color: #888; font-size: 0.85rem;">SUBTOTAL: <span style="color:#00ffff; font-weight:bold;">${capex_responder_total:,.0f}</span></div>
+                    <div style="color: #888; font-size: 0.85rem;">UNIT ROI: <span style="color:#00ff00; font-weight:bold;">{resp_be_text}</span></div>
+                    <div style="color: #888; font-size: 0.85rem; margin-top: 4px; border-top: 1px dashed #333; padding-top: 4px;">SUBTOTAL: <span style="color:#00ffff; font-weight:bold;">${capex_responder_total:,.0f}</span></div>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -576,7 +585,8 @@ if call_data and station_data:
                     <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">GUARDIAN <span style="color:#fff; font-size:0.9rem;">(x{k_guardian})</span></h5>
                     <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">8 MI RADIUS</span></div>
                     <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$160,000</span></div>
-                    <div style="color: #888; font-size: 0.85rem;">SUBTOTAL: <span style="color:#00ffff; font-weight:bold;">${capex_guardian_total:,.0f}</span></div>
+                    <div style="color: #888; font-size: 0.85rem;">UNIT ROI: <span style="color:#00ff00; font-weight:bold;">{guard_be_text}</span></div>
+                    <div style="color: #888; font-size: 0.85rem; margin-top: 4px; border-top: 1px dashed #333; padding-top: 4px;">SUBTOTAL: <span style="color:#00ffff; font-weight:bold;">${capex_guardian_total:,.0f}</span></div>
                 </div>
                 """, unsafe_allow_html=True)
         else:
@@ -602,14 +612,11 @@ if call_data and station_data:
     if simulate_traffic:
         m1, m2, m3, m4, m5 = st.columns(5)
         
-        # Adapt the math based on which drones are actually deployed
         if len(active_guard_names) > 0:
-            # If ANY Guardian is deployed, default to the 8-mile response @ 60 MPH
             eval_dist = 8.0
             eval_speed = 60.0
             gain_label = "Efficiency Gain (8-mi)"
         else:
-            # Only Responders deployed
             eval_dist = 2.0
             eval_speed = 42.0
             gain_label = "Efficiency Gain (2-mi)"
@@ -711,11 +718,11 @@ if call_data and station_data:
         if s_name in active_resp_names:
             clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=2.0)
             lbl = f"{s_name} (Responder)"
-            drive_time_min = (2.0 / 42.0) * 60 # 2 miles @ 42 MPH
+            drive_time_min = (2.0 / 42.0) * 60 
         elif s_name in active_guard_names:
             clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=8.0)
             lbl = f"{s_name} (Guardian)"
-            drive_time_min = (8.0 / 60.0) * 60 # 8 miles @ 60 MPH
+            drive_time_min = (8.0 / 60.0) * 60 
         else:
             continue
 
@@ -731,19 +738,17 @@ if call_data and station_data:
             hoverinfo='name'
         ))
 
-        # --- DYNAMIC TRAFFIC ACCESSIBILITY ZONE ---
         if simulate_traffic:
-            # Shift colors based on the slider intensity
             if traffic_level < 35:
-                t_color = "#28a745" # Green
+                t_color = "#28a745"
                 t_fill = "rgba(40, 167, 69, 0.15)"
                 t_label = "Light Traffic"
             elif traffic_level < 75:
-                t_color = "#ffc107" # Yellow
+                t_color = "#ffc107"
                 t_fill = "rgba(255, 193, 7, 0.15)"
                 t_label = "Moderate Traffic"
             else:
-                t_color = "#dc3545" # Red
+                t_color = "#dc3545"
                 t_fill = "rgba(220, 53, 69, 0.15)"
                 t_label = "Heavy Traffic"
 
@@ -752,7 +757,6 @@ if call_data and station_data:
             if ground_speed_mph > 0:
                 ground_range_mi = (ground_speed_mph / 60) * drive_time_min
                 
-                # Use a smoother Octagon instead of the rigid diamond/square
                 g_angles = np.linspace(0, 2*np.pi, 9) 
                 g_lats = row['lat'] + (ground_range_mi/69.172) * np.sin(g_angles)
                 g_lons = row['lon'] + (ground_range_mi/(69.172 * np.cos(np.radians(row['lat'])))) * np.cos(g_angles)
