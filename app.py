@@ -403,6 +403,50 @@ if call_data and station_data:
     simulate_traffic = st.sidebar.toggle("Show Ground Response Gap", value=False)
     traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
 
+    # ==========================================
+    # --- BUDGET IMPACT MODULE INJECTION ---
+    # ==========================================
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("💰 Budget Impact")
+    
+    calls_per_day = st.sidebar.slider("ESTIMATED DAILY CALLS", min_value=1, max_value=100, value=20)
+    
+    cost_officer = 82
+    cost_drone = 6
+    savings_per_call = cost_officer - cost_drone
+    annual_savings = savings_per_call * calls_per_day * 365
+    
+    # High-visibility overall savings
+    st.sidebar.markdown(f"""
+    <div style="background: rgba(0, 255, 0, 0.05); border: 1px solid #00ff00; padding: 15px; border-radius: 4px; text-align: center; margin-bottom: 15px; box-shadow: 0px 0px 10px rgba(0, 255, 0, 0.1);">
+        <h6 style="color: #888; margin: 0; font-size: 0.8rem; letter-spacing: 1px;">ANNUAL TAXPAYER SAVINGS</h6>
+        <h2 style="color: #00ff00; margin: 0; font-family: 'Consolas', monospace; text-shadow: 0 0 10px rgba(0,255,0,0.5);">${annual_savings:,.0f}</h2>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Responder Break-Even Block 
+    be_resp = 80000 / (savings_per_call * calls_per_day * 30.4)
+    st.sidebar.markdown(f"""
+    <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
+        <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">RESPONDER</h5>
+        <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">2 MI RADIUS</span></div>
+        <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$80,000</span></div>
+        <div style="color: #888; font-size: 0.85rem;">BREAK-EVEN: <span style="color:#00ff00; font-weight:bold;">{be_resp:.1f} MONTHS</span></div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Guardian Break-Even Block
+    be_guard = 160000 / (savings_per_call * calls_per_day * 30.4)
+    st.sidebar.markdown(f"""
+    <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
+        <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">GUARDIAN</h5>
+        <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">8 MI RADIUS</span></div>
+        <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$160,000</span></div>
+        <div style="color: #888; font-size: 0.85rem;">BREAK-EVEN: <span style="color:#00ff00; font-weight:bold;">{be_guard:.1f} MONTHS</span></div>
+    </div>
+    """, unsafe_allow_html=True)
+    # ==========================================
+
     best_resp_names, best_guard_names = [], []
     
     if k_responder + k_guardian > n:
