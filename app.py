@@ -415,6 +415,9 @@ if call_data and station_data:
     
     calls_per_day = st.sidebar.slider("ESTIMATED DAILY CALLS", min_value=1, max_value=max_slider_val, value=inferred_daily_calls)
     
+    # NEW: Deflection rate slider (defaults to 30%)
+    deflection_rate = st.sidebar.slider("DRONE-ONLY RESOLUTION (%)", min_value=0, max_value=100, value=30) / 100.0
+    
     cost_officer = 82
     cost_drone = 6
     savings_per_call = cost_officer - cost_drone
@@ -426,8 +429,16 @@ if call_data and station_data:
     
     # Only render financials if at least one drone is selected
     if fleet_capex > 0:
-        annual_savings = savings_per_call * calls_per_day * 365
-        fleet_break_even_months = fleet_capex / (savings_per_call * calls_per_day * 30.4)
+        # Apply the 30% ratio (or whatever is selected) to the daily calls
+        daily_drone_only_calls = calls_per_day * deflection_rate
+        annual_savings = savings_per_call * daily_drone_only_calls * 365
+        
+        # Avoid division by zero if the user drops the resolution slider to 0%
+        if daily_drone_only_calls > 0:
+            fleet_break_even_months = fleet_capex / (savings_per_call * daily_drone_only_calls * 30.4)
+            break_even_text = f"{fleet_break_even_months:.1f} MONTHS"
+        else:
+            break_even_text = "N/A (0% RESOLUTION)"
         
         # High-visibility overall savings & Fleet metrics
         st.sidebar.markdown(f"""
@@ -441,7 +452,7 @@ if call_data and station_data:
             </div>
             <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
                 <span style="color: #888;">BREAK-EVEN:</span>
-                <span style="color: #00ff00; font-weight: bold;">{fleet_break_even_months:.1f} MONTHS</span>
+                <span style="color: #00ff00; font-weight: bold;">{break_even_text}</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
