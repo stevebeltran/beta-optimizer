@@ -338,17 +338,19 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
             else:
                 model += y[i] == 0
 
-    # --- TIE-BREAKER LOGIC ---
-    # Guarantees the tie breaker score is < 0.5 so it never accidentally outweighs a single historical call,
-    # but still perfectly breaks ties by prioritizing Land Coverage and then Geographic Centrality.
+    # --- TIE-BREAKER LOGIC & PENALTY ---
     n_drones = num_resp + num_guard
     if n_drones == 0: n_drones = 1
     area_weight = 0.4 / n_drones
     cent_weight = 0.05 / n_drones
+    
+    # If redundancy is OFF, applying a 0.5 penalty guarantees placing a redundant drone 
+    # results in a negative score. It will strictly force redundant drones to 0.
+    penalty = 0.5 if not allow_redundancy else 0.0
 
     tie_breaker_obj = pulp.lpSum(
-        x_r[s] * (tb_area_r[s] * area_weight + tb_cent[s] * cent_weight) +
-        x_g[s] * (tb_area_g[s] * area_weight + tb_cent[s] * cent_weight)
+        x_r[s] * (tb_area_r[s] * area_weight + tb_cent[s] * cent_weight - penalty) +
+        x_g[s] * (tb_area_g[s] * area_weight + tb_cent[s] * cent_weight - penalty)
         for s in range(n_stations)
     )
 
@@ -430,7 +432,6 @@ if st.session_state['csvs_ready']:
     
     for s in station_metadata:
         dist = ((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5
-        # 1.0 is perfectly in the center, 0.0 is on the furthest edge
         s['centrality'] = 1.0 - (dist / max_dist)
 
     max_area = city_m.area if (city_m and city_m.area > 0) else 1.0
@@ -483,16 +484,10 @@ if st.session_state['csvs_ready']:
             total_guard_combos = math.comb(n - k_responder, k_guardian) if n >= k_responder else 1
             total_possible = total_resp_combos * total_guard_combos
             
-            # Tuple Comparison allows for automatic sequential tie-breaking
-            # 1. Primary: Area Score
-            # 2. Secondary: Call Coverage Score
-            # 3. Tertiary: Geographic Centrality
             best_score = (-1.0, -1, -1.0)
             
             def evaluate_combo(rg_combo):
                 r_combo, g_combo = rg_combo
-                
-                # Primary Metric: Area
                 if allow_redundancy:
                     r_geos = [station_metadata[i]['clipped_2m'] for i in r_combo]
                     g_geos = [station_metadata[i]['clipped_8m'] for i in g_combo]
@@ -501,7 +496,6 @@ if st.session_state['csvs_ready']:
                     geos = [station_metadata[i]['clipped_2m'] for i in r_combo] + [station_metadata[i]['clipped_8m'] for i in g_combo]
                     score_area = unary_union(geos).area if geos else 0.0
                 
-                # Secondary Metric: Calls
                 if total_calls > 0:
                     cov_r = resp_matrix[list(r_combo)].any(axis=0) if r_combo else np.zeros(total_calls, bool)
                     cov_g = guard_matrix[list(g_combo)].any(axis=0) if g_combo else np.zeros(total_calls, bool)
@@ -509,9 +503,7 @@ if st.session_state['csvs_ready']:
                 else:
                     score_calls = 0
                 
-                # Tertiary Metric: Centrality
                 score_cent = sum([station_metadata[i]['centrality'] for i in r_combo]) + sum([station_metadata[i]['centrality'] for i in g_combo])
-                
                 return (score_area, score_calls, score_cent, rg_combo)
 
             with st.spinner(f"Optimizing {min(total_possible, 3000)} configurations for area..."):
@@ -544,6 +536,34 @@ if st.session_state['csvs_ready']:
         
         if best_combo is not None:
             r_best, g_best = best_combo
+            
+            # --- POST-PROCESS PRUNING FOR REDUNDANCY ---
+            # If Multi-Tier is OFF, we aggressively strip out any drone that adds zero unique land 
+            # coverage. This forces completely eclipsed Responders to 0.
+            if not allow_redundancy:
+                pruned_r = []
+                pruned_g = []
+                active_geos = []
+                
+                # Check Guardians first since they cover the most area
+                for idx in g_best:
+                    geom = station_metadata[idx]['clipped_8m']
+                    current_union = unary_union(active_geos) if active_geos else Polygon()
+                    if geom.difference(current_union).area > 1e-5:
+                        pruned_g.append(idx)
+                        active_geos.append(geom)
+                        
+                # Check Responders second
+                for idx in r_best:
+                    geom = station_metadata[idx]['clipped_2m']
+                    current_union = unary_union(active_geos) if active_geos else Polygon()
+                    if geom.difference(current_union).area > 1e-5:
+                        pruned_r.append(idx)
+                        active_geos.append(geom)
+                        
+                r_best = tuple(pruned_r)
+                g_best = tuple(pruned_g)
+
             best_resp_names = [station_metadata[i]['name'] for i in r_best]
             best_guard_names = [station_metadata[i]['name'] for i in g_best]
 
@@ -601,10 +621,14 @@ if st.session_state['csvs_ready']:
         cost_drone = 6
         savings_per_call = cost_officer - cost_drone
         
-        capex_responder_total = k_responder * 80000
-        capex_guardian_total = k_guardian * 160000
+        # Calculate Budget based on ACTUAL DEPLOYED non-redundant drones, not just the slider
+        actual_k_responder = len(active_resp_names)
+        actual_k_guardian = len(active_guard_names)
+        
+        capex_responder_total = actual_k_responder * 80000
+        capex_guardian_total = actual_k_guardian * 160000
         fleet_capex = capex_responder_total + capex_guardian_total
-        total_drones = k_responder + k_guardian
+        total_drones = actual_k_responder + actual_k_guardian
         
         if fleet_capex > 0:
             effective_coverage_rate = calls_covered_perc / 100.0
@@ -649,10 +673,10 @@ if st.session_state['csvs_ready']:
             </div>
             """, unsafe_allow_html=True)
             
-            if k_responder > 0:
+            if actual_k_responder > 0:
                 st.markdown(f"""
                 <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
-                    <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">RESPONDER <span style="color:#fff; font-size:0.9rem;">(x{k_responder})</span></h5>
+                    <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">RESPONDER <span style="color:#fff; font-size:0.9rem;">(x{actual_k_responder})</span></h5>
                     <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">2 MI RADIUS</span></div>
                     <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$80,000</span></div>
                     <div style="color: #888; font-size: 0.85rem;">UNIT ROI: <span style="color:#00ff00; font-weight:bold;">{resp_be_text}</span></div>
@@ -660,10 +684,10 @@ if st.session_state['csvs_ready']:
                 </div>
                 """, unsafe_allow_html=True)
                 
-            if k_guardian > 0:
+            if actual_k_guardian > 0:
                 st.markdown(f"""
                 <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
-                    <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">GUARDIAN <span style="color:#fff; font-size:0.9rem;">(x{k_guardian})</span></h5>
+                    <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">GUARDIAN <span style="color:#fff; font-size:0.9rem;">(x{actual_k_guardian})</span></h5>
                     <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">8 MI RADIUS</span></div>
                     <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$160,000</span></div>
                     <div style="color: #888; font-size: 0.85rem;">UNIT ROI: <span style="color:#00ff00; font-weight:bold;">{guard_be_text}</span></div>
@@ -671,7 +695,7 @@ if st.session_state['csvs_ready']:
                 </div>
                 """, unsafe_allow_html=True)
         else:
-            st.info("🚁 Select at least one drone above to calculate budget impact.")
+            st.info("🚁 Select at least one non-redundant drone to calculate budget impact.")
     # ==========================================
 
     st.markdown("---")
