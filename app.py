@@ -281,8 +281,7 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
     df_profiles['g'] = pd.DataFrame(guard_matrix.T).astype(int).astype(str).agg(''.join, axis=1)
     df_profiles['r'] = df_profiles.drop(columns='g').agg(''.join, axis=1)
     
-    # FIX: sort=False is mathematically required here. Without it, pandas alphabetizes the profiles 
-    # but unique_idx retains the original spatial array order, which scrambles the weights!
+    # sort=False is required so we don't scramble the call alignment
     grouped = df_profiles.groupby(['r', 'g'], sort=False)
     weights = grouped.size().values
     unique_idx = grouped.head(1).index
@@ -595,7 +594,9 @@ if st.session_state['csvs_ready']:
             active_guard_names = [station_metadata[i]['name'] for i in g_best]
 
     st.markdown("---")
-    # Using columns for any high-level stats instead of manual overrides
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns(3)
+    active_resp_names = ctrl_col2.multiselect("🚁 Active Responders (2-Mile)", options=df_stations_all['name'].tolist(), default=active_resp_names)
+    active_guard_names = ctrl_col3.multiselect("🦅 Active Guardians (8-Mile)", options=df_stations_all['name'].tolist(), default=active_guard_names)
     
     # --- METRICS CALCULATION ---
     area_covered_perc, overlap_perc, calls_covered_perc = 0.0, 0.0, 0.0
@@ -603,7 +604,10 @@ if st.session_state['csvs_ready']:
     active_resp_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_resp_names]
     active_guard_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_guard_names]
     
-    active_geos = [station_metadata[idx]['clipped_2m'] for idx in active_resp_idx] + [station_metadata[idx]['clipped_8m'] for idx in active_guard_idx]
+    active_resp_data = [station_metadata[i] for i in active_resp_idx]
+    active_guard_data = [station_metadata[i] for i in active_guard_idx]
+    
+    active_geos = [s['clipped_2m'] for s in active_resp_data] + [s['clipped_8m'] for s in active_guard_data]
 
     if active_geos:
         if not city_m.is_empty:
@@ -708,12 +712,16 @@ if st.session_state['csvs_ready']:
                 </div>
                 """, unsafe_allow_html=True)
 
-            # --- CALCULATE TRUE MARGINAL VALUE ---
             ordered_deployments = []
             for idx in chrono_g:
                 if idx in active_guard_idx: ordered_deployments.append((idx, 'GUARDIAN'))
             for idx in chrono_r:
                 if idx in active_resp_idx: ordered_deployments.append((idx, 'RESPONDER'))
+
+            for idx in active_resp_idx:
+                if idx not in chrono_r: ordered_deployments.append((idx, 'RESPONDER'))
+            for idx in active_guard_idx:
+                if idx not in chrono_g: ordered_deployments.append((idx, 'GUARDIAN'))
 
             cumulative_mask = np.zeros(total_calls, dtype=bool) if total_calls > 0 else None
             
@@ -734,7 +742,7 @@ if st.session_state['csvs_ready']:
                     'cost': cost,
                     'cov_array': cov_array,
                     'color': map_color,
-                    'deploy_step': step
+                    'deploy_step': step if (idx in chrono_r or idx in chrono_g) else "MANUAL"
                 }
                 
                 if total_calls > 0:
@@ -762,9 +770,6 @@ if st.session_state['csvs_ready']:
                     
                 active_drones.append(d)
                 step += 1
-            
-            # SORT strictly chronologically so Phase 1 is at top, Phase 4 at bottom.
-            active_drones.sort(key=lambda x: x['deploy_step'] if isinstance(x['deploy_step'], int) else 999)
                 
         else:
             st.info("🚁 Select at least one drone above to calculate budget impact.")
@@ -966,30 +971,7 @@ if st.session_state['csvs_ready']:
         if fleet_capex > 0:
             with st.container(height=735):
                 for d in active_drones:
-                    st.markdown(f"""
-                    <div style="background-color: #fff; color: #222; border-left: 5px solid {d['color']}; border-top: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; padding: 8px 10px; border-radius: 4px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); line-height: 1.3;">
-                        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 2px;">{d['name']}</div>
-                        <div style="font-size: 0.65rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d['type']} • PHASE: #{d['deploy_step']}</div>
-                        
-                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
-                            <span style="color: #555;">Phase Savings:</span>
-                            <span style="color: #28a745; font-weight: 700;">${d['annual_savings']:,.0f}/yr</span>
-                        </div>
-                        <div style="border-top: 1px solid #f0f0f0; margin: 4px 0;"></div>
-                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
-                            <span style="color: #555;">Added Coverage:</span>
-                            <span style="font-weight: 600; color: #0055ff;">{d['marginal_daily']:.1f}/day</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 6px;">
-                            <span style="color: #555;">Added Deflections:</span>
-                            <span style="font-weight: 600;">{d['marginal_deflected']:.1f}/day</span>
-                        </div>
-                        
-                        <div style="border-top: 1px dashed #ddd; padding-top: 4px; display: flex; justify-content: space-between; font-size: 0.75rem;">
-                            <span style="color: #555;">CapEx: <strong>${d['cost']:,.0f}</strong></span>
-                            <span style="color: #555;">Phase ROI: <strong style="color: #28a745;">{d['be_text']}</strong></span>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    # REMOVED ALL BLANK LINES IN THIS HTML STRING TO PREVENT STREAMLIT PARSING ERRORS
+                    st.markdown(f"""<div style="background-color: #fff; color: #222; border-left: 5px solid {d['color']}; border-top: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; padding: 8px 10px; border-radius: 4px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); line-height: 1.3;"><div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 2px;">{d['name']}</div><div style="font-size: 0.65rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d['type']} • PHASE: #{d['deploy_step']}</div><div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;"><span style="color: #555;">Phase Savings:</span><span style="color: #28a745; font-weight: 700;">${d['annual_savings']:,.0f}/yr</span></div><div style="border-top: 1px solid #f0f0f0; margin: 4px 0;"></div><div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;"><span style="color: #555;">Added Coverage:</span><span style="font-weight: 600; color: #0055ff;">{d['marginal_daily']:.1f}/day</span></div><div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 6px;"><span style="color: #555;">Added Deflections:</span><span style="font-weight: 600;">{d['marginal_deflected']:.1f}/day</span></div><div style="border-top: 1px dashed #ddd; padding-top: 4px; display: flex; justify-content: space-between; font-size: 0.75rem;"><span style="color: #555;">CapEx: <strong>${d['cost']:,.0f}</strong></span><span style="color: #555;">Phase ROI: <strong style="color: #28a745;">{d['be_text']}</strong></span></div></div>""", unsafe_allow_html=True)
         else:
             st.info("🚁 Deploy drones on the map to see individual unit economics.")
