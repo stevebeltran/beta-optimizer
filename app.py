@@ -275,7 +275,7 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
 def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy, tb_area_r, tb_area_g, tb_cent, incremental=True):
     n_stations, n_calls = resp_matrix.shape
     if n_calls == 0 or (num_resp == 0 and num_guard == 0):
-        return [], []
+        return [], [], [], []
 
     df_profiles = pd.DataFrame(resp_matrix.T).astype(int).astype(str)
     df_profiles['g'] = pd.DataFrame(guard_matrix.T).astype(int).astype(str).agg(''.join, axis=1)
@@ -295,7 +295,6 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
         model += pulp.lpSum(x_r[i] for i in range(n_stations)) == target_r
         model += pulp.lpSum(x_g[i] for i in range(n_stations)) == target_g
 
-        # Lock previous selections in place for phased rollout
         for r in locked_r: model += x_r[r] == 1
         for g in locked_g: model += x_g[g] == 1
 
@@ -349,24 +348,30 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
 
         model += primary_obj + tie_breaker_obj
 
-        model.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=10))
+        # Adding gapRel=0.0 to force the solver to exhaust all branches and find the absolute maximum
+        model.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=15, gapRel=0.0))
 
         res_r = [i for i in range(n_stations) if pulp.value(x_r[i]) == 1]
         res_g = [i for i in range(n_stations) if pulp.value(x_g[i]) == 1]
         return res_r, res_g
 
-    # Either calculate one massive global optimum, OR build it progressively (greedy)
     if not incremental:
-        return run_lp(num_resp, num_guard, [], [])
+        res_r, res_g = run_lp(num_resp, num_guard, [], [])
+        return res_r, res_g, res_r, res_g
     else:
         curr_r, curr_g = [], []
-        # Roll out Guardians first (they set the backbone)
+        chrono_r, chrono_g = [], []
         for tg in range(1, num_guard + 1):
-            curr_r, curr_g = run_lp(0, tg, curr_r, curr_g)
-        # Roll out Responders to fill gaps
+            next_r, next_g = run_lp(0, tg, curr_r, curr_g)
+            new_g = [x for x in next_g if x not in curr_g]
+            chrono_g.extend(new_g)
+            curr_r, curr_g = next_r, next_g
         for tr in range(1, num_resp + 1):
-            curr_r, curr_g = run_lp(tr, num_guard, curr_r, curr_g)
-        return curr_r, curr_g
+            next_r, next_g = run_lp(tr, num_guard, curr_r, curr_g)
+            new_r = [x for x in next_r if x not in curr_r]
+            chrono_r.extend(new_r)
+            curr_r, curr_g = next_r, next_g
+        return curr_r, curr_g, chrono_r, chrono_g
 
 # --- MAIN LOGIC ---
 if st.session_state['csvs_ready']:
@@ -475,6 +480,7 @@ if st.session_state['csvs_ready']:
 
     best_resp_names, best_guard_names = [], []
     active_resp_names, active_guard_names = [], []
+    chrono_r, chrono_g = [], []
     
     if k_responder + k_guardian > n:
         st.error("⚠️ Over-Deployment: Total requested drones exceed available stations.")
@@ -484,7 +490,7 @@ if st.session_state['csvs_ready']:
         
         if opt_strategy == "Maximize Call Coverage":
             with st.spinner("🧠 Running exact MCLP Optimizer (PuLP)..."):
-                r_best, g_best = solve_mclp(resp_matrix, guard_matrix, k_responder, k_guardian, allow_redundancy, tb_area_r, tb_area_g, tb_cent, incremental=incremental_build)
+                r_best, g_best, chrono_r, chrono_g = solve_mclp(resp_matrix, guard_matrix, k_responder, k_guardian, allow_redundancy, tb_area_r, tb_area_g, tb_cent, incremental=incremental_build)
                 best_combo = (tuple(r_best), tuple(g_best))
         else:
             station_indices = list(range(n))
@@ -531,6 +537,7 @@ if st.session_state['csvs_ready']:
                                 best_pick = s
                         if best_pick is not None:
                             locked_g = tuple(sorted(list(locked_g) + [best_pick]))
+                            chrono_g.append(best_pick)
 
                     for _ in range(k_responder):
                         loop_best_score = (-1.0, -1, -1.0)
@@ -544,6 +551,7 @@ if st.session_state['csvs_ready']:
                                 best_pick = s
                         if best_pick is not None:
                             locked_r = tuple(sorted(list(locked_r) + [best_pick]))
+                            chrono_r.append(best_pick)
 
                     best_combo = (locked_r, locked_g)
                 else:
@@ -573,6 +581,9 @@ if st.session_state['csvs_ready']:
                         if (score_area, score_calls, score_cent) > best_score:
                             best_score = (score_area, score_calls, score_cent)
                             best_combo = combo
+                            
+                    chrono_r = list(best_combo[0])
+                    chrono_g = list(best_combo[1])
         
         if best_combo is not None:
             r_best, g_best = best_combo
@@ -608,7 +619,7 @@ if st.session_state['csvs_ready']:
             overlap_perc = (unary_union(inters).area / city_m.area * 100) if inters else 0.0
 
     # ==========================================
-    # --- DECOUPLED UNIT-LEVEL BUDGET MODULE ---
+    # --- PHASED UNIT-LEVEL BUDGET MODULE ---
     # ==========================================
     active_drones = []
     fleet_capex = 0
@@ -693,50 +704,62 @@ if st.session_state['csvs_ready']:
                 </div>
                 """, unsafe_allow_html=True)
 
-            for idx in active_resp_idx:
-                map_color = STATION_COLORS[idx % len(STATION_COLORS)]
-                active_drones.append({'name': station_metadata[idx]['name'], 'type': 'RESPONDER', 'cost': 80000, 'cov_array': resp_matrix[idx], 'color': map_color})
+            # --- CALCULATE TRUE MARGINAL VALUE ---
+            ordered_deployments = []
+            for idx in chrono_g:
+                if idx in active_guard_idx: ordered_deployments.append((idx, 'GUARDIAN'))
+            for idx in chrono_r:
+                if idx in active_resp_idx: ordered_deployments.append((idx, 'RESPONDER'))
+
+            cumulative_mask = np.zeros(total_calls, dtype=bool) if total_calls > 0 else None
             
-            for idx in active_guard_idx:
+            step = 1
+            for idx, d_type in ordered_deployments:
+                if d_type == 'RESPONDER':
+                    cov_array = resp_matrix[idx]
+                    cost = 80000
+                else:
+                    cov_array = guard_matrix[idx]
+                    cost = 160000
+                    
                 map_color = STATION_COLORS[idx % len(STATION_COLORS)]
-                active_drones.append({'name': station_metadata[idx]['name'], 'type': 'GUARDIAN', 'cost': 160000, 'cov_array': guard_matrix[idx], 'color': map_color})
                 
-            if total_calls > 0:
-                all_cov_matrix = np.vstack([d['cov_array'] for d in active_drones])
-                coverage_counts = all_cov_matrix.sum(axis=0)
+                d = {
+                    'name': station_metadata[idx]['name'],
+                    'type': d_type,
+                    'cost': cost,
+                    'cov_array': cov_array,
+                    'color': map_color,
+                    'deploy_step': step
+                }
                 
-                valid_mask = coverage_counts > 0
-                safe_counts = np.ones_like(coverage_counts)
-                safe_counts[valid_mask] = coverage_counts[valid_mask]
-                
-                for d in active_drones:
-                    d_mask = d['cov_array'] & valid_mask
+                if total_calls > 0:
+                    # Marginal Gain (What it specifically added to the map at this phase)
+                    marginal_mask = cov_array & ~cumulative_mask
+                    marginal_historic = np.sum(marginal_mask)
+                    cumulative_mask = cumulative_mask | cov_array
                     
-                    unique_mask = d_mask & (coverage_counts == 1)
-                    d['unique_calls_historic'] = np.sum(unique_mask)
-                    d['unique_daily_calls'] = (d['unique_calls_historic'] / total_calls) * calls_per_day
+                    d['marginal_perc'] = marginal_historic / total_calls
+                    d['marginal_daily'] = calls_per_day * d['marginal_perc']
+                    d['marginal_deflected'] = d['marginal_daily'] * deflection_rate
                     
-                    shared_mask = d_mask & (coverage_counts > 1)
-                    d['shared_calls_historic'] = np.sum(shared_mask)
-                    d['shared_daily_calls'] = (d['shared_calls_historic'] / total_calls) * calls_per_day
-                    
-                    allocated_calls_historic = np.sum(1.0 / safe_counts[d_mask])
-                    d['allocated_perc'] = allocated_calls_historic / total_calls
-                    d['allocated_daily_calls'] = calls_per_day * d['allocated_perc']
-                    d['deflected_daily_calls'] = d['allocated_daily_calls'] * deflection_rate
-                    
-                    d['monthly_savings'] = savings_per_call * d['deflected_daily_calls'] * 30.4
+                    d['monthly_savings'] = savings_per_call * d['marginal_deflected'] * 30.4
                     d['annual_savings'] = d['monthly_savings'] * 12
                     
                     if d['monthly_savings'] > 0:
-                        d['break_even'] = d['cost'] / d['monthly_savings']
-                        d['be_text'] = f"{d['break_even']:.1f} MO"
+                        d['be_text'] = f"{d['cost'] / d['monthly_savings']:.1f} MO"
                     else:
                         d['annual_savings'] = 0
-                        d['break_even'] = float('inf')
                         d['be_text'] = "N/A"
-            
-            active_drones.sort(key=lambda x: x['annual_savings'], reverse=True)
+                else:
+                    d['annual_savings'] = 0
+                    d['marginal_daily'] = 0
+                    d['marginal_deflected'] = 0
+                    d['be_text'] = "N/A"
+                    
+                active_drones.append(d)
+                step += 1
+                
         else:
             st.info("🚁 Select at least one drone above to calculate budget impact.")
     # ==========================================
@@ -936,31 +959,31 @@ if st.session_state['csvs_ready']:
         st.markdown("<h4 style='margin-top:0px; border-bottom: 1px solid #ddd; padding-bottom: 8px; color: #333;'>Unit-Level Economics</h4>", unsafe_allow_html=True)
         if fleet_capex > 0:
             with st.container(height=735):
+                # The active_drones list is intentionally NOT sorted by savings.
+                # It is locked to chronological deployment order (Phase 1 to Phase N).
                 for d in active_drones:
                     st.markdown(f"""
                     <div style="background-color: #fff; color: #222; border-left: 5px solid {d['color']}; border-top: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; padding: 8px 10px; border-radius: 4px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); line-height: 1.3;">
                         <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 2px;">{d['name']}</div>
-                        <div style="font-size: 0.65rem; color: #666; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d['type']}</div>
+                        <div style="font-size: 0.65rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d['type']} • PHASE: #{d['deploy_step']}</div>
+                        
                         <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
-                            <span style="color: #555;">Savings:</span>
+                            <span style="color: #555;">Phase Savings:</span>
                             <span style="color: #28a745; font-weight: 700;">${d['annual_savings']:,.0f}/yr</span>
                         </div>
                         <div style="border-top: 1px solid #f0f0f0; margin: 4px 0;"></div>
                         <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
-                            <span style="color: #555;">Unique (Net New):</span>
-                            <span style="font-weight: 600; color: #0055ff;">{d['unique_daily_calls']:.1f}/day</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
-                            <span style="color: #555;">Shared (Overlap):</span>
-                            <span style="font-weight: 600;">{d['shared_daily_calls']:.1f}/day</span>
+                            <span style="color: #555;">Added Coverage:</span>
+                            <span style="font-weight: 600; color: #0055ff;">{d['marginal_daily']:.1f}/day</span>
                         </div>
                         <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 6px;">
-                            <span style="color: #555;">Equitable Share:</span>
-                            <span style="font-weight: 600;">{d['allocated_daily_calls']:.1f}/day</span>
+                            <span style="color: #555;">Added Deflections:</span>
+                            <span style="font-weight: 600;">{d['marginal_deflected']:.1f}/day</span>
                         </div>
+                        
                         <div style="border-top: 1px dashed #ddd; padding-top: 4px; display: flex; justify-content: space-between; font-size: 0.75rem;">
                             <span style="color: #555;">CapEx: <strong>${d['cost']:,.0f}</strong></span>
-                            <span style="color: #555;">ROI: <strong style="color: #28a745;">{d['be_text']}</strong></span>
+                            <span style="color: #555;">Phase ROI: <strong style="color: #28a745;">{d['be_text']}</strong></span>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
