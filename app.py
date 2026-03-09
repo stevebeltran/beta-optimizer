@@ -272,9 +272,9 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
             
     return calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls
 
-def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy, tb_area_r, tb_area_g, tb_cent):
+def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy, tb_area_r, tb_area_g, tb_cent, incremental=True):
     n_stations, n_calls = resp_matrix.shape
-    if n_calls == 0:
+    if n_calls == 0 or (num_resp == 0 and num_guard == 0):
         return [], []
 
     df_profiles = pd.DataFrame(resp_matrix.T).astype(int).astype(str)
@@ -286,70 +286,87 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
     u_resp, u_guard = resp_matrix[:, unique_idx], guard_matrix[:, unique_idx]
     n_u = len(weights)
 
-    model = pulp.LpProblem("DroneCoverage", pulp.LpMaximize)
+    def run_lp(target_r, target_g, locked_r, locked_g):
+        model = pulp.LpProblem("DroneCoverage", pulp.LpMaximize)
 
-    x_r = pulp.LpVariable.dicts("r_st", range(n_stations), 0, 1, pulp.LpBinary)
-    x_g = pulp.LpVariable.dicts("g_st", range(n_stations), 0, 1, pulp.LpBinary)
+        x_r = pulp.LpVariable.dicts("r_st", range(n_stations), 0, 1, pulp.LpBinary)
+        x_g = pulp.LpVariable.dicts("g_st", range(n_stations), 0, 1, pulp.LpBinary)
 
-    model += pulp.lpSum(x_r[i] for i in range(n_stations)) == num_resp
-    model += pulp.lpSum(x_g[i] for i in range(n_stations)) == num_guard
+        model += pulp.lpSum(x_r[i] for i in range(n_stations)) == target_r
+        model += pulp.lpSum(x_g[i] for i in range(n_stations)) == target_g
 
-    if not allow_redundancy:
-        for s in range(n_stations):
-            model += x_r[s] + x_g[s] <= 1
+        # Lock previous selections in place for phased rollout
+        for r in locked_r: model += x_r[r] == 1
+        for g in locked_g: model += x_g[g] == 1
 
-    if allow_redundancy:
-        y_r = pulp.LpVariable.dicts("cl_r", range(n_u), 0, 1, pulp.LpBinary)
-        y_g = pulp.LpVariable.dicts("cl_g", range(n_u), 0, 1, pulp.LpBinary)
-        
-        primary_obj = pulp.lpSum(y_r[i] * weights[i] + y_g[i] * weights[i] for i in range(n_u))
-        
-        for i in range(n_u):
-            cover_r = [x_r[s] for s in range(n_stations) if u_resp[s, i]]
-            cover_g = [x_g[s] for s in range(n_stations) if u_guard[s, i]]
-            
-            if cover_r: model += y_r[i] <= pulp.lpSum(cover_r)
-            else: model += y_r[i] == 0
-            
-            if cover_g: model += y_g[i] <= pulp.lpSum(cover_g)
-            else: model += y_g[i] == 0
-            
-    else:
-        y = pulp.LpVariable.dicts("cl", range(n_u), 0, 1, pulp.LpBinary)
-        primary_obj = pulp.lpSum(y[i] * weights[i] for i in range(n_u))
-
-        for i in range(n_u):
-            cover = []
+        if not allow_redundancy:
             for s in range(n_stations):
-                if u_resp[s, i]:
-                    cover.append(x_r[s])
-                if u_guard[s, i]:
-                    cover.append(x_g[s])
+                model += x_r[s] + x_g[s] <= 1
+
+        if allow_redundancy:
+            y_r = pulp.LpVariable.dicts("cl_r", range(n_u), 0, 1, pulp.LpBinary)
+            y_g = pulp.LpVariable.dicts("cl_g", range(n_u), 0, 1, pulp.LpBinary)
             
-            if cover:
-                model += y[i] <= pulp.lpSum(cover)
-            else:
-                model += y[i] == 0
+            primary_obj = pulp.lpSum(y_r[i] * weights[i] + y_g[i] * weights[i] for i in range(n_u))
+            
+            for i in range(n_u):
+                cover_r = [x_r[s] for s in range(n_stations) if u_resp[s, i]]
+                cover_g = [x_g[s] for s in range(n_stations) if u_guard[s, i]]
+                
+                if cover_r: model += y_r[i] <= pulp.lpSum(cover_r)
+                else: model += y_r[i] == 0
+                
+                if cover_g: model += y_g[i] <= pulp.lpSum(cover_g)
+                else: model += y_g[i] == 0
+                
+        else:
+            y = pulp.LpVariable.dicts("cl", range(n_u), 0, 1, pulp.LpBinary)
+            primary_obj = pulp.lpSum(y[i] * weights[i] for i in range(n_u))
 
-    n_drones = num_resp + num_guard
-    if n_drones == 0: n_drones = 1
-    area_weight = 0.4 / n_drones
-    cent_weight = 0.05 / n_drones
-    
-    tie_breaker_obj = pulp.lpSum(
-        x_r[s] * (tb_area_r[s] * area_weight + tb_cent[s] * cent_weight) +
-        x_g[s] * (tb_area_g[s] * area_weight + tb_cent[s] * cent_weight)
-        for s in range(n_stations)
-    )
+            for i in range(n_u):
+                cover = []
+                for s in range(n_stations):
+                    if u_resp[s, i]:
+                        cover.append(x_r[s])
+                    if u_guard[s, i]:
+                        cover.append(x_g[s])
+                
+                if cover:
+                    model += y[i] <= pulp.lpSum(cover)
+                else:
+                    model += y[i] == 0
 
-    model += primary_obj + tie_breaker_obj
+        n_drones_step = target_r + target_g
+        if n_drones_step == 0: n_drones_step = 1
+        area_weight = 0.4 / n_drones_step
+        cent_weight = 0.05 / n_drones_step
+        
+        tie_breaker_obj = pulp.lpSum(
+            x_r[s] * (tb_area_r[s] * area_weight + tb_cent[s] * cent_weight) +
+            x_g[s] * (tb_area_g[s] * area_weight + tb_cent[s] * cent_weight)
+            for s in range(n_stations)
+        )
 
-    model.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=10))
+        model += primary_obj + tie_breaker_obj
 
-    responders = [i for i in range(n_stations) if pulp.value(x_r[i]) == 1]
-    guardians = [i for i in range(n_stations) if pulp.value(x_g[i]) == 1]
+        model.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=10))
 
-    return responders, guardians
+        res_r = [i for i in range(n_stations) if pulp.value(x_r[i]) == 1]
+        res_g = [i for i in range(n_stations) if pulp.value(x_g[i]) == 1]
+        return res_r, res_g
+
+    # Either calculate one massive global optimum, OR build it progressively (greedy)
+    if not incremental:
+        return run_lp(num_resp, num_guard, [], [])
+    else:
+        curr_r, curr_g = [], []
+        # Roll out Guardians first (they set the backbone)
+        for tg in range(1, num_guard + 1):
+            curr_r, curr_g = run_lp(0, tg, curr_r, curr_g)
+        # Roll out Responders to fill gaps
+        for tr in range(1, num_resp + 1):
+            curr_r, curr_g = run_lp(tr, num_guard, curr_r, curr_g)
+        return curr_r, curr_g
 
 # --- MAIN LOGIC ---
 if st.session_state['csvs_ready']:
@@ -365,7 +382,6 @@ if st.session_state['csvs_ready']:
 
     st.sidebar.success(f"**Found {len(master_gdf)} Significant Zones**")
     
-    # Move Jurisdiction Selection to the Sidebar
     st.sidebar.markdown("---")
     st.sidebar.subheader("📍 Jurisdictions")
     total_pts = master_gdf['data_count'].sum()
@@ -430,6 +446,12 @@ if st.session_state['csvs_ready']:
     st.sidebar.header("🎯 Optimizer Controls")
     opt_strategy = st.sidebar.radio("Optimization Goal:", ("Maximize Call Coverage", "Maximize Land Coverage"), index=0)
     
+    incremental_build = st.sidebar.toggle(
+        "Phased Rollout (Static List)", 
+        value=True, 
+        help="When ON, builds the fleet one-by-one so existing stations never change. When OFF, re-calculates the absolute mathematical global optimum for the entire network."
+    )
+
     k_responder = st.sidebar.slider("🚁 Responder Drones (2-Mile)", 0, n, min(1, n))
     k_guardian = st.sidebar.slider("🦅 Guardian Drones (8-Mile)", 0, n, 0)
     
@@ -462,7 +484,7 @@ if st.session_state['csvs_ready']:
         
         if opt_strategy == "Maximize Call Coverage":
             with st.spinner("🧠 Running exact MCLP Optimizer (PuLP)..."):
-                r_best, g_best = solve_mclp(resp_matrix, guard_matrix, k_responder, k_guardian, allow_redundancy, tb_area_r, tb_area_g, tb_cent)
+                r_best, g_best = solve_mclp(resp_matrix, guard_matrix, k_responder, k_guardian, allow_redundancy, tb_area_r, tb_area_g, tb_cent, incremental=incremental_build)
                 best_combo = (tuple(r_best), tuple(g_best))
         else:
             station_indices = list(range(n))
@@ -492,38 +514,68 @@ if st.session_state['csvs_ready']:
                 score_cent = sum([station_metadata[i]['centrality'] for i in r_combo]) + sum([station_metadata[i]['centrality'] for i in g_combo])
                 return (score_area, score_calls, score_cent, rg_combo)
 
-            with st.spinner(f"Optimizing {min(total_possible, 3000)} configurations for area..."):
-                if total_possible > 3000:
-                    st.toast(f"Optimization Mode: Sampling ({total_possible:,} options)")
-                    sampled_combos = []
-                    for _ in range(3000):
-                        chosen = np.random.choice(range(n), k_responder + k_guardian, replace=False)
-                        r_c = tuple(sorted(chosen[:k_responder]))
-                        g_c = tuple(sorted(chosen[k_responder:]))
-                        sampled_combos.append((r_c, g_c))
-                    combos_to_test = list(set(sampled_combos))
-                else:
-                    combos_to_test = []
-                    for r_c in itertools.combinations(station_indices, k_responder):
-                        rem = [x for x in station_indices if x not in r_c]
-                        if k_guardian > 0:
-                            for g_c in itertools.combinations(rem, k_guardian):
-                                combos_to_test.append((r_c, g_c))
-                        else:
-                            combos_to_test.append((r_c, ()))
+            with st.spinner(f"Optimizing configurations for land area..."):
+                if incremental_build:
+                    locked_r = ()
+                    locked_g = ()
 
-                with ThreadPoolExecutor() as executor:
-                    results = list(executor.map(evaluate_combo, combos_to_test))
-                    
-                for score_area, score_calls, score_cent, combo in results:
-                    if (score_area, score_calls, score_cent) > best_score:
-                        best_score = (score_area, score_calls, score_cent)
-                        best_combo = combo
+                    for _ in range(k_guardian):
+                        loop_best_score = (-1.0, -1, -1.0)
+                        best_pick = None
+                        for s in range(n):
+                            if s in locked_g or (not allow_redundancy and s in locked_r): continue
+                            test_g = tuple(sorted(list(locked_g) + [s]))
+                            score = evaluate_combo((locked_r, test_g))
+                            if score > loop_best_score:
+                                loop_best_score = score
+                                best_pick = s
+                        if best_pick is not None:
+                            locked_g = tuple(sorted(list(locked_g) + [best_pick]))
+
+                    for _ in range(k_responder):
+                        loop_best_score = (-1.0, -1, -1.0)
+                        best_pick = None
+                        for s in range(n):
+                            if s in locked_r or (not allow_redundancy and s in locked_g): continue
+                            test_r = tuple(sorted(list(locked_r) + [s]))
+                            score = evaluate_combo((test_r, locked_g))
+                            if score > loop_best_score:
+                                loop_best_score = score
+                                best_pick = s
+                        if best_pick is not None:
+                            locked_r = tuple(sorted(list(locked_r) + [best_pick]))
+
+                    best_combo = (locked_r, locked_g)
+                else:
+                    if total_possible > 3000:
+                        st.toast(f"Optimization Mode: Sampling ({total_possible:,} options)")
+                        sampled_combos = []
+                        for _ in range(3000):
+                            chosen = np.random.choice(range(n), k_responder + k_guardian, replace=False)
+                            r_c = tuple(sorted(chosen[:k_responder]))
+                            g_c = tuple(sorted(chosen[k_responder:]))
+                            sampled_combos.append((r_c, g_c))
+                        combos_to_test = list(set(sampled_combos))
+                    else:
+                        combos_to_test = []
+                        for r_c in itertools.combinations(station_indices, k_responder):
+                            rem = [x for x in station_indices if x not in r_c]
+                            if k_guardian > 0:
+                                for g_c in itertools.combinations(rem, k_guardian):
+                                    combos_to_test.append((r_c, g_c))
+                            else:
+                                combos_to_test.append((r_c, ()))
+
+                    with ThreadPoolExecutor() as executor:
+                        results = list(executor.map(evaluate_combo, combos_to_test))
+                        
+                    for score_area, score_calls, score_cent, combo in results:
+                        if (score_area, score_calls, score_cent) > best_score:
+                            best_score = (score_area, score_calls, score_cent)
+                            best_combo = combo
         
         if best_combo is not None:
             r_best, g_best = best_combo
-            # In this version, we completely bypassed the manual overrides in the center of the screen
-            # So the active list is exactly what the optimizer found.
             active_resp_names = [station_metadata[i]['name'] for i in r_best]
             active_guard_names = [station_metadata[i]['name'] for i in g_best]
 
@@ -583,7 +635,6 @@ if st.session_state['csvs_ready']:
         fleet_capex = capex_responder_total + capex_guardian_total
         
         if fleet_capex > 0:
-            # 1. FLEET LEVEL MATH (Calculates unique total program savings)
             effective_coverage_rate = calls_covered_perc / 100.0
             covered_daily_calls = calls_per_day * effective_coverage_rate
             daily_drone_only_calls = covered_daily_calls * deflection_rate
@@ -597,7 +648,6 @@ if st.session_state['csvs_ready']:
                 annual_savings = 0
                 break_even_text = "N/A"
             
-            # Print Sidebar Total Fleet Card using clean white styling
             st.markdown(f"""
             <div style="background-color: #ffffff; border: 1px solid #28a745; padding: 12px; border-radius: 4px; text-align: center; margin-bottom: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
                 <h6 style="color: #555; margin: 0; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;">Annual Taxpayer Savings</h6>
@@ -623,7 +673,6 @@ if st.session_state['csvs_ready']:
             </div>
             """, unsafe_allow_html=True)
             
-            # Sub-tier cards in white style
             if actual_k_responder > 0:
                 st.markdown(f"""
                 <div style="background-color: #f9f9f9; border: 1px solid #e0e0e0; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
@@ -644,7 +693,6 @@ if st.session_state['csvs_ready']:
                 </div>
                 """, unsafe_allow_html=True)
 
-            # 2. INDIVIDUAL STATION ALLOCATION MATH (Equitable Distribution)
             for idx in active_resp_idx:
                 map_color = STATION_COLORS[idx % len(STATION_COLORS)]
                 active_drones.append({'name': station_metadata[idx]['name'], 'type': 'RESPONDER', 'cost': 80000, 'cov_array': resp_matrix[idx], 'color': map_color})
@@ -663,8 +711,16 @@ if st.session_state['csvs_ready']:
                 
                 for d in active_drones:
                     d_mask = d['cov_array'] & valid_mask
-                    allocated_calls_historic = np.sum(1.0 / safe_counts[d_mask])
                     
+                    unique_mask = d_mask & (coverage_counts == 1)
+                    d['unique_calls_historic'] = np.sum(unique_mask)
+                    d['unique_daily_calls'] = (d['unique_calls_historic'] / total_calls) * calls_per_day
+                    
+                    shared_mask = d_mask & (coverage_counts > 1)
+                    d['shared_calls_historic'] = np.sum(shared_mask)
+                    d['shared_daily_calls'] = (d['shared_calls_historic'] / total_calls) * calls_per_day
+                    
+                    allocated_calls_historic = np.sum(1.0 / safe_counts[d_mask])
                     d['allocated_perc'] = allocated_calls_historic / total_calls
                     d['allocated_daily_calls'] = calls_per_day * d['allocated_perc']
                     d['deflected_daily_calls'] = d['allocated_daily_calls'] * deflection_rate
@@ -889,13 +945,18 @@ if st.session_state['csvs_ready']:
                             <span style="color: #555;">Savings:</span>
                             <span style="color: #28a745; font-weight: 700;">${d['annual_savings']:,.0f}/yr</span>
                         </div>
+                        <div style="border-top: 1px solid #f0f0f0; margin: 4px 0;"></div>
                         <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
-                            <span style="color: #555;">Calls (Range):</span>
-                            <span style="font-weight: 600;">{d['allocated_daily_calls']:.1f}/day</span>
+                            <span style="color: #555;">Unique (Net New):</span>
+                            <span style="font-weight: 600; color: #0055ff;">{d['unique_daily_calls']:.1f}/day</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
+                            <span style="color: #555;">Shared (Overlap):</span>
+                            <span style="font-weight: 600;">{d['shared_daily_calls']:.1f}/day</span>
                         </div>
                         <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 6px;">
-                            <span style="color: #555;">Deflected:</span>
-                            <span style="font-weight: 600;">{d['deflected_daily_calls']:.1f}/day</span>
+                            <span style="color: #555;">Equitable Share:</span>
+                            <span style="font-weight: 600;">{d['allocated_daily_calls']:.1f}/day</span>
                         </div>
                         <div style="border-top: 1px dashed #ddd; padding-top: 4px; display: flex; justify-content: space-between; font-size: 0.75rem;">
                             <span style="color: #555;">CapEx: <strong>${d['cost']:,.0f}</strong></span>
