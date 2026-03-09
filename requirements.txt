@@ -1,7 +1,8 @@
 streamlit
 pandas
 geopandas
+numpy
 plotly
 shapely
 simplekml
-numpy
+pulp
