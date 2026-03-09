@@ -72,13 +72,11 @@ with st.sidebar.expander("🗺️ Map Library Manager"):
         st.success(f"Saved {count} map files to library!")
 
 # --- MAIN UPLOAD SECTION (CSVs ONLY) ---
-# Initialize session state for CSV handling
 if 'csvs_ready' not in st.session_state:
     st.session_state['csvs_ready'] = False
     st.session_state['df_calls'] = None
     st.session_state['df_stations'] = None
 
-# Only show the uploader if the CSVs are NOT ready
 if not st.session_state['csvs_ready']:
     st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
     uploaded_files = st.file_uploader("Upload Mission Data", accept_multiple_files=True)
@@ -103,13 +101,11 @@ STATION_COLORS = [
 ]
 
 def get_circle_coords(lat, lon, r_mi=2.0):
-    """Generates Lat/Lon coordinates for a circle."""
     angles = np.linspace(0, 2*np.pi, 100)
     c_lats = lat + (r_mi/69.172) * np.sin(angles)
     c_lons = lon + (r_mi/(69.172 * np.cos(np.radians(lat)))) * np.cos(angles)
     return c_lats, c_lons
 
-# --- KML EXPORT FUNCTION ---
 def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_names, calls_gdf):
     kml = simplekml.Kml()
     
@@ -158,7 +154,6 @@ def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_na
 
     return kml.kml()
 
-# --- INTELLIGENT SCANNER ---
 @st.cache_data
 def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
     points_list = []
@@ -224,7 +219,6 @@ def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
     
     return master_gdf
 
-# --- PERFORMANCE BOOSTER: CACHED SPATIAL MATH ---
 @st.cache_resource
 def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
     city_m = shapely.wkt.loads(city_m_wkt)
@@ -237,8 +231,8 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
     except:
         calls_in_city = gdf_calls_utm
         
-    radius_resp_m = 3218.69   # 2 Miles
-    radius_guard_m = 12874.75 # 8 Miles
+    radius_resp_m = 3218.69   
+    radius_guard_m = 12874.75 
     
     station_metadata = []
     total_calls = len(calls_in_city)
@@ -278,7 +272,6 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
             
     return calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls
 
-# --- HIGH-SPEED EXACT OPTIMIZER (AGGREGATED) ---
 def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy, tb_area_r, tb_area_g, tb_cent):
     n_stations, n_calls = resp_matrix.shape
     if n_calls == 0:
@@ -298,8 +291,9 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
     x_r = pulp.LpVariable.dicts("r_st", range(n_stations), 0, 1, pulp.LpBinary)
     x_g = pulp.LpVariable.dicts("g_st", range(n_stations), 0, 1, pulp.LpBinary)
 
-    model += pulp.lpSum(x_r[i] for i in range(n_stations)) <= num_resp
-    model += pulp.lpSum(x_g[i] for i in range(n_stations)) <= num_guard
+    # STRICT QUOTA: The engine MUST place exactly the number of drones requested on the sliders.
+    model += pulp.lpSum(x_r[i] for i in range(n_stations)) == num_resp
+    model += pulp.lpSum(x_g[i] for i in range(n_stations)) == num_guard
 
     if not allow_redundancy:
         for s in range(n_stations):
@@ -338,19 +332,15 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
             else:
                 model += y[i] == 0
 
-    # --- TIE-BREAKER LOGIC & PENALTY ---
     n_drones = num_resp + num_guard
     if n_drones == 0: n_drones = 1
     area_weight = 0.4 / n_drones
     cent_weight = 0.05 / n_drones
     
-    # If redundancy is OFF, applying a 0.5 penalty guarantees placing a redundant drone 
-    # results in a negative score. It will strictly force redundant drones to 0.
-    penalty = 0.5 if not allow_redundancy else 0.0
-
+    # We no longer apply a mathematical penalty since we force the quota with '==' above.
     tie_breaker_obj = pulp.lpSum(
-        x_r[s] * (tb_area_r[s] * area_weight + tb_cent[s] * cent_weight - penalty) +
-        x_g[s] * (tb_area_g[s] * area_weight + tb_cent[s] * cent_weight - penalty)
+        x_r[s] * (tb_area_r[s] * area_weight + tb_cent[s] * cent_weight) +
+        x_g[s] * (tb_area_g[s] * area_weight + tb_cent[s] * cent_weight)
         for s in range(n_stations)
     )
 
@@ -426,7 +416,6 @@ if st.session_state['csvs_ready']:
         )
     n = len(df_stations_all)
 
-    # --- CALCULATE GEOGRAPHICAL CENTRALITY AND AREA TIE-BREAKERS ---
     max_dist = max([((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5 for s in station_metadata])
     if max_dist == 0: max_dist = 1.0
     
@@ -457,13 +446,11 @@ if st.session_state['csvs_ready']:
     show_health = st.sidebar.toggle("Show Health Score Banner", value=True)
     show_satellite = st.sidebar.toggle("🌍 Satellite View", value=False)
     
-    # --- NEW TRAFFIC SIMULATOR CONTROLS ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("🚗 Ground Traffic Simulator")
     simulate_traffic = st.sidebar.toggle("Show Ground Response Gap", value=False)
     traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
 
-    # --- BUDGET IMPACT PLACEHOLDER ---
     budget_placeholder = st.sidebar.container()
 
     best_resp_names, best_guard_names = [], []
@@ -536,34 +523,6 @@ if st.session_state['csvs_ready']:
         
         if best_combo is not None:
             r_best, g_best = best_combo
-            
-            # --- POST-PROCESS PRUNING FOR REDUNDANCY ---
-            # If Multi-Tier is OFF, we aggressively strip out any drone that adds zero unique land 
-            # coverage. This forces completely eclipsed Responders to 0.
-            if not allow_redundancy:
-                pruned_r = []
-                pruned_g = []
-                active_geos = []
-                
-                # Check Guardians first since they cover the most area
-                for idx in g_best:
-                    geom = station_metadata[idx]['clipped_8m']
-                    current_union = unary_union(active_geos) if active_geos else Polygon()
-                    if geom.difference(current_union).area > 1e-5:
-                        pruned_g.append(idx)
-                        active_geos.append(geom)
-                        
-                # Check Responders second
-                for idx in r_best:
-                    geom = station_metadata[idx]['clipped_2m']
-                    current_union = unary_union(active_geos) if active_geos else Polygon()
-                    if geom.difference(current_union).area > 1e-5:
-                        pruned_r.append(idx)
-                        active_geos.append(geom)
-                        
-                r_best = tuple(pruned_r)
-                g_best = tuple(pruned_g)
-
             best_resp_names = [station_metadata[i]['name'] for i in r_best]
             best_guard_names = [station_metadata[i]['name'] for i in g_best]
 
@@ -621,7 +580,6 @@ if st.session_state['csvs_ready']:
         cost_drone = 6
         savings_per_call = cost_officer - cost_drone
         
-        # Calculate Budget based on ACTUAL DEPLOYED non-redundant drones, not just the slider
         actual_k_responder = len(active_resp_names)
         actual_k_guardian = len(active_guard_names)
         
