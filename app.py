@@ -48,7 +48,7 @@ st.markdown(
 
 # --- LOGO ---
 try:
-    st.sidebar.image("logo.png", use_container_width=True)
+    st.sidebar.image("logo.png", width='stretch')
 except FileNotFoundError:
     pass
 
@@ -801,7 +801,7 @@ if call_data and station_data:
         font=dict(size=18)
     )
 
-    st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
+    st.plotly_chart(fig, width='stretch', config={"scrollZoom": True})
 
 else:
     st.info("👋 Upload CSV data to begin. The map will auto-detect matching jurisdictions from the library.")
