@@ -91,7 +91,6 @@ if not st.session_state['csvs_ready']:
             elif fname == "stations.csv": station_file = f
             
         if call_file and station_file:
-            # Store in session state so it persists when the uploader disappears
             st.session_state['df_calls'] = pd.read_csv(call_file).dropna(subset=['lat', 'lon'])
             st.session_state['df_stations'] = pd.read_csv(station_file).dropna(subset=['lat', 'lon'])
             st.session_state['csvs_ready'] = True
@@ -280,7 +279,7 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
     return calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls
 
 # --- HIGH-SPEED EXACT OPTIMIZER (AGGREGATED) ---
-def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy):
+def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy, tb_area_r, tb_area_g, tb_cent):
     n_stations, n_calls = resp_matrix.shape
     if n_calls == 0:
         return [], []
@@ -310,7 +309,7 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy)
         y_r = pulp.LpVariable.dicts("cl_r", range(n_u), 0, 1, pulp.LpBinary)
         y_g = pulp.LpVariable.dicts("cl_g", range(n_u), 0, 1, pulp.LpBinary)
         
-        model += pulp.lpSum(y_r[i] * weights[i] + y_g[i] * weights[i] for i in range(n_u))
+        primary_obj = pulp.lpSum(y_r[i] * weights[i] + y_g[i] * weights[i] for i in range(n_u))
         
         for i in range(n_u):
             cover_r = [x_r[s] for s in range(n_stations) if u_resp[s, i]]
@@ -324,7 +323,7 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy)
             
     else:
         y = pulp.LpVariable.dicts("cl", range(n_u), 0, 1, pulp.LpBinary)
-        model += pulp.lpSum(y[i] * weights[i] for i in range(n_u))
+        primary_obj = pulp.lpSum(y[i] * weights[i] for i in range(n_u))
 
         for i in range(n_u):
             cover = []
@@ -338,6 +337,22 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy)
                 model += y[i] <= pulp.lpSum(cover)
             else:
                 model += y[i] == 0
+
+    # --- TIE-BREAKER LOGIC ---
+    # Guarantees the tie breaker score is < 0.5 so it never accidentally outweighs a single historical call,
+    # but still perfectly breaks ties by prioritizing Land Coverage and then Geographic Centrality.
+    n_drones = num_resp + num_guard
+    if n_drones == 0: n_drones = 1
+    area_weight = 0.4 / n_drones
+    cent_weight = 0.05 / n_drones
+
+    tie_breaker_obj = pulp.lpSum(
+        x_r[s] * (tb_area_r[s] * area_weight + tb_cent[s] * cent_weight) +
+        x_g[s] * (tb_area_g[s] * area_weight + tb_cent[s] * cent_weight)
+        for s in range(n_stations)
+    )
+
+    model += primary_obj + tie_breaker_obj
 
     model.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=10))
 
@@ -361,7 +376,6 @@ if st.session_state['csvs_ready']:
     st.sidebar.success(f"**Found {len(master_gdf)} Significant Zones**")
     
     st.markdown("---")
-    # CHANGED TO 3 COLUMNS HERE SO THEY ALL SIT ON ONE LINE
     ctrl_col1, ctrl_col2, ctrl_col3 = st.columns(3)
     
     total_pts = master_gdf['data_count'].sum()
@@ -410,6 +424,20 @@ if st.session_state['csvs_ready']:
         )
     n = len(df_stations_all)
 
+    # --- CALCULATE GEOGRAPHICAL CENTRALITY AND AREA TIE-BREAKERS ---
+    max_dist = max([((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5 for s in station_metadata])
+    if max_dist == 0: max_dist = 1.0
+    
+    for s in station_metadata:
+        dist = ((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5
+        # 1.0 is perfectly in the center, 0.0 is on the furthest edge
+        s['centrality'] = 1.0 - (dist / max_dist)
+
+    max_area = city_m.area if (city_m and city_m.area > 0) else 1.0
+    tb_area_r = [s['clipped_2m'].area / max_area for s in station_metadata]
+    tb_area_g = [s['clipped_8m'].area / max_area for s in station_metadata]
+    tb_cent = [s['centrality'] for s in station_metadata]
+
     # --- OPTIMIZER CONTROLS ---
     st.sidebar.header("🎯 Optimizer Controls")
     opt_strategy = st.sidebar.radio("Optimization Goal:", ("Maximize Call Coverage", "Maximize Land Coverage"), index=0)
@@ -447,7 +475,7 @@ if st.session_state['csvs_ready']:
         
         if opt_strategy == "Maximize Call Coverage":
             with st.spinner("🧠 Running exact MCLP Optimizer (PuLP)..."):
-                r_best, g_best = solve_mclp(resp_matrix, guard_matrix, k_responder, k_guardian, allow_redundancy)
+                r_best, g_best = solve_mclp(resp_matrix, guard_matrix, k_responder, k_guardian, allow_redundancy, tb_area_r, tb_area_g, tb_cent)
                 best_combo = (tuple(r_best), tuple(g_best))
         else:
             station_indices = list(range(n))
@@ -455,18 +483,36 @@ if st.session_state['csvs_ready']:
             total_guard_combos = math.comb(n - k_responder, k_guardian) if n >= k_responder else 1
             total_possible = total_resp_combos * total_guard_combos
             
-            best_score = -1
+            # Tuple Comparison allows for automatic sequential tie-breaking
+            # 1. Primary: Area Score
+            # 2. Secondary: Call Coverage Score
+            # 3. Tertiary: Geographic Centrality
+            best_score = (-1.0, -1, -1.0)
             
             def evaluate_combo(rg_combo):
                 r_combo, g_combo = rg_combo
+                
+                # Primary Metric: Area
                 if allow_redundancy:
                     r_geos = [station_metadata[i]['clipped_2m'] for i in r_combo]
                     g_geos = [station_metadata[i]['clipped_8m'] for i in g_combo]
-                    score = (unary_union(r_geos).area if r_geos else 0.0) + (unary_union(g_geos).area if g_geos else 0.0)
+                    score_area = (unary_union(r_geos).area if r_geos else 0.0) + (unary_union(g_geos).area if g_geos else 0.0)
                 else:
                     geos = [station_metadata[i]['clipped_2m'] for i in r_combo] + [station_metadata[i]['clipped_8m'] for i in g_combo]
-                    score = unary_union(geos).area if geos else 0.0
-                return (score, rg_combo)
+                    score_area = unary_union(geos).area if geos else 0.0
+                
+                # Secondary Metric: Calls
+                if total_calls > 0:
+                    cov_r = resp_matrix[list(r_combo)].any(axis=0) if r_combo else np.zeros(total_calls, bool)
+                    cov_g = guard_matrix[list(g_combo)].any(axis=0) if g_combo else np.zeros(total_calls, bool)
+                    score_calls = np.logical_or(cov_r, cov_g).sum()
+                else:
+                    score_calls = 0
+                
+                # Tertiary Metric: Centrality
+                score_cent = sum([station_metadata[i]['centrality'] for i in r_combo]) + sum([station_metadata[i]['centrality'] for i in g_combo])
+                
+                return (score_area, score_calls, score_cent, rg_combo)
 
             with st.spinner(f"Optimizing {min(total_possible, 3000)} configurations for area..."):
                 if total_possible > 3000:
@@ -491,9 +537,9 @@ if st.session_state['csvs_ready']:
                 with ThreadPoolExecutor() as executor:
                     results = list(executor.map(evaluate_combo, combos_to_test))
                     
-                for score, combo in results:
-                    if score > best_score:
-                        best_score = score
+                for score_area, score_calls, score_cent, combo in results:
+                    if (score_area, score_calls, score_cent) > best_score:
+                        best_score = (score_area, score_calls, score_cent)
                         best_combo = combo
         
         if best_combo is not None:
@@ -507,7 +553,6 @@ if st.session_state['csvs_ready']:
     for name in best_guard_names: st.sidebar.write(f"🦅 {name} (Guardian)")
 
     # --- UI SELECTION ---
-    # NOW PLACED IN COL 2 AND COL 3 RESPECTIVELY
     active_resp_names = ctrl_col2.multiselect("🚁 Active Responders (2-Mile)", options=df_stations_all['name'].tolist(), default=best_resp_names)
     active_guard_names = ctrl_col3.multiselect("🦅 Active Guardians (8-Mile)", options=df_stations_all['name'].tolist(), default=best_guard_names)
     
