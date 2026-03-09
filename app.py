@@ -522,6 +522,8 @@ if st.session_state['csvs_ready']:
         
         if best_combo is not None:
             r_best, g_best = best_combo
+            # In this version, we completely bypassed the manual overrides in the center of the screen
+            # So the active list is exactly what the optimizer found.
             active_resp_names = [station_metadata[i]['name'] for i in r_best]
             active_guard_names = [station_metadata[i]['name'] for i in g_best]
 
@@ -575,7 +577,10 @@ if st.session_state['csvs_ready']:
         
         actual_k_responder = len(active_resp_names)
         actual_k_guardian = len(active_guard_names)
-        fleet_capex = (actual_k_responder * 80000) + (actual_k_guardian * 160000)
+        
+        capex_responder_total = actual_k_responder * 80000
+        capex_guardian_total = actual_k_guardian * 160000
+        fleet_capex = capex_responder_total + capex_guardian_total
         
         if fleet_capex > 0:
             # 1. FLEET LEVEL MATH (Calculates unique total program savings)
@@ -883,20 +888,20 @@ if st.session_state['csvs_ready']:
                         <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
                             <span style="color: #555;">Savings:</span>
                             <span style="color: #28a745; font-weight: 700;">${d['annual_savings']:,.0f}/yr</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
-            <span style="color: #555;">Calls (Range):</span>
-            <span style="font-weight: 600;">{d['allocated_daily_calls']:.1f}/day</span>
-        </div>
-        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 6px;">
-            <span style="color: #555;">Deflected:</span>
-            <span style="font-weight: 600;">{d['deflected_daily_calls']:.1f}/day</span>
-        </div>
-        <div style="border-top: 1px dashed #ddd; padding-top: 4px; display: flex; justify-content: space-between; font-size: 0.75rem;">
-            <span style="color: #555;">CapEx: <strong>${d['cost']:,.0f}</strong></span>
-            <span style="color: #555;">ROI: <strong style="color: #28a745;">{d['be_text']}</strong></span>
-        </div>
-    </div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
+                            <span style="color: #555;">Calls (Range):</span>
+                            <span style="font-weight: 600;">{d['allocated_daily_calls']:.1f}/day</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 6px;">
+                            <span style="color: #555;">Deflected:</span>
+                            <span style="font-weight: 600;">{d['deflected_daily_calls']:.1f}/day</span>
+                        </div>
+                        <div style="border-top: 1px dashed #ddd; padding-top: 4px; display: flex; justify-content: space-between; font-size: 0.75rem;">
+                            <span style="color: #555;">CapEx: <strong>${d['cost']:,.0f}</strong></span>
+                            <span style="color: #555;">ROI: <strong style="color: #28a745;">{d['be_text']}</strong></span>
+                        </div>
+                    </div>
                     """, unsafe_allow_html=True)
         else:
             st.info("🚁 Deploy drones on the map to see individual unit economics.")
