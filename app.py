@@ -562,8 +562,11 @@ if st.session_state['csvs_ready']:
             overlap_perc = (unary_union(inters).area / city_m.area * 100) if inters else 0.0
 
     # ==========================================
-    # --- DECOUPLED UNIT-LEVEL BUDGET MODULE ---
+    # --- BUDGET IMPACT MODULE & ALLOCATION ---
     # ==========================================
+    active_drones = []
+    fleet_capex = 0
+    
     with budget_placeholder:
         st.markdown("---")
         st.subheader("💰 Budget Impact")
@@ -583,7 +586,6 @@ if st.session_state['csvs_ready']:
         fleet_capex = (actual_k_responder * 80000) + (actual_k_guardian * 160000)
         
         if fleet_capex > 0:
-            # 1. FLEET LEVEL MATH (Calculates unique total program savings)
             effective_coverage_rate = calls_covered_perc / 100.0
             covered_daily_calls = calls_per_day * effective_coverage_rate
             daily_drone_only_calls = covered_daily_calls * deflection_rate
@@ -597,6 +599,7 @@ if st.session_state['csvs_ready']:
                 annual_savings = 0
                 break_even_text = "N/A"
             
+            # Print Sidebar Total Fleet Card
             st.markdown(f"""
             <div style="background: #000000; border: 1px solid #00ff00; padding: 15px; border-radius: 4px; text-align: center; margin-bottom: 15px; box-shadow: 0px 0px 10px rgba(0, 255, 0, 0.15);">
                 <h6 style="color: #888; margin: 0; font-size: 0.8rem; letter-spacing: 1px;">ANNUAL TAXPAYER SAVINGS</h6>
@@ -622,12 +625,14 @@ if st.session_state['csvs_ready']:
             </div>
             """, unsafe_allow_html=True)
             
-            # 2. INDIVIDUAL STATION ALLOCATION MATH (Equitable Distribution)
-            active_drones = []
+            # --- CALCULATE EQUITABLE UNIT ALLOCATIONS ---
             for idx in active_resp_idx:
-                active_drones.append({'name': station_metadata[idx]['name'], 'type': 'RESPONDER', 'cost': 80000, 'cov_array': resp_matrix[idx]})
+                map_color = STATION_COLORS[idx % len(STATION_COLORS)]
+                active_drones.append({'name': station_metadata[idx]['name'], 'type': 'RESPONDER', 'cost': 80000, 'cov_array': resp_matrix[idx], 'color': map_color})
+            
             for idx in active_guard_idx:
-                active_drones.append({'name': station_metadata[idx]['name'], 'type': 'GUARDIAN', 'cost': 160000, 'cov_array': guard_matrix[idx]})
+                map_color = STATION_COLORS[idx % len(STATION_COLORS)]
+                active_drones.append({'name': station_metadata[idx]['name'], 'type': 'GUARDIAN', 'cost': 160000, 'cov_array': guard_matrix[idx], 'color': map_color})
                 
             if total_calls > 0:
                 all_cov_matrix = np.vstack([d['cov_array'] for d in active_drones])
@@ -657,29 +662,6 @@ if st.session_state['csvs_ready']:
                         d['be_text'] = "N/A"
             
             active_drones.sort(key=lambda x: x['annual_savings'], reverse=True)
-            
-            st.markdown("<h6 style='color:#888; border-bottom:1px solid #333; padding-bottom:5px; margin-top:15px;'>UNIT-LEVEL ECONOMICS (COMPARISON SHEET)</h6>", unsafe_allow_html=True)
-            
-            for d in active_drones:
-                color = "#00ffff" if d['type'] == "RESPONDER" else "#ffa500"
-                # CAREFUL: Do not add empty lines inside the div structure here to prevent markdown parsing errors.
-                st.markdown(f"""
-                <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
-                    <h5 style="color: {color}; margin: 0; margin-bottom: 4px;">{d['name']} <span style="color:#888; font-size:0.75rem; font-weight:normal;">({d['type']})</span></h5>
-                    <div style="color: #888; font-size: 0.85rem;">ANNUAL SAVINGS: <span style="color:#00ff00; font-weight:bold;">${d['annual_savings']:,.0f}</span></div>
-                    <div style="color: #888; font-size: 0.85rem;">CALLS IN RANGE: <span style="color:#fff;">{d['allocated_daily_calls']:.1f} / DAY</span></div>
-                    <div style="color: #888; font-size: 0.85rem;">DEFLECTED: <span style="color:#fff;">{d['deflected_daily_calls']:.1f} / DAY</span></div>
-                    <hr style="border-color: #333; margin: 5px 0;">
-                    <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
-                        <span style="color: #888;">UNIT CAPEX: <span style="color:#fff;">${d['cost']:,.0f}</span></span>
-                        <span style="color: #888;">ROI: <span style="color:#00ff00; font-weight:bold;">{d['be_text']}</span></span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-        else:
-            st.info("🚁 Select at least one non-redundant drone to calculate budget impact.")
-    # ==========================================
 
     st.markdown("---")
     if show_health:
@@ -696,7 +678,6 @@ if st.session_state['csvs_ready']:
                 <span style="font-size: 1.3em; background: rgba(0,0,0,0.2); padding: 2px 10px; border-radius: 4px;">{h_label}</span>
             </div>""", unsafe_allow_html=True)
 
-    # --- DYNAMIC METRICS CALCULATION (ADAPTIVE FOR DRONE TYPE) ---
     if simulate_traffic:
         m1, m2, m3, m4, m5 = st.columns(5)
         
@@ -733,7 +714,6 @@ if st.session_state['csvs_ready']:
         m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
         m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
 
-    # --- KML EXPORT ---
     kml_data = generate_kml(
         active_gdf, 
         df_stations_all, 
@@ -750,143 +730,165 @@ if st.session_state['csvs_ready']:
         mime="application/vnd.google-earth.kml+xml"
     )
 
-    # --- MAP RENDERING ---
-    fig = go.Figure()
+    # ==========================================
+    # --- MAIN UI SPLIT: MAP (LEFT) & STATS (RIGHT) ---
+    # ==========================================
+    map_col, stats_col = st.columns([3.5, 1.5])
     
-    def calculate_zoom(min_lon, max_lon, min_lat, max_lat):
-        lon_diff = max_lon - min_lon
-        lat_diff = max_lat - min_lat
+    with map_col:
+        fig = go.Figure()
         
-        if lon_diff <= 0 or lat_diff <= 0:
-            return 12
-            
-        zoom_lon = np.log2(360 / lon_diff)
-        zoom_lat = np.log2(180 / lat_diff)
-        
-        best_zoom = min(zoom_lon, zoom_lat) + 1.6
-        return min(max(best_zoom, 5), 18)
+        def calculate_zoom(min_lon, max_lon, min_lat, max_lat):
+            lon_diff = max_lon - min_lon
+            lat_diff = max_lat - min_lat
+            if lon_diff <= 0 or lat_diff <= 0: return 12
+            zoom_lon = np.log2(360 / lon_diff)
+            zoom_lat = np.log2(180 / lat_diff)
+            best_zoom = min(zoom_lon, zoom_lat) + 1.6
+            return min(max(best_zoom, 5), 18)
 
-    if show_boundaries:
-        if city_boundary_geom is not None and not city_boundary_geom.is_empty:
-            if isinstance(city_boundary_geom, Polygon):
-                bx, by = city_boundary_geom.exterior.coords.xy
-                fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color="#222", width=3), name="Jurisdiction Boundary", hoverinfo='skip'))
-            elif isinstance(city_boundary_geom, MultiPolygon):
-                for poly in city_boundary_geom.geoms:
-                    bx, by = poly.exterior.coords.xy
-                    fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color="#222", width=3), name="Jurisdiction Boundary", hoverinfo='skip', showlegend=False))
+        if show_boundaries:
+            if city_boundary_geom is not None and not city_boundary_geom.is_empty:
+                if isinstance(city_boundary_geom, Polygon):
+                    bx, by = city_boundary_geom.exterior.coords.xy
+                    fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color="#222", width=3), name="Jurisdiction Boundary", hoverinfo='skip'))
+                elif isinstance(city_boundary_geom, MultiPolygon):
+                    for poly in city_boundary_geom.geoms:
+                        bx, by = poly.exterior.coords.xy
+                        fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color="#222", width=3), name="Jurisdiction Boundary", hoverinfo='skip', showlegend=False))
 
-    if show_heatmap and not display_calls.empty:
-        fig.add_trace(go.Densitymapbox(
-            lat=display_calls.geometry.y,
-            lon=display_calls.geometry.x,
-            z=np.ones(len(display_calls)),
-            radius=12,
-            colorscale='Inferno',
-            opacity=0.6,
-            showscale=False,
-            name="Heatmap",
-            hoverinfo='skip'
-        ))
+        if show_heatmap and not display_calls.empty:
+            fig.add_trace(go.Densitymapbox(
+                lat=display_calls.geometry.y,
+                lon=display_calls.geometry.x,
+                z=np.ones(len(display_calls)),
+                radius=12,
+                colorscale='Inferno',
+                opacity=0.6,
+                showscale=False,
+                name="Heatmap",
+                hoverinfo='skip'
+            ))
 
-    if not display_calls.empty:
-        fig.add_trace(go.Scattermapbox(
-            lat=display_calls.geometry.y, 
-            lon=display_calls.geometry.x, 
-            mode='markers', 
-            marker=dict(size=4, color='#000080', opacity=0.35), 
-            name="Incident Data", 
-            hoverinfo='skip'
-        ))
+        if not display_calls.empty:
+            fig.add_trace(go.Scattermapbox(
+                lat=display_calls.geometry.y, 
+                lon=display_calls.geometry.x, 
+                mode='markers', 
+                marker=dict(size=4, color='#000080', opacity=0.35), 
+                name="Incident Data", 
+                hoverinfo='skip'
+            ))
 
-    for i, row in df_stations_all.iterrows():
-        s_name = row['name']
-        color = STATION_COLORS[i % len(STATION_COLORS)]
+        for i, row in df_stations_all.iterrows():
+            s_name = row['name']
+            color = STATION_COLORS[i % len(STATION_COLORS)]
 
-        if s_name in active_resp_names:
-            clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=2.0)
-            lbl = f"{s_name} (Responder)"
-            drive_time_min = (2.0 / 42.0) * 60 
-        elif s_name in active_guard_names:
-            clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=8.0)
-            lbl = f"{s_name} (Guardian)"
-            drive_time_min = (8.0 / 60.0) * 60 
-        else:
-            continue
-
-        fig.add_trace(go.Scattermapbox(
-            lat=list(clats) + [None, row['lat']], 
-            lon=list(clons) + [None, row['lon']], 
-            mode='lines+markers', 
-            marker=dict(size=[0]*len(clats) + [0, 20], color=color), 
-            line=dict(color=color, width=4.5), 
-            fill='toself', 
-            fillcolor='rgba(0,0,0,0)', 
-            name=lbl, 
-            hoverinfo='name'
-        ))
-
-        if simulate_traffic:
-            if traffic_level < 35:
-                t_color = "#28a745"
-                t_fill = "rgba(40, 167, 69, 0.15)"
-                t_label = "Light Traffic"
-            elif traffic_level < 75:
-                t_color = "#ffc107"
-                t_fill = "rgba(255, 193, 7, 0.15)"
-                t_label = "Moderate Traffic"
+            if s_name in active_resp_names:
+                clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=2.0)
+                lbl = f"{s_name} (Responder)"
+                drive_time_min = (2.0 / 42.0) * 60 
+            elif s_name in active_guard_names:
+                clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=8.0)
+                lbl = f"{s_name} (Guardian)"
+                drive_time_min = (8.0 / 60.0) * 60 
             else:
-                t_color = "#dc3545"
-                t_fill = "rgba(220, 53, 69, 0.15)"
-                t_label = "Heavy Traffic"
+                continue
 
-            ground_speed_mph = 35 * (1 - (traffic_level / 100))
-            
-            if ground_speed_mph > 0:
-                ground_range_mi = (ground_speed_mph / 60) * drive_time_min
+            fig.add_trace(go.Scattermapbox(
+                lat=list(clats) + [None, row['lat']], 
+                lon=list(clons) + [None, row['lon']], 
+                mode='lines+markers', 
+                marker=dict(size=[0]*len(clats) + [0, 20], color=color), 
+                line=dict(color=color, width=4.5), 
+                fill='toself', 
+                fillcolor='rgba(0,0,0,0)', 
+                name=lbl, 
+                hoverinfo='name'
+            ))
+
+            if simulate_traffic:
+                if traffic_level < 35:
+                    t_color = "#28a745"
+                    t_fill = "rgba(40, 167, 69, 0.15)"
+                    t_label = "Light Traffic"
+                elif traffic_level < 75:
+                    t_color = "#ffc107"
+                    t_fill = "rgba(255, 193, 7, 0.15)"
+                    t_label = "Moderate Traffic"
+                else:
+                    t_color = "#dc3545"
+                    t_fill = "rgba(220, 53, 69, 0.15)"
+                    t_label = "Heavy Traffic"
+
+                ground_speed_mph = 35 * (1 - (traffic_level / 100))
                 
-                g_angles = np.linspace(0, 2*np.pi, 9) 
-                g_lats = row['lat'] + (ground_range_mi/69.172) * np.sin(g_angles)
-                g_lons = row['lon'] + (ground_range_mi/(69.172 * np.cos(np.radians(row['lat'])))) * np.cos(g_angles)
+                if ground_speed_mph > 0:
+                    ground_range_mi = (ground_speed_mph / 60) * drive_time_min
+                    g_angles = np.linspace(0, 2*np.pi, 9) 
+                    g_lats = row['lat'] + (ground_range_mi/69.172) * np.sin(g_angles)
+                    g_lons = row['lon'] + (ground_range_mi/(69.172 * np.cos(np.radians(row['lat'])))) * np.cos(g_angles)
 
-                fig.add_trace(go.Scattermapbox(
-                    lat=list(g_lats),
-                    lon=list(g_lons),
-                    mode='lines',
-                    line=dict(color=t_color, width=2.5), 
-                    fill='toself',
-                    fillcolor=t_fill,
-                    name=f"Ground Reach ({t_label})",
-                    hoverinfo='skip'
-                ))
+                    fig.add_trace(go.Scattermapbox(
+                        lat=list(g_lats),
+                        lon=list(g_lons),
+                        mode='lines',
+                        line=dict(color=t_color, width=2.5), 
+                        fill='toself',
+                        fillcolor=t_fill,
+                        name=f"Ground Reach ({t_label})",
+                        hoverinfo='skip'
+                    ))
 
-    dynamic_zoom = calculate_zoom(minx, maxx, miny, maxy)
+        dynamic_zoom = calculate_zoom(minx, maxx, miny, maxy)
 
-    mapbox_config = dict(
-        center=dict(lat=center_lat, lon=center_lon),
-        zoom=dynamic_zoom,
-        style="open-street-map"
-    )
-    
-    if show_satellite:
-        mapbox_config["style"] = "carto-positron"
-        mapbox_config["layers"] = [
-            {
-                "below": 'traces',
-                "sourcetype": "raster",
-                "sourceattribution": "Esri, Maxar, Earthstar Geographics",
-                "source": [
-                    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                ]
-            }
-        ]
+        mapbox_config = dict(
+            center=dict(lat=center_lat, lon=center_lon),
+            zoom=dynamic_zoom,
+            style="open-street-map"
+        )
+        
+        if show_satellite:
+            mapbox_config["style"] = "carto-positron"
+            mapbox_config["layers"] = [
+                {
+                    "below": 'traces',
+                    "sourcetype": "raster",
+                    "sourceattribution": "Esri, Maxar, Earthstar Geographics",
+                    "source": [
+                        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                    ]
+                }
+            ]
 
-    fig.update_layout(
-        uirevision="LOCKED_MAP",
-        mapbox=mapbox_config,
-        margin=dict(l=0, r=0, t=0, b=0), 
-        height=800,
-        font=dict(size=18)
-    )
+        fig.update_layout(
+            uirevision="LOCKED_MAP",
+            mapbox=mapbox_config,
+            margin=dict(l=0, r=0, t=0, b=0), 
+            height=800,
+            font=dict(size=18)
+        )
 
-    st.plotly_chart(fig, width='stretch', config={"scrollZoom": True})
+        st.plotly_chart(fig, width='stretch', config={"scrollZoom": True})
+        
+    with stats_col:
+        st.markdown("<h4 style='margin-top:0px; border-bottom: 1px solid #333; padding-bottom: 8px;'>Unit-Level Economics</h4>", unsafe_allow_html=True)
+        if fleet_capex > 0:
+            with st.container(height=735):
+                for d in active_drones:
+                    st.markdown(f"""
+                    <div style="border: 1px solid #222; border-left: 6px solid {d['color']}; padding: 12px; border-radius: 4px; margin-bottom: 12px; background: #0a0a0a; box-shadow: 2px 2px 8px rgba(0,0,0,0.4);">
+                        <h5 style="color: {d['color']}; margin: 0; font-size: 0.95rem; line-height: 1.3;">{d['name']}</h5>
+                        <div style="color: #666; font-size: 0.7rem; margin-bottom: 8px; font-weight: bold; letter-spacing: 1px;">{d['type']}</div>
+                        <div style="color: #aaa; font-size: 0.85rem; margin-top: 4px;">ANNUAL SAVINGS: <span style="color:#00ff00; font-weight:bold; font-size: 1rem;">${d['annual_savings']:,.0f}</span></div>
+                        <div style="color: #aaa; font-size: 0.85rem; margin-top: 4px;">CALLS IN RANGE: <span style="color:#fff; font-weight:bold;">{d['allocated_daily_calls']:.1f} / DAY</span></div>
+                        <div style="color: #aaa; font-size: 0.85rem; margin-top: 4px;">DEFLECTED: <span style="color:#fff; font-weight:bold;">{d['deflected_daily_calls']:.1f} / DAY</span></div>
+                        <hr style="border-color: #222; margin: 8px 0;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
+                            <span style="color: #aaa;">UNIT CAPEX: <span style="color:#fff; font-weight:bold;">${d['cost']:,.0f}</span></span>
+                            <span style="color: #aaa;">ROI: <span style="color:#00ff00; font-weight:bold;">{d['be_text']}</span></span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        else:
+            st.info("🚁 Deploy drones on the map to see individual unit economics.")
