@@ -72,11 +72,30 @@ with st.sidebar.expander("🗺️ Map Library Manager"):
         st.success(f"Saved {count} map files to library!")
 
 # --- MAIN UPLOAD SECTION (CSVs ONLY) ---
+# Initialize session state for CSV handling
 if 'csvs_ready' not in st.session_state:
     st.session_state['csvs_ready'] = False
+    st.session_state['df_calls'] = None
+    st.session_state['df_stations'] = None
 
-with st.expander("📁 Upload Mission Data (CSVs)", expanded=not st.session_state['csvs_ready']):
-    uploaded_files = st.file_uploader("Upload 'calls.csv' and 'stations.csv'", accept_multiple_files=True)
+# Only show the uploader if the CSVs are NOT ready
+if not st.session_state['csvs_ready']:
+    st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
+    uploaded_files = st.file_uploader("Upload Mission Data", accept_multiple_files=True)
+    
+    call_file, station_file = None, None
+    if uploaded_files:
+        for f in uploaded_files:
+            fname = f.name.lower()
+            if fname == "calls.csv": call_file = f
+            elif fname == "stations.csv": station_file = f
+            
+        if call_file and station_file:
+            # Store in session state so it persists when the uploader disappears
+            st.session_state['df_calls'] = pd.read_csv(call_file).dropna(subset=['lat', 'lon'])
+            st.session_state['df_stations'] = pd.read_csv(station_file).dropna(subset=['lat', 'lon'])
+            st.session_state['csvs_ready'] = True
+            st.rerun()
 
 # High-Contrast Palette
 STATION_COLORS = [
@@ -283,17 +302,14 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy)
     model += pulp.lpSum(x_r[i] for i in range(n_stations)) <= num_resp
     model += pulp.lpSum(x_g[i] for i in range(n_stations)) <= num_guard
 
-    # If redundancy is NOT allowed, prevent placing multiple drones at the exact same physical base station
     if not allow_redundancy:
         for s in range(n_stations):
             model += x_r[s] + x_g[s] <= 1
 
     if allow_redundancy:
-        # Decouple the scoring: Responders and Guardians act as independent layers
         y_r = pulp.LpVariable.dicts("cl_r", range(n_u), 0, 1, pulp.LpBinary)
         y_g = pulp.LpVariable.dicts("cl_g", range(n_u), 0, 1, pulp.LpBinary)
         
-        # Maximize the sum of both layers
         model += pulp.lpSum(y_r[i] * weights[i] + y_g[i] * weights[i] for i in range(n_u))
         
         for i in range(n_u):
@@ -307,7 +323,6 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy)
             else: model += y_g[i] == 0
             
     else:
-        # Standard MCLP: A call is either covered or not (1 or 0 value). Overlaps have no value.
         y = pulp.LpVariable.dicts("cl", range(n_u), 0, 1, pulp.LpBinary)
         model += pulp.lpSum(y[i] * weights[i] for i in range(n_u))
 
@@ -331,23 +346,10 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy)
 
     return responders, guardians
 
-# --- FILE ROUTING ---
-call_data, station_data = None, None
-if uploaded_files:
-    for f in uploaded_files:
-        fname = f.name.lower()
-        if fname == "calls.csv": call_data = f
-        elif fname == "stations.csv": station_data = f
-
 # --- MAIN LOGIC ---
-if call_data and station_data:
-    
-    if not st.session_state['csvs_ready']:
-        st.session_state['csvs_ready'] = True
-        st.rerun()
-
-    df_calls = pd.read_csv(call_data).dropna(subset=['lat', 'lon'])
-    df_stations_all = pd.read_csv(station_data).dropna(subset=['lat', 'lon'])
+if st.session_state['csvs_ready']:
+    df_calls = st.session_state['df_calls']
+    df_stations_all = st.session_state['df_stations']
 
     with st.spinner("🌍 Identifying dominant jurisdictions..."):
         master_gdf = find_relevant_jurisdictions(df_calls, df_stations_all, SHAPEFILE_DIR)
@@ -359,7 +361,8 @@ if call_data and station_data:
     st.sidebar.success(f"**Found {len(master_gdf)} Significant Zones**")
     
     st.markdown("---")
-    ctrl_col1, ctrl_col2 = st.columns([1, 2])
+    # CHANGED TO 3 COLUMNS HERE SO THEY ALL SIT ON ONE LINE
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns(3)
     
     total_pts = master_gdf['data_count'].sum()
     master_gdf['LABEL'] = master_gdf['DISPLAY_NAME'] + " (" + (master_gdf['data_count']/total_pts*100).round(1).astype(str) + "%)"
@@ -414,7 +417,6 @@ if call_data and station_data:
     k_responder = st.sidebar.slider("🚁 Responder Drones (2-Mile)", 0, n, min(1, n))
     k_guardian = st.sidebar.slider("🦅 Guardian Drones (8-Mile)", 0, n, 0)
     
-    # NEW REDUNDANCY TOGGLE
     allow_redundancy = st.sidebar.toggle(
         "Multi-Tier (Allow Overlap)", 
         value=True, 
@@ -458,12 +460,10 @@ if call_data and station_data:
             def evaluate_combo(rg_combo):
                 r_combo, g_combo = rg_combo
                 if allow_redundancy:
-                    # Score layers independently
                     r_geos = [station_metadata[i]['clipped_2m'] for i in r_combo]
                     g_geos = [station_metadata[i]['clipped_8m'] for i in g_combo]
                     score = (unary_union(r_geos).area if r_geos else 0.0) + (unary_union(g_geos).area if g_geos else 0.0)
                 else:
-                    # Score as a single flattened layer
                     geos = [station_metadata[i]['clipped_2m'] for i in r_combo] + [station_metadata[i]['clipped_8m'] for i in g_combo]
                     score = unary_union(geos).area if geos else 0.0
                 return (score, rg_combo)
@@ -507,8 +507,9 @@ if call_data and station_data:
     for name in best_guard_names: st.sidebar.write(f"🦅 {name} (Guardian)")
 
     # --- UI SELECTION ---
+    # NOW PLACED IN COL 2 AND COL 3 RESPECTIVELY
     active_resp_names = ctrl_col2.multiselect("🚁 Active Responders (2-Mile)", options=df_stations_all['name'].tolist(), default=best_resp_names)
-    active_guard_names = ctrl_col2.multiselect("🦅 Active Guardians (8-Mile)", options=df_stations_all['name'].tolist(), default=best_guard_names)
+    active_guard_names = ctrl_col3.multiselect("🦅 Active Guardians (8-Mile)", options=df_stations_all['name'].tolist(), default=best_guard_names)
     
     # --- METRICS CALCULATION ---
     area_covered_perc, overlap_perc, calls_covered_perc = 0.0, 0.0, 0.0
@@ -571,7 +572,6 @@ if call_data and station_data:
                 fleet_break_even_months = fleet_capex / monthly_savings
                 break_even_text = f"{fleet_break_even_months:.1f} MONTHS"
                 
-                # Calculate average savings per drone per month to find unit ROI
                 savings_per_drone_per_mo = monthly_savings / total_drones
                 resp_be_months = 80000 / savings_per_drone_per_mo
                 guard_be_months = 160000 / savings_per_drone_per_mo
@@ -838,6 +838,3 @@ if call_data and station_data:
     )
 
     st.plotly_chart(fig, width='stretch', config={"scrollZoom": True})
-
-else:
-    st.info("👋 Upload CSV data to begin. The map will auto-detect matching jurisdictions from the library.")
