@@ -281,9 +281,14 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
     df_profiles['g'] = pd.DataFrame(guard_matrix.T).astype(int).astype(str).agg(''.join, axis=1)
     df_profiles['r'] = df_profiles.drop(columns='g').agg(''.join, axis=1)
     
-    weights = df_profiles.groupby(['r', 'g']).size().values
-    unique_idx = df_profiles.groupby(['r', 'g']).head(1).index
-    u_resp, u_guard = resp_matrix[:, unique_idx], guard_matrix[:, unique_idx]
+    # FIX: sort=False is mathematically required here. Without it, pandas alphabetizes the profiles 
+    # but unique_idx retains the original spatial array order, which scrambles the weights!
+    grouped = df_profiles.groupby(['r', 'g'], sort=False)
+    weights = grouped.size().values
+    unique_idx = grouped.head(1).index
+    
+    u_resp = resp_matrix[:, unique_idx]
+    u_guard = guard_matrix[:, unique_idx]
     n_u = len(weights)
 
     def run_lp(target_r, target_g, locked_r, locked_g):
@@ -348,8 +353,7 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
 
         model += primary_obj + tie_breaker_obj
 
-        # Adding gapRel=0.0 to force the solver to exhaust all branches and find the absolute maximum
-        model.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=15, gapRel=0.0))
+        model.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=10, gapRel=0.0))
 
         res_r = [i for i in range(n_stations) if pulp.value(x_r[i]) == 1]
         res_g = [i for i in range(n_stations) if pulp.value(x_g[i]) == 1]
@@ -590,16 +594,16 @@ if st.session_state['csvs_ready']:
             active_resp_names = [station_metadata[i]['name'] for i in r_best]
             active_guard_names = [station_metadata[i]['name'] for i in g_best]
 
+    st.markdown("---")
+    # Using columns for any high-level stats instead of manual overrides
+    
     # --- METRICS CALCULATION ---
     area_covered_perc, overlap_perc, calls_covered_perc = 0.0, 0.0, 0.0
     
     active_resp_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_resp_names]
     active_guard_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_guard_names]
     
-    active_resp_data = [station_metadata[i] for i in active_resp_idx]
-    active_guard_data = [station_metadata[i] for i in active_guard_idx]
-    
-    active_geos = [s['clipped_2m'] for s in active_resp_data] + [s['clipped_8m'] for s in active_guard_data]
+    active_geos = [station_metadata[idx]['clipped_2m'] for idx in active_resp_idx] + [station_metadata[idx]['clipped_8m'] for idx in active_guard_idx]
 
     if active_geos:
         if not city_m.is_empty:
@@ -619,7 +623,7 @@ if st.session_state['csvs_ready']:
             overlap_perc = (unary_union(inters).area / city_m.area * 100) if inters else 0.0
 
     # ==========================================
-    # --- PHASED UNIT-LEVEL BUDGET MODULE ---
+    # --- BUDGET IMPACT MODULE & ALLOCATION ---
     # ==========================================
     active_drones = []
     fleet_capex = 0
@@ -734,7 +738,6 @@ if st.session_state['csvs_ready']:
                 }
                 
                 if total_calls > 0:
-                    # Marginal Gain (What it specifically added to the map at this phase)
                     marginal_mask = cov_array & ~cumulative_mask
                     marginal_historic = np.sum(marginal_mask)
                     cumulative_mask = cumulative_mask | cov_array
@@ -759,6 +762,9 @@ if st.session_state['csvs_ready']:
                     
                 active_drones.append(d)
                 step += 1
+            
+            # SORT strictly chronologically so Phase 1 is at top, Phase 4 at bottom.
+            active_drones.sort(key=lambda x: x['deploy_step'] if isinstance(x['deploy_step'], int) else 999)
                 
         else:
             st.info("🚁 Select at least one drone above to calculate budget impact.")
@@ -959,8 +965,6 @@ if st.session_state['csvs_ready']:
         st.markdown("<h4 style='margin-top:0px; border-bottom: 1px solid #ddd; padding-bottom: 8px; color: #333;'>Unit-Level Economics</h4>", unsafe_allow_html=True)
         if fleet_capex > 0:
             with st.container(height=735):
-                # The active_drones list is intentionally NOT sorted by savings.
-                # It is locked to chronological deployment order (Phase 1 to Phase N).
                 for d in active_drones:
                     st.markdown(f"""
                     <div style="background-color: #fff; color: #222; border-left: 5px solid {d['color']}; border-top: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; padding: 8px 10px; border-radius: 4px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); line-height: 1.3;">
