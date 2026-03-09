@@ -623,7 +623,10 @@ if st.session_state['csvs_ready']:
     active_resp_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_resp_names]
     active_guard_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_guard_names]
     
-    active_geos = [station_metadata[idx]['clipped_2m'] for idx in active_resp_idx] + [station_metadata[idx]['clipped_8m'] for idx in active_guard_idx]
+    active_resp_data = [station_metadata[i] for i in active_resp_idx]
+    active_guard_data = [station_metadata[i] for i in active_guard_idx]
+    
+    active_geos = [s['clipped_2m'] for s in active_resp_data] + [s['clipped_8m'] for s in active_guard_data]
 
     if active_geos:
         if not city_m.is_empty:
@@ -770,10 +773,9 @@ if st.session_state['csvs_ready']:
                     d['marginal_daily'] = calls_per_day * d['marginal_perc']
                     d['marginal_deflected'] = d['marginal_daily'] * deflection_rate
                     
-                    # We also want to calculate shared calls to show what it overlaps
-                    # To do this safely, we sum all arrays in the ordered deployment up to this point
-                    # but calculating global shared requires a pass. We will just look at current array vs what was already covered.
-                    shared_mask = cov_array & cumulative_mask & ~marginal_mask # essentially just cov_array & cumulative_before_update
+                    temp_all_cov = np.vstack([x['cov_array'] for x in [{'cov_array': resp_matrix[i]} for i in active_resp_idx] + [{'cov_array': guard_matrix[i]} for i in active_guard_idx]])
+                    overlap_counts = temp_all_cov.sum(axis=0)
+                    shared_mask = d['cov_array'] & (overlap_counts > 1)
                     d['shared_daily_calls'] = (np.sum(shared_mask) / total_calls) * calls_per_day
 
                     d['monthly_savings'] = savings_per_call * d['marginal_deflected'] * 30.4
@@ -901,14 +903,17 @@ if st.session_state['csvs_ready']:
         for i, row in df_stations_all.iterrows():
             s_name = row['name']
             color = STATION_COLORS[i % len(STATION_COLORS)]
+            
+            # --- MAP LEGEND FIX: Strip the city/state out to save space ---
+            short_name = s_name.split(',')[0]
 
             if s_name in active_resp_names:
                 clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=2.0)
-                lbl = f"{s_name} (Responder)"
+                lbl = f"{short_name} (Resp)"
                 drive_time_min = (2.0 / 42.0) * 60 
             elif s_name in active_guard_names:
                 clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=8.0)
-                lbl = f"{s_name} (Guardian)"
+                lbl = f"{short_name} (Guard)"
                 drive_time_min = (8.0 / 60.0) * 60 
             else:
                 continue
@@ -984,7 +989,20 @@ if st.session_state['csvs_ready']:
             mapbox=mapbox_config,
             margin=dict(l=0, r=0, t=0, b=0), 
             height=800,
-            font=dict(size=18)
+            font=dict(size=18),
+            showlegend=True,
+            # --- MAP LEGEND FIX: Place cleanly floating inside top-left corner ---
+            legend=dict(
+                yanchor="top",
+                y=0.98,
+                xanchor="left",
+                x=0.02,
+                bgcolor="rgba(255, 255, 255, 0.9)",
+                bordercolor="#ccc",
+                borderwidth=1,
+                font=dict(size=12, color="#333"),
+                itemclick="toggle"
+            )
         )
 
         st.plotly_chart(fig, width='stretch', config={"scrollZoom": True})
@@ -997,7 +1015,25 @@ if st.session_state['csvs_ready']:
                 for i, d in enumerate(active_drones):
                     target_col = c1 if i % 2 == 0 else c2
                     formatted_name = format_3_lines(d['name'])
+                    
+                    html_card = (
+                        f'<div style="background-color: #fff; color: #222; border-top: 4px solid {d["color"]}; '
+                        f'border-left: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; '
+                        f'padding: 8px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); line-height: 1.2;">'
+                        f'<div style="font-weight: 700; font-size: 0.7rem; margin-bottom: 6px; min-height: 3.6em;">{formatted_name}</div>'
+                        f'<div style="font-size: 0.6rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d["type"]} • PH: #{d["deploy_step"]}</div>'
+                        f'<div style="font-size: 0.7rem; color: #555; margin-bottom: 2px;">Savings: <span style="color: #28a745; font-weight: 700; float: right;">${d["annual_savings"]:,.0f}</span></div>'
+                        f'<div style="border-top: 1px solid #f0f0f0; margin: 4px 0;"></div>'
+                        f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Net New: <span style="font-weight: 600; color: #0055ff; float: right;">{d["marginal_daily"]:.1f}/d</span></div>'
+                        f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Shared: <span style="font-weight: 600; float: right;">{d["shared_daily_calls"]:.1f}/d</span></div>'
+                        f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 6px;">Deflected: <span style="font-weight: 600; float: right;">{d["marginal_deflected"]:.1f}/d</span></div>'
+                        f'<div style="border-top: 1px dashed #ddd; padding-top: 4px; font-size: 0.65rem; color: #555;">'
+                        f'CapEx: <strong style="float:right;">${d["cost"]:,.0f}</strong><br>'
+                        f'ROI: <strong style="color: #28a745; float:right;">{d["be_text"]}</strong></div>'
+                        f'</div>'
+                    )
+                    
                     with target_col:
-                        st.markdown(f"""<div style="background-color: #fff; color: #222; border-top: 4px solid {d['color']}; border-left: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; padding: 8px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); line-height: 1.2;"><div style="font-weight: 700; font-size: 0.7rem; margin-bottom: 6px; min-height: 3.6em;">{formatted_name}</div><div style="font-size: 0.6rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d['type']} • PH: #{d['deploy_step']}</div><div style="font-size: 0.7rem; color: #555; margin-bottom: 2px;">Savings: <span style="color: #28a745; font-weight: 700; float: right;">${d['annual_savings']:,.0f}</span></div><div style="border-top: 1px solid #f0f0f0; margin: 4px 0;"></div><div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Net New: <span style="font-weight: 600; color: #0055ff; float: right;">{d['marginal_daily']:.1f}/d</span></div><div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Shared: <span style="font-weight: 600; float: right;">{d['shared_daily_calls']:.1f}/d</span></div><div style="font-size: 0.65rem; color: #555; margin-bottom: 6px;">Deflected: <span style="font-weight: 600; float: right;">{d['marginal_deflected']:.1f}/d</span></div><div style="border-top: 1px dashed #ddd; padding-top: 4px; font-size: 0.65rem; color: #555;">CapEx: <strong style="float:right;">${d['cost']:,.0f}</strong><br>ROI: <strong style="color: #28a745; float:right;">{d['be_text']}</strong></div></div>""", unsafe_allow_html=True)
+                        st.markdown(html_card, unsafe_allow_html=True)
         else:
             st.info("🚁 Deploy drones on the map to see individual unit economics.")
