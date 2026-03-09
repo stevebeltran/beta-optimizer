@@ -261,7 +261,7 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
     return calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls
 
 # --- HIGH-SPEED EXACT OPTIMIZER (AGGREGATED) ---
-def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard):
+def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy):
     n_stations, n_calls = resp_matrix.shape
     if n_calls == 0:
         return [], []
@@ -279,28 +279,50 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard):
 
     x_r = pulp.LpVariable.dicts("r_st", range(n_stations), 0, 1, pulp.LpBinary)
     x_g = pulp.LpVariable.dicts("g_st", range(n_stations), 0, 1, pulp.LpBinary)
-    y = pulp.LpVariable.dicts("cl", range(n_u), 0, 1, pulp.LpBinary)
-
-    model += pulp.lpSum(y[i] * weights[i] for i in range(n_u))
 
     model += pulp.lpSum(x_r[i] for i in range(n_stations)) <= num_resp
     model += pulp.lpSum(x_g[i] for i in range(n_stations)) <= num_guard
 
-    for s in range(n_stations):
-        model += x_r[s] + x_g[s] <= 1
-
-    for i in range(n_u):
-        cover = []
+    # If redundancy is NOT allowed, prevent placing multiple drones at the exact same physical base station
+    if not allow_redundancy:
         for s in range(n_stations):
-            if u_resp[s, i]:
-                cover.append(x_r[s])
-            if u_guard[s, i]:
-                cover.append(x_g[s])
+            model += x_r[s] + x_g[s] <= 1
+
+    if allow_redundancy:
+        # Decouple the scoring: Responders and Guardians act as independent layers
+        y_r = pulp.LpVariable.dicts("cl_r", range(n_u), 0, 1, pulp.LpBinary)
+        y_g = pulp.LpVariable.dicts("cl_g", range(n_u), 0, 1, pulp.LpBinary)
         
-        if cover:
-            model += y[i] <= pulp.lpSum(cover)
-        else:
-            model += y[i] == 0
+        # Maximize the sum of both layers
+        model += pulp.lpSum(y_r[i] * weights[i] + y_g[i] * weights[i] for i in range(n_u))
+        
+        for i in range(n_u):
+            cover_r = [x_r[s] for s in range(n_stations) if u_resp[s, i]]
+            cover_g = [x_g[s] for s in range(n_stations) if u_guard[s, i]]
+            
+            if cover_r: model += y_r[i] <= pulp.lpSum(cover_r)
+            else: model += y_r[i] == 0
+            
+            if cover_g: model += y_g[i] <= pulp.lpSum(cover_g)
+            else: model += y_g[i] == 0
+            
+    else:
+        # Standard MCLP: A call is either covered or not (1 or 0 value). Overlaps have no value.
+        y = pulp.LpVariable.dicts("cl", range(n_u), 0, 1, pulp.LpBinary)
+        model += pulp.lpSum(y[i] * weights[i] for i in range(n_u))
+
+        for i in range(n_u):
+            cover = []
+            for s in range(n_stations):
+                if u_resp[s, i]:
+                    cover.append(x_r[s])
+                if u_guard[s, i]:
+                    cover.append(x_g[s])
+            
+            if cover:
+                model += y[i] <= pulp.lpSum(cover)
+            else:
+                model += y[i] == 0
 
     model.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=10))
 
@@ -392,6 +414,13 @@ if call_data and station_data:
     k_responder = st.sidebar.slider("🚁 Responder Drones (2-Mile)", 0, n, min(1, n))
     k_guardian = st.sidebar.slider("🦅 Guardian Drones (8-Mile)", 0, n, 0)
     
+    # NEW REDUNDANCY TOGGLE
+    allow_redundancy = st.sidebar.toggle(
+        "Multi-Tier (Allow Overlap)", 
+        value=True, 
+        help="Treat Responders and Guardians as independent layers. When ON, drones won't move away just because their coverage rings overlap."
+    )
+    
     show_boundaries = st.sidebar.checkbox("Show Jurisdiction Boundaries", value=True)
     show_heatmap = st.sidebar.toggle("🔥 Show Incident Heatmap", value=False)
     show_health = st.sidebar.toggle("Show Health Score Banner", value=True)
@@ -416,7 +445,7 @@ if call_data and station_data:
         
         if opt_strategy == "Maximize Call Coverage":
             with st.spinner("🧠 Running exact MCLP Optimizer (PuLP)..."):
-                r_best, g_best = solve_mclp(resp_matrix, guard_matrix, k_responder, k_guardian)
+                r_best, g_best = solve_mclp(resp_matrix, guard_matrix, k_responder, k_guardian, allow_redundancy)
                 best_combo = (tuple(r_best), tuple(g_best))
         else:
             station_indices = list(range(n))
@@ -428,8 +457,15 @@ if call_data and station_data:
             
             def evaluate_combo(rg_combo):
                 r_combo, g_combo = rg_combo
-                geos = [station_metadata[i]['clipped_2m'] for i in r_combo] + [station_metadata[i]['clipped_8m'] for i in g_combo]
-                score = unary_union(geos).area if geos else 0.0
+                if allow_redundancy:
+                    # Score layers independently
+                    r_geos = [station_metadata[i]['clipped_2m'] for i in r_combo]
+                    g_geos = [station_metadata[i]['clipped_8m'] for i in g_combo]
+                    score = (unary_union(r_geos).area if r_geos else 0.0) + (unary_union(g_geos).area if g_geos else 0.0)
+                else:
+                    # Score as a single flattened layer
+                    geos = [station_metadata[i]['clipped_2m'] for i in r_combo] + [station_metadata[i]['clipped_8m'] for i in g_combo]
+                    score = unary_union(geos).area if geos else 0.0
                 return (score, rg_combo)
 
             with st.spinner(f"Optimizing {min(total_possible, 3000)} configurations for area..."):
