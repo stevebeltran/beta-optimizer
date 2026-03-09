@@ -562,7 +562,7 @@ if st.session_state['csvs_ready']:
             overlap_perc = (unary_union(inters).area / city_m.area * 100) if inters else 0.0
 
     # ==========================================
-    # --- DECOUPLED BUDGET IMPACT MODULE ---
+    # --- DECOUPLED UNIT-LEVEL BUDGET MODULE ---
     # ==========================================
     with budget_placeholder:
         st.markdown("---")
@@ -580,10 +580,7 @@ if st.session_state['csvs_ready']:
         
         actual_k_responder = len(active_resp_names)
         actual_k_guardian = len(active_guard_names)
-        
-        capex_responder_total = actual_k_responder * 80000
-        capex_guardian_total = actual_k_guardian * 160000
-        fleet_capex = capex_responder_total + capex_guardian_total
+        fleet_capex = (actual_k_responder * 80000) + (actual_k_guardian * 160000)
         
         if fleet_capex > 0:
             # 1. FLEET LEVEL MATH (Calculates unique total program savings)
@@ -625,59 +622,70 @@ if st.session_state['csvs_ready']:
             </div>
             """, unsafe_allow_html=True)
             
-            # 2. RESPONDER TIER MATH
-            if actual_k_responder > 0:
-                cov_r_only = resp_matrix[active_resp_idx].any(axis=0) if len(active_resp_idx) > 0 else np.zeros(total_calls, bool)
-                resp_calls_perc = (cov_r_only.sum() / total_calls) if total_calls > 0 else 0
-                avg_resp_perc = resp_calls_perc / actual_k_responder
+            # 2. INDIVIDUAL STATION ALLOCATION MATH (Equitable Distribution)
+            # Build list of active drones
+            active_drones = []
+            for idx in active_resp_idx:
+                active_drones.append({'name': station_metadata[idx]['name'], 'type': 'RESPONDER', 'cost': 80000, 'cov_array': resp_matrix[idx]})
+            for idx in active_guard_idx:
+                active_drones.append({'name': station_metadata[idx]['name'], 'type': 'GUARDIAN', 'cost': 160000, 'cov_array': guard_matrix[idx]})
                 
-                r_covered_daily = calls_per_day * avg_resp_perc
-                r_deflected_daily = r_covered_daily * deflection_rate
-                r_monthly_savings = savings_per_call * r_deflected_daily * 30.4
+            if total_calls > 0:
+                # How many drones cover each call?
+                all_cov_matrix = np.vstack([d['cov_array'] for d in active_drones])
+                coverage_counts = all_cov_matrix.sum(axis=0)
                 
-                if r_monthly_savings > 0:
-                    resp_be_months = 80000 / r_monthly_savings
-                    resp_be_text = f"{resp_be_months:.1f} MO"
-                else:
-                    resp_be_text = "N/A"
-
+                # Protect against divide-by-zero
+                valid_mask = coverage_counts > 0
+                safe_counts = np.ones_like(coverage_counts)
+                safe_counts[valid_mask] = coverage_counts[valid_mask]
+                
+                # Calculate specific fractional credit per drone
+                for d in active_drones:
+                    # Only look at calls this specific drone covers
+                    d_mask = d['cov_array'] & valid_mask
+                    # If 3 drones cover a call, this drone gets 1/3 (0.33) of the credit for it
+                    allocated_calls_historic = np.sum(1.0 / safe_counts[d_mask])
+                    
+                    d['allocated_perc'] = allocated_calls_historic / total_calls
+                    d['allocated_daily_calls'] = calls_per_day * d['allocated_perc']
+                    d['deflected_daily_calls'] = d['allocated_daily_calls'] * deflection_rate
+                    
+                    d['monthly_savings'] = savings_per_call * d['deflected_daily_calls'] * 30.4
+                    d['annual_savings'] = d['monthly_savings'] * 12
+                    
+                    if d['monthly_savings'] > 0:
+                        d['break_even'] = d['cost'] / d['monthly_savings']
+                        d['be_text'] = f"{d['break_even']:.1f} MO"
+                    else:
+                        d['annual_savings'] = 0
+                        d['break_even'] = float('inf')
+                        d['be_text'] = "N/A"
+            
+            # Sort the drones so the highest ROI (highest annual savings) appear at the top of the list
+            active_drones.sort(key=lambda x: x['annual_savings'], reverse=True)
+            
+            st.markdown("<h6 style='color:#888; border-bottom:1px solid #333; padding-bottom:5px; margin-top:15px;'>UNIT-LEVEL ECONOMICS (COMPARISON SHEET)</h6>", unsafe_allow_html=True)
+            
+            for d in active_drones:
+                color = "#00ffff" if d['type'] == "RESPONDER" else "#ffa500"
                 st.markdown(f"""
                 <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
-                    <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">RESPONDER <span style="color:#fff; font-size:0.9rem;">(x{actual_k_responder})</span></h5>
-                    <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">2 MI RADIUS</span></div>
-                    <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$80,000</span></div>
-                    <div style="color: #888; font-size: 0.85rem;">CALLS IN RANGE: <span style="color:#fff;">{r_covered_daily:.1f} / DAY (AVG)</span></div>
-                    <div style="color: #888; font-size: 0.85rem;">UNIT ROI: <span style="color:#00ff00; font-weight:bold;">{resp_be_text}</span></div>
-                    <div style="color: #888; font-size: 0.85rem; margin-top: 4px; border-top: 1px dashed #333; padding-top: 4px;">SUBTOTAL: <span style="color:#00ffff; font-weight:bold;">${capex_responder_total:,.0f}</span></div>
+                    <h5 style="color: {color}; margin: 0; margin-bottom: 4px;">{d['name']} <span style="color:#888; font-size:0.75rem; font-weight:normal;">({d['type']})</span></h5>
+                    
+                    <div style="color: #888; font-size: 0.85rem;">ANNUAL SAVINGS: <span style="color:#00ff00; font-weight:bold;">${d['annual_savings']:,.0f}</span></div>
+                    <div style="color: #888; font-size: 0.85rem;">CALLS IN RANGE: <span style="color:#fff;">{d['allocated_daily_calls']:.1f} / DAY</span></div>
+                    <div style="color: #888; font-size: 0.85rem;">DEFLECTED: <span style="color:#fff;">{d['deflected_daily_calls']:.1f} / DAY</span></div>
+                    
+                    <hr style="border-color: #333; margin: 5px 0;">
+                    
+                    <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
+                        <span style="color: #888;">UNIT CAPEX: <span style="color:#fff;">${d['cost']:,.0f}</span></span>
+                        <span style="color: #888;">ROI: <span style="color:#00ff00; font-weight:bold;">{d['be_text']}</span></span>
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
                 
-            # 3. GUARDIAN TIER MATH
-            if actual_k_guardian > 0:
-                cov_g_only = guard_matrix[active_guard_idx].any(axis=0) if len(active_guard_idx) > 0 else np.zeros(total_calls, bool)
-                guard_calls_perc = (cov_g_only.sum() / total_calls) if total_calls > 0 else 0
-                avg_guard_perc = guard_calls_perc / actual_k_guardian
-                
-                g_covered_daily = calls_per_day * avg_guard_perc
-                g_deflected_daily = g_covered_daily * deflection_rate
-                g_monthly_savings = savings_per_call * g_deflected_daily * 30.4
-                
-                if g_monthly_savings > 0:
-                    guard_be_months = 160000 / g_monthly_savings
-                    guard_be_text = f"{guard_be_months:.1f} MO"
-                else:
-                    guard_be_text = "N/A"
-
-                st.markdown(f"""
-                <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
-                    <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">GUARDIAN <span style="color:#fff; font-size:0.9rem;">(x{actual_k_guardian})</span></h5>
-                    <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">8 MI RADIUS</span></div>
-                    <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$160,000</span></div>
-                    <div style="color: #888; font-size: 0.85rem;">CALLS IN RANGE: <span style="color:#fff;">{g_covered_daily:.1f} / DAY (AVG)</span></div>
-                    <div style="color: #888; font-size: 0.85rem;">UNIT ROI: <span style="color:#00ff00; font-weight:bold;">{guard_be_text}</span></div>
-                    <div style="color: #888; font-size: 0.85rem; margin-top: 4px; border-top: 1px dashed #333; padding-top: 4px;">SUBTOTAL: <span style="color:#00ffff; font-weight:bold;">${capex_guardian_total:,.0f}</span></div>
-                </div>
-                """, unsafe_allow_html=True)
         else:
             st.info("🚁 Select at least one non-redundant drone to calculate budget impact.")
     # ==========================================
