@@ -291,7 +291,6 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
     x_r = pulp.LpVariable.dicts("r_st", range(n_stations), 0, 1, pulp.LpBinary)
     x_g = pulp.LpVariable.dicts("g_st", range(n_stations), 0, 1, pulp.LpBinary)
 
-    # STRICT QUOTA: The engine MUST place exactly the number of drones requested on the sliders.
     model += pulp.lpSum(x_r[i] for i in range(n_stations)) == num_resp
     model += pulp.lpSum(x_g[i] for i in range(n_stations)) == num_guard
 
@@ -337,7 +336,6 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
     area_weight = 0.4 / n_drones
     cent_weight = 0.05 / n_drones
     
-    # We no longer apply a mathematical penalty since we force the quota with '==' above.
     tie_breaker_obj = pulp.lpSum(
         x_r[s] * (tb_area_r[s] * area_weight + tb_cent[s] * cent_weight) +
         x_g[s] * (tb_area_g[s] * area_weight + tb_cent[s] * cent_weight)
@@ -564,7 +562,7 @@ if st.session_state['csvs_ready']:
             overlap_perc = (unary_union(inters).area / city_m.area * 100) if inters else 0.0
 
     # ==========================================
-    # --- BUDGET IMPACT MODULE (INJECTED TO SIDEBAR) ---
+    # --- DECOUPLED BUDGET IMPACT MODULE ---
     # ==========================================
     with budget_placeholder:
         st.markdown("---")
@@ -586,9 +584,9 @@ if st.session_state['csvs_ready']:
         capex_responder_total = actual_k_responder * 80000
         capex_guardian_total = actual_k_guardian * 160000
         fleet_capex = capex_responder_total + capex_guardian_total
-        total_drones = actual_k_responder + actual_k_guardian
         
         if fleet_capex > 0:
+            # 1. FLEET LEVEL MATH (Calculates unique total program savings)
             effective_coverage_rate = calls_covered_perc / 100.0
             covered_daily_calls = calls_per_day * effective_coverage_rate
             daily_drone_only_calls = covered_daily_calls * deflection_rate
@@ -598,18 +596,9 @@ if st.session_state['csvs_ready']:
                 annual_savings = monthly_savings * 12
                 fleet_break_even_months = fleet_capex / monthly_savings
                 break_even_text = f"{fleet_break_even_months:.1f} MONTHS"
-                
-                savings_per_drone_per_mo = monthly_savings / total_drones
-                resp_be_months = 80000 / savings_per_drone_per_mo
-                guard_be_months = 160000 / savings_per_drone_per_mo
-                
-                resp_be_text = f"{resp_be_months:.1f} MO"
-                guard_be_text = f"{guard_be_months:.1f} MO"
             else:
                 annual_savings = 0
                 break_even_text = "N/A"
-                resp_be_text = "N/A"
-                guard_be_text = "N/A"
             
             st.markdown(f"""
             <div style="background: #000000; border: 1px solid #00ff00; padding: 15px; border-radius: 4px; text-align: center; margin-bottom: 15px; box-shadow: 0px 0px 10px rgba(0, 255, 0, 0.15);">
@@ -617,9 +606,14 @@ if st.session_state['csvs_ready']:
                 <h2 style="color: #00ff00; margin: 0; font-family: 'Consolas', monospace; text-shadow: 0 0 10px rgba(0,255,0,0.5);">${annual_savings:,.0f}</h2>
                 <hr style="border-color: #00ff00; opacity: 0.3; margin: 10px 0;">
                 <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
-                    <span style="color: #888;">ACTIVE COVERAGE:</span>
-                    <span style="color: #fff; font-weight: bold;">{calls_covered_perc:.1f}%</span>
+                    <span style="color: #888;">IN DRONE RANGE:</span>
+                    <span style="color: #fff; font-weight: bold;">{covered_daily_calls:.1f} / DAY</span>
                 </div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
+                    <span style="color: #888;">DEFLECTED (SAVINGS):</span>
+                    <span style="color: #fff; font-weight: bold;">{daily_drone_only_calls:.1f} / DAY</span>
+                </div>
+                <hr style="border-color: #333; margin: 5px 0;">
                 <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
                     <span style="color: #888;">FLEET CAPEX:</span>
                     <span style="color: #fff; font-weight: bold;">${fleet_capex:,.0f}</span>
@@ -631,23 +625,55 @@ if st.session_state['csvs_ready']:
             </div>
             """, unsafe_allow_html=True)
             
+            # 2. RESPONDER TIER MATH
             if actual_k_responder > 0:
+                cov_r_only = resp_matrix[active_resp_idx].any(axis=0) if len(active_resp_idx) > 0 else np.zeros(total_calls, bool)
+                resp_calls_perc = (cov_r_only.sum() / total_calls) if total_calls > 0 else 0
+                avg_resp_perc = resp_calls_perc / actual_k_responder
+                
+                r_covered_daily = calls_per_day * avg_resp_perc
+                r_deflected_daily = r_covered_daily * deflection_rate
+                r_monthly_savings = savings_per_call * r_deflected_daily * 30.4
+                
+                if r_monthly_savings > 0:
+                    resp_be_months = 80000 / r_monthly_savings
+                    resp_be_text = f"{resp_be_months:.1f} MO"
+                else:
+                    resp_be_text = "N/A"
+
                 st.markdown(f"""
                 <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
                     <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">RESPONDER <span style="color:#fff; font-size:0.9rem;">(x{actual_k_responder})</span></h5>
                     <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">2 MI RADIUS</span></div>
                     <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$80,000</span></div>
+                    <div style="color: #888; font-size: 0.85rem;">CALLS IN RANGE: <span style="color:#fff;">{r_covered_daily:.1f} / DAY (AVG)</span></div>
                     <div style="color: #888; font-size: 0.85rem;">UNIT ROI: <span style="color:#00ff00; font-weight:bold;">{resp_be_text}</span></div>
                     <div style="color: #888; font-size: 0.85rem; margin-top: 4px; border-top: 1px dashed #333; padding-top: 4px;">SUBTOTAL: <span style="color:#00ffff; font-weight:bold;">${capex_responder_total:,.0f}</span></div>
                 </div>
                 """, unsafe_allow_html=True)
                 
+            # 3. GUARDIAN TIER MATH
             if actual_k_guardian > 0:
+                cov_g_only = guard_matrix[active_guard_idx].any(axis=0) if len(active_guard_idx) > 0 else np.zeros(total_calls, bool)
+                guard_calls_perc = (cov_g_only.sum() / total_calls) if total_calls > 0 else 0
+                avg_guard_perc = guard_calls_perc / actual_k_guardian
+                
+                g_covered_daily = calls_per_day * avg_guard_perc
+                g_deflected_daily = g_covered_daily * deflection_rate
+                g_monthly_savings = savings_per_call * g_deflected_daily * 30.4
+                
+                if g_monthly_savings > 0:
+                    guard_be_months = 160000 / g_monthly_savings
+                    guard_be_text = f"{guard_be_months:.1f} MO"
+                else:
+                    guard_be_text = "N/A"
+
                 st.markdown(f"""
                 <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
                     <h5 style="color: #00ffff; margin: 0; margin-bottom: 4px;">GUARDIAN <span style="color:#fff; font-size:0.9rem;">(x{actual_k_guardian})</span></h5>
                     <div style="color: #888; font-size: 0.85rem;">COVERAGE: <span style="color:#fff;">8 MI RADIUS</span></div>
                     <div style="color: #888; font-size: 0.85rem;">UNIT CAPEX: <span style="color:#fff;">$160,000</span></div>
+                    <div style="color: #888; font-size: 0.85rem;">CALLS IN RANGE: <span style="color:#fff;">{g_covered_daily:.1f} / DAY (AVG)</span></div>
                     <div style="color: #888; font-size: 0.85rem;">UNIT ROI: <span style="color:#00ff00; font-weight:bold;">{guard_be_text}</span></div>
                     <div style="color: #888; font-size: 0.85rem; margin-top: 4px; border-top: 1px dashed #333; padding-top: 4px;">SUBTOTAL: <span style="color:#00ffff; font-weight:bold;">${capex_guardian_total:,.0f}</span></div>
                 </div>
