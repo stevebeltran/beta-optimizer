@@ -313,7 +313,7 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
     n_u = len(weights)
 
     def run_lp(target_r, target_g, locked_r, locked_g):
-        model = pulp.LpProblem("DroneCoverage", pulp.Lp)
+        model = pulp.LpProblem("DroneCoverage", pulp.LpMaximize)
 
         x_r = pulp.LpVariable.dicts("r_st", range(n_stations), 0, 1, pulp.LpBinary)
         x_g = pulp.LpVariable.dicts("g_st", range(n_stations), 0, 1, pulp.LpBinary)
@@ -474,7 +474,7 @@ if st.session_state['csvs_ready']:
     # --- OPTIMIZER CONTROLS ---
     st.sidebar.markdown("---")
     st.sidebar.header("🎯 Optimizer Controls")
-    opt_strategy = st.sidebar.radio("Optimization Goal:", ("Call Coverage", "Land Coverage"), index=0)
+    opt_strategy = st.sidebar.radio("Optimization Goal:", ("Maximize Call Coverage", "Maximize Land Coverage"), index=0)
     
     incremental_build = st.sidebar.toggle(
         "Phased Rollout (Static List)", 
@@ -513,7 +513,7 @@ if st.session_state['csvs_ready']:
         
         best_combo = None
         
-        if opt_strategy == "Call Coverage":
+        if opt_strategy == "Maximize Call Coverage":
             with st.spinner("🧠 Running exact MCLP Optimizer (PuLP)..."):
                 r_best, g_best, chrono_r, chrono_g = solve_mclp(resp_matrix, guard_matrix, k_responder, k_guardian, allow_redundancy, tb_area_r, tb_area_g, tb_cent, incremental=incremental_build)
                 best_combo = (tuple(r_best), tuple(g_best))
@@ -1037,4 +1037,3 @@ if st.session_state['csvs_ready']:
                         st.markdown(html_card, unsafe_allow_html=True)
         else:
             st.info("🚁 Deploy drones on the map to see individual unit economics.")
-
