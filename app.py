@@ -13,6 +13,7 @@ import math
 import simplekml
 from concurrent.futures import ThreadPoolExecutor
 import pulp
+import re
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="brinc COS Drone Optimizer", layout="wide")
@@ -105,6 +106,28 @@ def get_circle_coords(lat, lon, r_mi=2.0):
     c_lats = lat + (r_mi/69.172) * np.sin(angles)
     c_lons = lon + (r_mi/(69.172 * np.cos(np.radians(lat)))) * np.cos(angles)
     return c_lats, c_lons
+
+def format_3_lines(name_str):
+    """Smartly parses standard address formats into exactly 3 lines to fit tight grids."""
+    match = re.search(r'\s(\d{1,5}\s+[A-Za-z])', name_str)
+    if match:
+        idx = match.start()
+        line1 = name_str[:idx].strip()
+        rest = name_str[idx:].strip()
+        if ',' in rest:
+            parts = rest.split(',', 1)
+            line2 = parts[0].strip() + ","
+            line3 = parts[1].strip()
+            return f"{line1}<br>{line2}<br>{line3}"
+        else:
+            return f"{line1}<br>{rest}<br>&nbsp;"
+    else:
+        if ',' in name_str:
+            parts = name_str.split(',')
+            if len(parts) >= 3:
+                return f"{parts[0].strip()},<br>{parts[1].strip()},<br>{','.join(parts[2:]).strip()}"
+            return f"{name_str}<br>&nbsp;<br>&nbsp;"
+        return f"{name_str}<br>&nbsp;<br>&nbsp;"
 
 def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_names, calls_gdf):
     kml = simplekml.Kml()
@@ -281,7 +304,6 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
     df_profiles['g'] = pd.DataFrame(guard_matrix.T).astype(int).astype(str).agg(''.join, axis=1)
     df_profiles['r'] = df_profiles.drop(columns='g').agg(''.join, axis=1)
     
-    # sort=False is required so we don't scramble the call alignment
     grouped = df_profiles.groupby(['r', 'g'], sort=False)
     weights = grouped.size().values
     unique_idx = grouped.head(1).index
@@ -594,9 +616,6 @@ if st.session_state['csvs_ready']:
             active_guard_names = [station_metadata[i]['name'] for i in g_best]
 
     st.markdown("---")
-    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns(3)
-    active_resp_names = ctrl_col2.multiselect("🚁 Active Responders (2-Mile)", options=df_stations_all['name'].tolist(), default=active_resp_names)
-    active_guard_names = ctrl_col3.multiselect("🦅 Active Guardians (8-Mile)", options=df_stations_all['name'].tolist(), default=active_guard_names)
     
     # --- METRICS CALCULATION ---
     area_covered_perc, overlap_perc, calls_covered_perc = 0.0, 0.0, 0.0
@@ -604,10 +623,7 @@ if st.session_state['csvs_ready']:
     active_resp_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_resp_names]
     active_guard_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_guard_names]
     
-    active_resp_data = [station_metadata[i] for i in active_resp_idx]
-    active_guard_data = [station_metadata[i] for i in active_guard_idx]
-    
-    active_geos = [s['clipped_2m'] for s in active_resp_data] + [s['clipped_8m'] for s in active_guard_data]
+    active_geos = [station_metadata[idx]['clipped_2m'] for idx in active_resp_idx] + [station_metadata[idx]['clipped_8m'] for idx in active_guard_idx]
 
     if active_geos:
         if not city_m.is_empty:
@@ -754,6 +770,12 @@ if st.session_state['csvs_ready']:
                     d['marginal_daily'] = calls_per_day * d['marginal_perc']
                     d['marginal_deflected'] = d['marginal_daily'] * deflection_rate
                     
+                    # We also want to calculate shared calls to show what it overlaps
+                    # To do this safely, we sum all arrays in the ordered deployment up to this point
+                    # but calculating global shared requires a pass. We will just look at current array vs what was already covered.
+                    shared_mask = cov_array & cumulative_mask & ~marginal_mask # essentially just cov_array & cumulative_before_update
+                    d['shared_daily_calls'] = (np.sum(shared_mask) / total_calls) * calls_per_day
+
                     d['monthly_savings'] = savings_per_call * d['marginal_deflected'] * 30.4
                     d['annual_savings'] = d['monthly_savings'] * 12
                     
@@ -766,6 +788,7 @@ if st.session_state['csvs_ready']:
                     d['annual_savings'] = 0
                     d['marginal_daily'] = 0
                     d['marginal_deflected'] = 0
+                    d['shared_daily_calls'] = 0
                     d['be_text'] = "N/A"
                     
                 active_drones.append(d)
@@ -828,7 +851,7 @@ if st.session_state['csvs_ready']:
     # ==========================================
     # --- MAIN UI SPLIT: MAP (LEFT) & STATS (RIGHT) ---
     # ==========================================
-    map_col, stats_col = st.columns([4, 1.2])
+    map_col, stats_col = st.columns([4.2, 1.8])
     
     with map_col:
         fig = go.Figure()
@@ -969,9 +992,12 @@ if st.session_state['csvs_ready']:
     with stats_col:
         st.markdown("<h4 style='margin-top:0px; border-bottom: 1px solid #ddd; padding-bottom: 8px; color: #333;'>Unit-Level Economics</h4>", unsafe_allow_html=True)
         if fleet_capex > 0:
-            with st.container(height=735):
-                for d in active_drones:
-                    # REMOVED ALL BLANK LINES IN THIS HTML STRING TO PREVENT STREAMLIT PARSING ERRORS
-                    st.markdown(f"""<div style="background-color: #fff; color: #222; border-left: 5px solid {d['color']}; border-top: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; padding: 8px 10px; border-radius: 4px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); line-height: 1.3;"><div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 2px;">{d['name']}</div><div style="font-size: 0.65rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d['type']} • PHASE: #{d['deploy_step']}</div><div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;"><span style="color: #555;">Phase Savings:</span><span style="color: #28a745; font-weight: 700;">${d['annual_savings']:,.0f}/yr</span></div><div style="border-top: 1px solid #f0f0f0; margin: 4px 0;"></div><div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;"><span style="color: #555;">Added Coverage:</span><span style="font-weight: 600; color: #0055ff;">{d['marginal_daily']:.1f}/day</span></div><div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 6px;"><span style="color: #555;">Added Deflections:</span><span style="font-weight: 600;">{d['marginal_deflected']:.1f}/day</span></div><div style="border-top: 1px dashed #ddd; padding-top: 4px; display: flex; justify-content: space-between; font-size: 0.75rem;"><span style="color: #555;">CapEx: <strong>${d['cost']:,.0f}</strong></span><span style="color: #555;">Phase ROI: <strong style="color: #28a745;">{d['be_text']}</strong></span></div></div>""", unsafe_allow_html=True)
+            with st.container():
+                c1, c2 = st.columns(2)
+                for i, d in enumerate(active_drones):
+                    target_col = c1 if i % 2 == 0 else c2
+                    formatted_name = format_3_lines(d['name'])
+                    with target_col:
+                        st.markdown(f"""<div style="background-color: #fff; color: #222; border-top: 4px solid {d['color']}; border-left: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; padding: 8px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); line-height: 1.2;"><div style="font-weight: 700; font-size: 0.7rem; margin-bottom: 6px; min-height: 3.6em;">{formatted_name}</div><div style="font-size: 0.6rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d['type']} • PH: #{d['deploy_step']}</div><div style="font-size: 0.7rem; color: #555; margin-bottom: 2px;">Savings: <span style="color: #28a745; font-weight: 700; float: right;">${d['annual_savings']:,.0f}</span></div><div style="border-top: 1px solid #f0f0f0; margin: 4px 0;"></div><div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Net New: <span style="font-weight: 600; color: #0055ff; float: right;">{d['marginal_daily']:.1f}/d</span></div><div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Shared: <span style="font-weight: 600; float: right;">{d['shared_daily_calls']:.1f}/d</span></div><div style="font-size: 0.65rem; color: #555; margin-bottom: 6px;">Deflected: <span style="font-weight: 600; float: right;">{d['marginal_deflected']:.1f}/d</span></div><div style="border-top: 1px dashed #ddd; padding-top: 4px; font-size: 0.65rem; color: #555;">CapEx: <strong style="float:right;">${d['cost']:,.0f}</strong><br>ROI: <strong style="color: #28a745; float:right;">{d['be_text']}</strong></div></div>""", unsafe_allow_html=True)
         else:
             st.info("🚁 Deploy drones on the map to see individual unit economics.")
