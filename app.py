@@ -365,19 +365,18 @@ if st.session_state['csvs_ready']:
 
     st.sidebar.success(f"**Found {len(master_gdf)} Significant Zones**")
     
-    st.markdown("---")
-    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns(3)
-    
+    # Move Jurisdiction Selection to the Sidebar
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📍 Jurisdictions")
     total_pts = master_gdf['data_count'].sum()
     master_gdf['LABEL'] = master_gdf['DISPLAY_NAME'] + " (" + (master_gdf['data_count']/total_pts*100).round(1).astype(str) + "%)"
-    
     options_map = dict(zip(master_gdf['LABEL'], master_gdf['DISPLAY_NAME']))
     all_options = master_gdf['LABEL'].tolist()
     
-    selected_labels = ctrl_col1.multiselect("📍 Active Jurisdictions", options=all_options, default=all_options)
+    selected_labels = st.sidebar.multiselect("Active Jurisdictions", options=all_options, default=all_options, label_visibility="collapsed")
     
     if not selected_labels:
-        st.warning("Please select at least one jurisdiction.")
+        st.warning("Please select at least one jurisdiction from the sidebar.")
         st.stop()
         
     selected_names = [options_map[l] for l in selected_labels]
@@ -427,6 +426,7 @@ if st.session_state['csvs_ready']:
     tb_cent = [s['centrality'] for s in station_metadata]
 
     # --- OPTIMIZER CONTROLS ---
+    st.sidebar.markdown("---")
     st.sidebar.header("🎯 Optimizer Controls")
     opt_strategy = st.sidebar.radio("Optimization Goal:", ("Maximize Call Coverage", "Maximize Land Coverage"), index=0)
     
@@ -452,6 +452,7 @@ if st.session_state['csvs_ready']:
     budget_placeholder = st.sidebar.container()
 
     best_resp_names, best_guard_names = [], []
+    active_resp_names, active_guard_names = [], []
     
     if k_responder + k_guardian > n:
         st.error("⚠️ Over-Deployment: Total requested drones exceed available stations.")
@@ -521,18 +522,9 @@ if st.session_state['csvs_ready']:
         
         if best_combo is not None:
             r_best, g_best = best_combo
-            best_resp_names = [station_metadata[i]['name'] for i in r_best]
-            best_guard_names = [station_metadata[i]['name'] for i in g_best]
+            active_resp_names = [station_metadata[i]['name'] for i in r_best]
+            active_guard_names = [station_metadata[i]['name'] for i in g_best]
 
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🏆 Recommended Deployment")
-    for name in best_resp_names: st.sidebar.write(f"🚁 {name} (Responder)")
-    for name in best_guard_names: st.sidebar.write(f"🦅 {name} (Guardian)")
-
-    # --- UI SELECTION ---
-    active_resp_names = ctrl_col2.multiselect("🚁 Active Responders (2-Mile)", options=df_stations_all['name'].tolist(), default=best_resp_names)
-    active_guard_names = ctrl_col3.multiselect("🦅 Active Guardians (8-Mile)", options=df_stations_all['name'].tolist(), default=best_guard_names)
-    
     # --- METRICS CALCULATION ---
     area_covered_perc, overlap_perc, calls_covered_perc = 0.0, 0.0, 0.0
     
@@ -562,7 +554,7 @@ if st.session_state['csvs_ready']:
             overlap_perc = (unary_union(inters).area / city_m.area * 100) if inters else 0.0
 
     # ==========================================
-    # --- BUDGET IMPACT MODULE & ALLOCATION ---
+    # --- DECOUPLED UNIT-LEVEL BUDGET MODULE ---
     # ==========================================
     active_drones = []
     fleet_capex = 0
@@ -586,6 +578,7 @@ if st.session_state['csvs_ready']:
         fleet_capex = (actual_k_responder * 80000) + (actual_k_guardian * 160000)
         
         if fleet_capex > 0:
+            # 1. FLEET LEVEL MATH (Calculates unique total program savings)
             effective_coverage_rate = calls_covered_perc / 100.0
             covered_daily_calls = calls_per_day * effective_coverage_rate
             daily_drone_only_calls = covered_daily_calls * deflection_rate
@@ -599,33 +592,54 @@ if st.session_state['csvs_ready']:
                 annual_savings = 0
                 break_even_text = "N/A"
             
-            # Print Sidebar Total Fleet Card
+            # Print Sidebar Total Fleet Card using clean white styling
             st.markdown(f"""
-            <div style="background: #000000; border: 1px solid #00ff00; padding: 15px; border-radius: 4px; text-align: center; margin-bottom: 15px; box-shadow: 0px 0px 10px rgba(0, 255, 0, 0.15);">
-                <h6 style="color: #888; margin: 0; font-size: 0.8rem; letter-spacing: 1px;">ANNUAL TAXPAYER SAVINGS</h6>
-                <h2 style="color: #00ff00; margin: 0; font-family: 'Consolas', monospace; text-shadow: 0 0 10px rgba(0,255,0,0.5);">${annual_savings:,.0f}</h2>
-                <hr style="border-color: #00ff00; opacity: 0.3; margin: 10px 0;">
-                <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
-                    <span style="color: #888;">IN DRONE RANGE:</span>
-                    <span style="color: #fff; font-weight: bold;">{covered_daily_calls:.1f} / DAY</span>
+            <div style="background-color: #ffffff; border: 1px solid #28a745; padding: 12px; border-radius: 4px; text-align: center; margin-bottom: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+                <h6 style="color: #555; margin: 0; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;">Annual Taxpayer Savings</h6>
+                <h2 style="color: #28a745; margin: 4px 0; font-family: 'Consolas', monospace; font-size: 1.8rem;">${annual_savings:,.0f}</h2>
+                <div style="border-top: 1px solid #eee; margin: 8px 0;"></div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 3px;">
+                    <span style="color: #666;">IN DRONE RANGE:</span>
+                    <span style="color: #222; font-weight: 700;">{covered_daily_calls:.1f} / DAY</span>
                 </div>
-                <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
-                    <span style="color: #888;">DEFLECTED (SAVINGS):</span>
-                    <span style="color: #fff; font-weight: bold;">{daily_drone_only_calls:.1f} / DAY</span>
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 6px;">
+                    <span style="color: #666;">DEFLECTED (SAVINGS):</span>
+                    <span style="color: #222; font-weight: 700;">{daily_drone_only_calls:.1f} / DAY</span>
                 </div>
-                <hr style="border-color: #333; margin: 5px 0;">
-                <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
-                    <span style="color: #888;">FLEET CAPEX:</span>
-                    <span style="color: #fff; font-weight: bold;">${fleet_capex:,.0f}</span>
+                <div style="border-top: 1px dashed #ddd; margin: 6px 0;"></div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 3px;">
+                    <span style="color: #666;">FLEET CAPEX:</span>
+                    <span style="color: #222; font-weight: 700;">${fleet_capex:,.0f}</span>
                 </div>
-                <div style="display: flex; justify-content: space-between; font-size: 0.8rem;">
-                    <span style="color: #888;">BREAK-EVEN:</span>
-                    <span style="color: #00ff00; font-weight: bold;">{break_even_text}</span>
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem;">
+                    <span style="color: #666;">BREAK-EVEN:</span>
+                    <span style="color: #28a745; font-weight: 700;">{break_even_text}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
-            # --- CALCULATE EQUITABLE UNIT ALLOCATIONS ---
+            # Sub-tier cards in white style
+            if actual_k_responder > 0:
+                st.markdown(f"""
+                <div style="background-color: #f9f9f9; border: 1px solid #e0e0e0; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
+                    <h5 style="color: #333; margin: 0 0 4px 0; font-size: 0.85rem;">RESPONDER <span style="color:#777; font-weight:normal;">(x{actual_k_responder})</span></h5>
+                    <div style="color: #555; font-size: 0.75rem;">COVERAGE: <span style="color:#222; font-weight:600;">2 MI RADIUS</span></div>
+                    <div style="color: #555; font-size: 0.75rem;">UNIT CAPEX: <span style="color:#222; font-weight:600;">$80,000</span></div>
+                    <div style="color: #555; font-size: 0.75rem; margin-top: 4px; border-top: 1px solid #ddd; padding-top: 4px;">SUBTOTAL: <span style="color:#222; font-weight:600;">${capex_responder_total:,.0f}</span></div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            if actual_k_guardian > 0:
+                st.markdown(f"""
+                <div style="background-color: #f9f9f9; border: 1px solid #e0e0e0; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
+                    <h5 style="color: #333; margin: 0 0 4px 0; font-size: 0.85rem;">GUARDIAN <span style="color:#777; font-weight:normal;">(x{actual_k_guardian})</span></h5>
+                    <div style="color: #555; font-size: 0.75rem;">COVERAGE: <span style="color:#222; font-weight:600;">8 MI RADIUS</span></div>
+                    <div style="color: #555; font-size: 0.75rem;">UNIT CAPEX: <span style="color:#222; font-weight:600;">$160,000</span></div>
+                    <div style="color: #555; font-size: 0.75rem; margin-top: 4px; border-top: 1px solid #ddd; padding-top: 4px;">SUBTOTAL: <span style="color:#222; font-weight:600;">${capex_guardian_total:,.0f}</span></div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # 2. INDIVIDUAL STATION ALLOCATION MATH (Equitable Distribution)
             for idx in active_resp_idx:
                 map_color = STATION_COLORS[idx % len(STATION_COLORS)]
                 active_drones.append({'name': station_metadata[idx]['name'], 'type': 'RESPONDER', 'cost': 80000, 'cov_array': resp_matrix[idx], 'color': map_color})
@@ -662,8 +676,10 @@ if st.session_state['csvs_ready']:
                         d['be_text'] = "N/A"
             
             active_drones.sort(key=lambda x: x['annual_savings'], reverse=True)
+        else:
+            st.info("🚁 Select at least one drone above to calculate budget impact.")
+    # ==========================================
 
-    st.markdown("---")
     if show_health:
         norm_redundancy = min(overlap_perc / 35.0, 1.0) * 100
         health_score = (calls_covered_perc * 0.50) + (area_covered_perc * 0.35) + (norm_redundancy * 0.15)
@@ -714,26 +730,10 @@ if st.session_state['csvs_ready']:
         m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
         m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
 
-    kml_data = generate_kml(
-        active_gdf, 
-        df_stations_all, 
-        active_resp_names,
-        active_guard_names,
-        calls_in_city
-    )
-    
-    st.sidebar.markdown("---")
-    st.sidebar.download_button(
-        label="🌏 Download for Google Earth",
-        data=kml_data,
-        file_name="drone_deployment.kml",
-        mime="application/vnd.google-earth.kml+xml"
-    )
-
     # ==========================================
     # --- MAIN UI SPLIT: MAP (LEFT) & STATS (RIGHT) ---
     # ==========================================
-    map_col, stats_col = st.columns([3.5, 1.5])
+    map_col, stats_col = st.columns([4, 1.2])
     
     with map_col:
         fig = go.Figure()
@@ -872,23 +872,31 @@ if st.session_state['csvs_ready']:
         st.plotly_chart(fig, width='stretch', config={"scrollZoom": True})
         
     with stats_col:
-        st.markdown("<h4 style='margin-top:0px; border-bottom: 1px solid #333; padding-bottom: 8px;'>Unit-Level Economics</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='margin-top:0px; border-bottom: 1px solid #ddd; padding-bottom: 8px; color: #333;'>Unit-Level Economics</h4>", unsafe_allow_html=True)
         if fleet_capex > 0:
             with st.container(height=735):
                 for d in active_drones:
                     st.markdown(f"""
-                    <div style="border: 1px solid #222; border-left: 6px solid {d['color']}; padding: 12px; border-radius: 4px; margin-bottom: 12px; background: #0a0a0a; box-shadow: 2px 2px 8px rgba(0,0,0,0.4);">
-                        <h5 style="color: {d['color']}; margin: 0; font-size: 0.95rem; line-height: 1.3;">{d['name']}</h5>
-                        <div style="color: #666; font-size: 0.7rem; margin-bottom: 8px; font-weight: bold; letter-spacing: 1px;">{d['type']}</div>
-                        <div style="color: #aaa; font-size: 0.85rem; margin-top: 4px;">ANNUAL SAVINGS: <span style="color:#00ff00; font-weight:bold; font-size: 1rem;">${d['annual_savings']:,.0f}</span></div>
-                        <div style="color: #aaa; font-size: 0.85rem; margin-top: 4px;">CALLS IN RANGE: <span style="color:#fff; font-weight:bold;">{d['allocated_daily_calls']:.1f} / DAY</span></div>
-                        <div style="color: #aaa; font-size: 0.85rem; margin-top: 4px;">DEFLECTED: <span style="color:#fff; font-weight:bold;">{d['deflected_daily_calls']:.1f} / DAY</span></div>
-                        <hr style="border-color: #222; margin: 8px 0;">
-                        <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
-                            <span style="color: #aaa;">UNIT CAPEX: <span style="color:#fff; font-weight:bold;">${d['cost']:,.0f}</span></span>
-                            <span style="color: #aaa;">ROI: <span style="color:#00ff00; font-weight:bold;">{d['be_text']}</span></span>
-                        </div>
-                    </div>
+                    <div style="background-color: #fff; color: #222; border-left: 5px solid {d['color']}; border-top: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0; padding: 8px 10px; border-radius: 4px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); line-height: 1.3;">
+                        <div style="font-weight: 600; font-size: 0.85rem; margin-bottom: 2px;">{d['name']}</div>
+                        <div style="font-size: 0.65rem; color: #666; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d['type']}</div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
+                            <span style="color: #555;">Savings:</span>
+                            <span style="color: #28a745; font-weight: 700;">${d['annual_savings']:,.0f}/yr</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
+            <span style="color: #555;">Calls (Range):</span>
+            <span style="font-weight: 600;">{d['allocated_daily_calls']:.1f}/day</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 6px;">
+            <span style="color: #555;">Deflected:</span>
+            <span style="font-weight: 600;">{d['deflected_daily_calls']:.1f}/day</span>
+        </div>
+        <div style="border-top: 1px dashed #ddd; padding-top: 4px; display: flex; justify-content: space-between; font-size: 0.75rem;">
+            <span style="color: #555;">CapEx: <strong>${d['cost']:,.0f}</strong></span>
+            <span style="color: #555;">ROI: <strong style="color: #28a745;">{d['be_text']}</strong></span>
+        </div>
+    </div>
                     """, unsafe_allow_html=True)
         else:
             st.info("🚁 Deploy drones on the map to see individual unit economics.")
