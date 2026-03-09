@@ -623,7 +623,6 @@ if st.session_state['csvs_ready']:
             """, unsafe_allow_html=True)
             
             # 2. INDIVIDUAL STATION ALLOCATION MATH (Equitable Distribution)
-            # Build list of active drones
             active_drones = []
             for idx in active_resp_idx:
                 active_drones.append({'name': station_metadata[idx]['name'], 'type': 'RESPONDER', 'cost': 80000, 'cov_array': resp_matrix[idx]})
@@ -631,20 +630,15 @@ if st.session_state['csvs_ready']:
                 active_drones.append({'name': station_metadata[idx]['name'], 'type': 'GUARDIAN', 'cost': 160000, 'cov_array': guard_matrix[idx]})
                 
             if total_calls > 0:
-                # How many drones cover each call?
                 all_cov_matrix = np.vstack([d['cov_array'] for d in active_drones])
                 coverage_counts = all_cov_matrix.sum(axis=0)
                 
-                # Protect against divide-by-zero
                 valid_mask = coverage_counts > 0
                 safe_counts = np.ones_like(coverage_counts)
                 safe_counts[valid_mask] = coverage_counts[valid_mask]
                 
-                # Calculate specific fractional credit per drone
                 for d in active_drones:
-                    # Only look at calls this specific drone covers
                     d_mask = d['cov_array'] & valid_mask
-                    # If 3 drones cover a call, this drone gets 1/3 (0.33) of the credit for it
                     allocated_calls_historic = np.sum(1.0 / safe_counts[d_mask])
                     
                     d['allocated_perc'] = allocated_calls_historic / total_calls
@@ -662,23 +656,20 @@ if st.session_state['csvs_ready']:
                         d['break_even'] = float('inf')
                         d['be_text'] = "N/A"
             
-            # Sort the drones so the highest ROI (highest annual savings) appear at the top of the list
             active_drones.sort(key=lambda x: x['annual_savings'], reverse=True)
             
             st.markdown("<h6 style='color:#888; border-bottom:1px solid #333; padding-bottom:5px; margin-top:15px;'>UNIT-LEVEL ECONOMICS (COMPARISON SHEET)</h6>", unsafe_allow_html=True)
             
             for d in active_drones:
                 color = "#00ffff" if d['type'] == "RESPONDER" else "#ffa500"
+                # CAREFUL: Do not add empty lines inside the div structure here to prevent markdown parsing errors.
                 st.markdown(f"""
                 <div style="border: 1px solid #444; padding: 10px; border-radius: 4px; margin-bottom: 10px; background: #111;">
                     <h5 style="color: {color}; margin: 0; margin-bottom: 4px;">{d['name']} <span style="color:#888; font-size:0.75rem; font-weight:normal;">({d['type']})</span></h5>
-                    
                     <div style="color: #888; font-size: 0.85rem;">ANNUAL SAVINGS: <span style="color:#00ff00; font-weight:bold;">${d['annual_savings']:,.0f}</span></div>
                     <div style="color: #888; font-size: 0.85rem;">CALLS IN RANGE: <span style="color:#fff;">{d['allocated_daily_calls']:.1f} / DAY</span></div>
                     <div style="color: #888; font-size: 0.85rem;">DEFLECTED: <span style="color:#fff;">{d['deflected_daily_calls']:.1f} / DAY</span></div>
-                    
                     <hr style="border-color: #333; margin: 5px 0;">
-                    
                     <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
                         <span style="color: #888;">UNIT CAPEX: <span style="color:#fff;">${d['cost']:,.0f}</span></span>
                         <span style="color: #888;">ROI: <span style="color:#00ff00; font-weight:bold;">{d['be_text']}</span></span>
