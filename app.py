@@ -25,8 +25,8 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=Manrope:wght@400;600;700&display=swap');
 
-    /* UNIVERSAL FONTS */
-    html, body, [class*="css"], .stApp, p, span, div, label, li, h1, h2, h3, h4, h5, h6 { 
+    /* UNIVERSAL FONTS: Targeted strictly to text elements so we don't break Streamlit's internal icon fonts */
+    html, body, [class*="css"], .stApp, p, label, li, h1, h2, h3, h4, h5, h6 { 
         font-family: 'Manrope', sans-serif !important; 
     }
 
@@ -36,7 +36,7 @@ st.markdown(
         border-right: 1px solid #e0e0e0;
     }
     
-    /* FIX FOR WHITE-ON-WHITE SIDEBAR HEADINGS (Forces Dark Text on Light Sidebar) */
+    /* FIX FOR WHITE-ON-WHITE SIDEBAR HEADINGS: Specifically target headers and paragraphs, avoiding SVGs/Icons */
     [data-testid="stSidebar"] h1, 
     [data-testid="stSidebar"] h2, 
     [data-testid="stSidebar"] h3, 
@@ -44,12 +44,15 @@ st.markdown(
     [data-testid="stSidebar"] h5, 
     [data-testid="stSidebar"] h6,
     [data-testid="stSidebar"] p,
-    [data-testid="stSidebar"] span,
     [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] div,
     [data-testid="stSidebar"] ul,
     [data-testid="stSidebar"] li {
         color: #222222 !important;
+    }
+    
+    /* Ensure the File Uploader text is readable in the light sidebar */
+    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {
+        color: #444444 !important;
     }
 
     .stRadio label p, .stMultiSelect label p, .stSlider label p, .stToggle label p, .stCheckbox label p {
@@ -515,10 +518,8 @@ if st.session_state['csvs_ready']:
     
     try:
         active_utm = active_gdf.to_crs(epsg=epsg_code)
-        if hasattr(active_utm.geometry, 'union_all'):
-            full_boundary_utm = active_utm.geometry.buffer(0.1).union_all().buffer(-0.1)
-        else:
-            full_boundary_utm = active_utm.geometry.buffer(0.1).unary_union.buffer(-0.1)
+        merged_geom = unary_union(active_utm.geometry)
+        full_boundary_utm = merged_geom.buffer(0.1).buffer(-0.1)
             
         city_m = full_boundary_utm
         city_boundary_geom = gpd.GeoSeries([full_boundary_utm], crs=epsg_code).to_crs(epsg=4326).iloc[0]
@@ -741,7 +742,7 @@ if st.session_state['csvs_ready']:
     
     with budget_placeholder:
         st.markdown("---")
-        st.subheader("💰 Budget Impact")
+        st.markdown("<h3 style='color:#222;'>💰 Budget Impact</h3>", unsafe_allow_html=True)
         
         inferred_daily_calls = max(1, int(total_calls / 365)) if total_calls > 0 else 20
         max_slider_val = max(100, inferred_daily_calls * 3) 
