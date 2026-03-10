@@ -14,37 +14,41 @@ import simplekml
 from concurrent.futures import ThreadPoolExecutor
 import pulp
 import re
-import streamlit.components.v1 as components # <-- Added for Print to PDF
+import streamlit.components.v1 as components
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="brinc COS Drone Optimizer", layout="wide")
+st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide")
 
-# --- CUSTOM CSS FOR FONT SIZES & PRINT OPTIMIZATION ---
+# --- MODERNIZED UI & SUPERCHARGED PRINT CSS ---
 st.markdown(
     """
     <style>
-    /* 1. Global font size for standard text */
-    html, body, [class*="css"]  {
-        font-size: 18px !important; 
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=Manrope:wght@400;600;700&display=swap');
+
+    /* UNIVERSAL FONTS */
+    html, body, [class*="css"], .stApp, p, span, div, label, li, h1, h2, h3, h4, h5, h6 { 
+        font-family: 'Manrope', sans-serif !important; 
     }
 
-    /* 2. Change the font size of the Radio Button Options */
-    div[role="radiogroup"] label div {
-        font-size: 20px !important;
+    /* SIDEBAR & WIDGET CLEANUP */
+    [data-testid="stSidebar"] {
+        background-color: #f8f9fa !important;
+        border-right: 1px solid #e0e0e0;
+    }
+    .stRadio label p, .stMultiSelect label p, .stSlider label p, .stToggle label p, .stCheckbox label p {
+        font-weight: 600 !important;
+        font-size: 0.85rem !important;
+        color: #444 !important;
+    }
+    div[role="radiogroup"] { gap: 0.5rem !important; }
+
+    /* METRICS & HIGHLIGHTS */
+    div[data-testid="stMetricValue"] {
+        font-family: 'IBM Plex Mono', monospace !important;
+        color: #00D2FF !important;
     }
 
-    /* 3. Change the font size of the main Widget Titles */
-    .stRadio label p, .stMultiSelect label p {
-        font-size: 22px !important;
-        font-weight: bold !important;
-    }
-
-    /* 4. Change the font size of the Multi-Select box items */
-    div[data-baseweb="select"] span {
-        font-size: 18px !important;
-    }
-    
-    /* 5. SUPERCHARGED PRINT MEDIA QUERY */
+    /* SUPERCHARGED PRINT MEDIA QUERY */
     @media print {
         /* Hide UI controls and sidebar */
         section[data-testid="stSidebar"], 
@@ -55,13 +59,13 @@ st.markdown(
             display: none !important;
         }
         
-        /* Force background colors to print (for the colored cards) */
+        /* Force background colors to print */
         * {
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
         }
 
-        /* Expand the main container and remove scrolling limits */
+        /* Expand the main container */
         .block-container, .stApp, .main, div {
             max-width: 100% !important;
             width: 100% !important;
@@ -71,7 +75,7 @@ st.markdown(
             height: auto !important;
         }
 
-        /* UN-SPLIT COLUMNS: Force columns to stack vertically instead of squishing side-by-side */
+        /* UN-SPLIT COLUMNS: Stack vertically */
         div[data-testid="stHorizontalBlock"] {
             display: block !important;
             width: 100% !important;
@@ -85,14 +89,14 @@ st.markdown(
             margin-bottom: 20px !important;
         }
 
-        /* Ensure the map doesn't get cut off */
+        /* Map bounds */
         .js-plotly-plot, .plot-container {
             width: 100% !important;
             page-break-inside: avoid !important;
             margin-bottom: 30px !important;
         }
 
-        /* Prevent financial cards from being split across two pages */
+        /* Prevent cards splitting */
         div[style*="border-top: 4px solid"] {
             page-break-inside: avoid !important;
             margin-bottom: 15px !important;
@@ -164,7 +168,6 @@ def get_circle_coords(lat, lon, r_mi=2.0):
     return c_lats, c_lons
 
 def format_3_lines(name_str):
-    """Smartly parses standard address formats into exactly 3 lines to fit tight grids."""
     match = re.search(r'\s(\d{1,5}\s+[A-Za-z])', name_str)
     if match:
         idx = match.start()
@@ -465,17 +468,15 @@ if st.session_state['csvs_ready']:
     if master_gdf is None or master_gdf.empty:
         st.error("❌ No matching jurisdictions found.")
         st.stop()
-
-    st.sidebar.success(f"**Found {len(master_gdf)} Significant Zones**")
     
     st.sidebar.markdown("---")
-    st.sidebar.subheader("📍 Jurisdictions")
+    st.sidebar.markdown("<h3 style='margin-bottom:0px;'>📍 Active Jurisdictions</h3>", unsafe_allow_html=True)
     total_pts = master_gdf['data_count'].sum()
     master_gdf['LABEL'] = master_gdf['DISPLAY_NAME'] + " (" + (master_gdf['data_count']/total_pts*100).round(1).astype(str) + "%)"
     options_map = dict(zip(master_gdf['LABEL'], master_gdf['DISPLAY_NAME']))
     all_options = master_gdf['LABEL'].tolist()
     
-    selected_labels = st.sidebar.multiselect("Active Jurisdictions", options=all_options, default=all_options, label_visibility="collapsed")
+    selected_labels = st.sidebar.multiselect("Select Map Boundaries", options=all_options, default=all_options, label_visibility="collapsed")
     
     if not selected_labels:
         st.warning("Please select at least one jurisdiction from the sidebar.")
@@ -527,35 +528,49 @@ if st.session_state['csvs_ready']:
     tb_area_g = [s['clipped_8m'].area / max_area for s in station_metadata]
     tb_cent = [s['centrality'] for s in station_metadata]
 
-    # --- OPTIMIZER CONTROLS ---
+    # --- OPTIMIZER CONTROLS REWORK ---
     st.sidebar.markdown("---")
-    st.sidebar.header("🎯 Optimizer Controls")
-    opt_strategy = st.sidebar.radio("Optimization Goal:", ("Maximize Call Coverage", "Maximize Land Coverage"), index=0)
+    st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
     
-    incremental_build = st.sidebar.toggle(
-        "Phased Rollout (Static List)", 
-        value=True, 
-        help="When ON, builds the fleet one-by-one so existing stations never change. When OFF, re-calculates the absolute mathematical global optimum for the entire network."
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; margin-top:15px; margin-bottom:5px;'>OPTIMIZATION GOAL</div>", unsafe_allow_html=True)
+    opt_strategy_raw = st.sidebar.radio(
+        "Goal", 
+        ("Call Coverage", "Land Coverage"), 
+        horizontal=True,
+        label_visibility="collapsed"
     )
-
-    k_responder = st.sidebar.slider("🚁 Responder Drones (2-Mile)", 0, n, min(1, n))
-    k_guardian = st.sidebar.slider("🦅 Guardian Drones (8-Mile)", 0, n, 0)
+    opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
     
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; margin-top:15px; margin-bottom:5px;'>FLEET CONFIGURATION</div>", unsafe_allow_html=True)
+    k_responder = st.sidebar.slider("🚁 Responder (2-Mile)", 0, n, min(1, n))
+    k_guardian = st.sidebar.slider("🦅 Guardian (8-Mile)", 0, n, 0)
+    
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; margin-top:15px; margin-bottom:5px;'>DEPLOYMENT STRATEGY</div>", unsafe_allow_html=True)
+    incremental_build = st.sidebar.toggle(
+        "Phased Rollout", 
+        value=True, 
+        help="When ON, builds the fleet one-by-one so existing stations never change."
+    )
     allow_redundancy = st.sidebar.toggle(
         "Multi-Tier (Allow Overlap)", 
         value=True, 
-        help="Treat Responders and Guardians as independent layers. When ON, drones won't move away just because their coverage rings overlap."
+        help="When ON, drones won't move away just because their coverage rings overlap."
     )
     
-    show_boundaries = st.sidebar.checkbox("Show Jurisdiction Boundaries", value=True)
-    show_heatmap = st.sidebar.toggle("🔥 Show Incident Heatmap", value=False)
-    show_health = st.sidebar.toggle("Show Health Score Banner", value=True)
-    show_satellite = st.sidebar.toggle("🌍 Satellite View", value=False)
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; margin-top:15px; margin-bottom:5px;'>MAP LAYERS</div>", unsafe_allow_html=True)
+    col1, col2 = st.sidebar.columns(2)
+    show_boundaries = col1.toggle("Boundaries", value=True)
+    show_heatmap = col2.toggle("Heatmap", value=False)
+    show_health = col1.toggle("Health Score", value=True)
+    show_satellite = col2.toggle("Satellite", value=False)
     
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🚗 Ground Traffic Simulator")
-    simulate_traffic = st.sidebar.toggle("Show Ground Response Gap", value=False)
-    traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
+    st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🚗 Ground Traffic Simulator</h3>", unsafe_allow_html=True)
+    simulate_traffic = st.sidebar.toggle("Enable Traffic Sim", value=False)
+    if simulate_traffic:
+        traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
+    else:
+        traffic_level = 40
 
     budget_placeholder = st.sidebar.container()
 
