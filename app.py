@@ -19,7 +19,7 @@ import streamlit.components.v1 as components # <-- Added for Print to PDF
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="brinc COS Drone Optimizer", layout="wide")
 
-# --- CUSTOM CSS FOR FONT SIZES ---
+# --- CUSTOM CSS FOR FONT SIZES & PRINT OPTIMIZATION ---
 st.markdown(
     """
     <style>
@@ -44,20 +44,58 @@ st.markdown(
         font-size: 18px !important;
     }
     
-    /* 5. Print Media Query for PDF Export */
+    /* 5. SUPERCHARGED PRINT MEDIA QUERY */
     @media print {
-        /* Hide sidebar, top header, and standard Streamlit buttons when printing */
-        section[data-testid="stSidebar"] {display: none !important;}
-        header[data-testid="stHeader"] {display: none !important;}
-        .stSlider {display: none !important;}
-        button {display: none !important;}
+        /* Hide UI controls and sidebar */
+        section[data-testid="stSidebar"], 
+        header[data-testid="stHeader"], 
+        .stSlider, 
+        button, 
+        div[data-testid="stToolbar"] {
+            display: none !important;
+        }
         
-        /* Expand the main container to take up the full page */
-        .block-container {
+        /* Force background colors to print (for the colored cards) */
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        /* Expand the main container and remove scrolling limits */
+        .block-container, .stApp, .main, div {
             max-width: 100% !important;
-            padding-top: 0 !important;
-            padding-left: 0 !important;
-            padding-right: 0 !important;
+            width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: visible !important;
+            height: auto !important;
+        }
+
+        /* UN-SPLIT COLUMNS: Force columns to stack vertically instead of squishing side-by-side */
+        div[data-testid="stHorizontalBlock"] {
+            display: block !important;
+            width: 100% !important;
+        }
+        
+        div[data-testid="stColumn"] {
+            width: 100% !important;
+            max-width: 100% !important;
+            flex: 0 0 100% !important;
+            display: block !important;
+            margin-bottom: 20px !important;
+        }
+
+        /* Ensure the map doesn't get cut off */
+        .js-plotly-plot, .plot-container {
+            width: 100% !important;
+            page-break-inside: avoid !important;
+            margin-bottom: 30px !important;
+        }
+
+        /* Prevent financial cards from being split across two pages */
+        div[style*="border-top: 4px solid"] {
+            page-break-inside: avoid !important;
+            margin-bottom: 15px !important;
         }
     }
     </style>
@@ -1054,7 +1092,7 @@ if st.session_state['csvs_ready']:
                     with target_col:
                         st.markdown(html_card, unsafe_allow_html=True)
 
-            # --- ADDED: EXPORT TO PDF BUTTON ---
+            # --- EXPORT TO PDF BUTTON ---
             st.markdown("---")
             st.subheader("📄 Export Results")
 
