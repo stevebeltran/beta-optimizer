@@ -35,10 +35,27 @@ st.markdown(
         background-color: #f8f9fa !important;
         border-right: 1px solid #e0e0e0;
     }
+    
+    /* FIX FOR WHITE-ON-WHITE SIDEBAR HEADINGS (Forces Dark Text on Light Sidebar) */
+    [data-testid="stSidebar"] h1, 
+    [data-testid="stSidebar"] h2, 
+    [data-testid="stSidebar"] h3, 
+    [data-testid="stSidebar"] h4, 
+    [data-testid="stSidebar"] h5, 
+    [data-testid="stSidebar"] h6,
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] div,
+    [data-testid="stSidebar"] ul,
+    [data-testid="stSidebar"] li {
+        color: #222222 !important;
+    }
+
     .stRadio label p, .stMultiSelect label p, .stSlider label p, .stToggle label p, .stCheckbox label p {
         font-weight: 600 !important;
         font-size: 0.85rem !important;
-        color: #444 !important;
+        color: #111111 !important;
     }
     div[role="radiogroup"] { gap: 0.5rem !important; }
 
@@ -470,7 +487,7 @@ if st.session_state['csvs_ready']:
         st.stop()
     
     st.sidebar.markdown("---")
-    st.sidebar.markdown("<h3 style='margin-bottom:0px;'>📍 Active Jurisdictions</h3>", unsafe_allow_html=True)
+    st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#222222;'>📍 Active Jurisdictions</h3>", unsafe_allow_html=True)
     total_pts = master_gdf['data_count'].sum()
     master_gdf['LABEL'] = master_gdf['DISPLAY_NAME'] + " (" + (master_gdf['data_count']/total_pts*100).round(1).astype(str) + "%)"
     options_map = dict(zip(master_gdf['LABEL'], master_gdf['DISPLAY_NAME']))
@@ -530,9 +547,9 @@ if st.session_state['csvs_ready']:
 
     # --- OPTIMIZER CONTROLS REWORK ---
     st.sidebar.markdown("---")
-    st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
+    st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#222222;'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
     
-    st.sidebar.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; margin-top:15px; margin-bottom:5px;'>OPTIMIZATION GOAL</div>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
     opt_strategy_raw = st.sidebar.radio(
         "Goal", 
         ("Call Coverage", "Land Coverage"), 
@@ -541,11 +558,11 @@ if st.session_state['csvs_ready']:
     )
     opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
     
-    st.sidebar.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; margin-top:15px; margin-bottom:5px;'>FLEET CONFIGURATION</div>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
     k_responder = st.sidebar.slider("🚁 Responder (2-Mile)", 0, n, min(1, n))
     k_guardian = st.sidebar.slider("🦅 Guardian (8-Mile)", 0, n, 0)
     
-    st.sidebar.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; margin-top:15px; margin-bottom:5px;'>DEPLOYMENT STRATEGY</div>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Deployment Strategy</div>", unsafe_allow_html=True)
     incremental_build = st.sidebar.toggle(
         "Phased Rollout", 
         value=True, 
@@ -557,7 +574,7 @@ if st.session_state['csvs_ready']:
         help="When ON, drones won't move away just because their coverage rings overlap."
     )
     
-    st.sidebar.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; margin-top:15px; margin-bottom:5px;'>MAP LAYERS</div>", unsafe_allow_html=True)
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Map Layers</div>", unsafe_allow_html=True)
     col1, col2 = st.sidebar.columns(2)
     show_boundaries = col1.toggle("Boundaries", value=True)
     show_heatmap = col2.toggle("Heatmap", value=False)
@@ -565,7 +582,7 @@ if st.session_state['csvs_ready']:
     show_satellite = col2.toggle("Satellite", value=False)
     
     st.sidebar.markdown("---")
-    st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🚗 Ground Traffic Simulator</h3>", unsafe_allow_html=True)
+    st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#222222;'>🚗 Ground Traffic Simulator</h3>", unsafe_allow_html=True)
     simulate_traffic = st.sidebar.toggle("Enable Traffic Sim", value=False)
     if simulate_traffic:
         traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
