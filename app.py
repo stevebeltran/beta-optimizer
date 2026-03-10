@@ -14,6 +14,7 @@ import simplekml
 from concurrent.futures import ThreadPoolExecutor
 import pulp
 import re
+import streamlit.components.v1 as components # <-- Added for Print to PDF
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="brinc COS Drone Optimizer", layout="wide")
@@ -41,6 +42,23 @@ st.markdown(
     /* 4. Change the font size of the Multi-Select box items */
     div[data-baseweb="select"] span {
         font-size: 18px !important;
+    }
+    
+    /* 5. Print Media Query for PDF Export */
+    @media print {
+        /* Hide sidebar, top header, and standard Streamlit buttons when printing */
+        section[data-testid="stSidebar"] {display: none !important;}
+        header[data-testid="stHeader"] {display: none !important;}
+        .stSlider {display: none !important;}
+        button {display: none !important;}
+        
+        /* Expand the main container to take up the full page */
+        .block-container {
+            max-width: 100% !important;
+            padding-top: 0 !important;
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+        }
     }
     </style>
     """,
@@ -120,14 +138,14 @@ def format_3_lines(name_str):
             line3 = parts[1].strip()
             return f"{line1}<br>{line2}<br>{line3}"
         else:
-            return f"{line1}<br>{rest}<br>&nbsp;"
+            return f"{line1}<br>{rest}<br> "
     else:
         if ',' in name_str:
             parts = name_str.split(',')
             if len(parts) >= 3:
                 return f"{parts[0].strip()},<br>{parts[1].strip()},<br>{','.join(parts[2:]).strip()}"
-            return f"{name_str}<br>&nbsp;<br>&nbsp;"
-        return f"{name_str}<br>&nbsp;<br>&nbsp;"
+            return f"{name_str}<br> <br> "
+        return f"{name_str}<br> <br> "
 
 def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_names, calls_gdf):
     kml = simplekml.Kml()
@@ -1035,5 +1053,32 @@ if st.session_state['csvs_ready']:
                     
                     with target_col:
                         st.markdown(html_card, unsafe_allow_html=True)
+
+            # --- ADDED: EXPORT TO PDF BUTTON ---
+            st.markdown("---")
+            st.subheader("📄 Export Results")
+
+            components.html(
+                """
+                <script>
+                function printDashboard() {
+                    window.parent.print();
+                }
+                </script>
+                <button onclick="printDashboard()" style="
+                    background-color: #00D2FF; 
+                    color: #000; 
+                    border: none; 
+                    padding: 10px 20px; 
+                    font-family: 'Manrope', sans-serif;
+                    font-weight: bold;
+                    border-radius: 4px; 
+                    cursor: pointer;
+                    width: 100%;
+                ">🖨️ Save Dashboard as PDF</button>
+                """,
+                height=50
+            )
+
         else:
             st.info("🚁 Deploy drones on the map to see individual unit economics.")
