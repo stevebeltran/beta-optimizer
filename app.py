@@ -25,9 +25,15 @@ st.markdown(
     <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=Manrope:wght@400;600;700&display=swap');
 
-    /* UNIVERSAL FONTS: Targeted strictly to text elements so we don't break Streamlit's internal icon fonts */
-    html, body, [class*="css"], .stApp, p, label, li, h1, h2, h3, h4, h5, h6 { 
+    /* FORCE LIGHT MODE FOR THE MAIN SCREEN */
+    .stApp, .main {
+        background-color: #ffffff !important;
+    }
+
+    /* UNIVERSAL FONTS & DARK TEXT: Targeted strictly to text elements to avoid breaking icons */
+    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 { 
         font-family: 'Manrope', sans-serif !important; 
+        color: #222222 !important;
     }
 
     /* SIDEBAR & WIDGET CLEANUP */
@@ -36,21 +42,7 @@ st.markdown(
         border-right: 1px solid #e0e0e0;
     }
     
-    /* FIX FOR WHITE-ON-WHITE SIDEBAR HEADINGS: Specifically target headers and paragraphs, avoiding SVGs/Icons */
-    [data-testid="stSidebar"] h1, 
-    [data-testid="stSidebar"] h2, 
-    [data-testid="stSidebar"] h3, 
-    [data-testid="stSidebar"] h4, 
-    [data-testid="stSidebar"] h5, 
-    [data-testid="stSidebar"] h6,
-    [data-testid="stSidebar"] p,
-    [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] ul,
-    [data-testid="stSidebar"] li {
-        color: #222222 !important;
-    }
-    
-    /* Ensure the File Uploader text is readable in the light sidebar */
+    /* Ensure the File Uploader text is readable */
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {
         color: #444444 !important;
     }
@@ -66,6 +58,9 @@ st.markdown(
     div[data-testid="stMetricValue"] {
         font-family: 'IBM Plex Mono', monospace !important;
         color: #00D2FF !important;
+    }
+    div[data-testid="stMetricLabel"] * {
+        color: #666666 !important;
     }
 
     /* SUPERCHARGED PRINT MEDIA QUERY */
