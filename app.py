@@ -165,8 +165,15 @@ if not st.session_state['csvs_ready']:
             elif fname == "stations.csv": station_file = f
             
         if call_file and station_file:
-            st.session_state['df_calls'] = pd.read_csv(call_file).dropna(subset=['lat', 'lon'])
-            st.session_state['df_stations'] = pd.read_csv(station_file).dropna(subset=['lat', 'lon'])
+            # FIX: Convert columns to lowercase safely to guarantee backwards compatibility
+            df_c = pd.read_csv(call_file)
+            df_c.columns = [str(c).lower().strip() for c in df_c.columns]
+            st.session_state['df_calls'] = df_c.dropna(subset=['lat', 'lon'])
+            
+            df_s = pd.read_csv(station_file)
+            df_s.columns = [str(c).lower().strip() for c in df_s.columns]
+            st.session_state['df_stations'] = df_s.dropna(subset=['lat', 'lon'])
+            
             st.session_state['csvs_ready'] = True
             st.rerun()
 
@@ -475,8 +482,9 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
 
 # --- MAIN LOGIC ---
 if st.session_state['csvs_ready']:
-    df_calls = st.session_state['df_calls']
-    df_stations_all = st.session_state['df_stations']
+    # ALWAYS WORK FROM A COPY TO PREVENT OVERWRITING SESSION STATE
+    df_calls = st.session_state['df_calls'].copy()
+    df_stations_all = st.session_state['df_stations'].copy()
 
     with st.spinner("🌍 Identifying dominant jurisdictions..."):
         master_gdf = find_relevant_jurisdictions(df_calls, df_stations_all, SHAPEFILE_DIR)
@@ -525,6 +533,41 @@ if st.session_state['csvs_ready']:
         city_boundary_geom = gpd.GeoSeries([full_boundary_utm], crs=epsg_code).to_crs(epsg=4326).iloc[0]
     except Exception as e:
         st.error(f"Geometry Error: {e}")
+        st.stop()
+
+    # --- DYNAMIC MISSION DATA FILTERS ---
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#222222;'>⚙️ Data Filters</h3>", unsafe_allow_html=True)
+    
+    # Optional Station Type Filter
+    if 'type' in df_stations_all.columns:
+        all_types = sorted(df_stations_all['type'].dropna().astype(str).unique().tolist())
+        if all_types:
+            st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Facility Type</div>", unsafe_allow_html=True)
+            selected_types = st.sidebar.multiselect("Facility Type", options=all_types, default=all_types, label_visibility="collapsed")
+            if not selected_types:
+                st.warning("Please select at least one Facility Type from the sidebar.")
+                st.stop()
+            df_stations_all = df_stations_all[df_stations_all['type'].astype(str).isin(selected_types)].copy()
+            df_stations_all['name'] = "[" + df_stations_all['type'].astype(str) + "] " + df_stations_all['name'].astype(str)
+            
+    # Optional Priority Filter
+    if 'priority' in df_calls.columns:
+        all_priorities = sorted(df_calls['priority'].dropna().unique().tolist())
+        if all_priorities:
+            st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Incident Priority</div>", unsafe_allow_html=True)
+            selected_priorities = st.sidebar.multiselect("Incident Priority", options=all_priorities, default=all_priorities, label_visibility="collapsed")
+            if not selected_priorities:
+                st.warning("Please select at least one Incident Priority from the sidebar.")
+                st.stop()
+            df_calls = df_calls[df_calls['priority'].isin(selected_priorities)].copy()
+
+    if len(df_stations_all) == 0:
+        st.error("No stations match the selected filters.")
+        st.stop()
+        
+    if len(df_calls) == 0:
+        st.error("No calls match the selected filters.")
         st.stop()
 
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
