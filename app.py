@@ -14,35 +14,108 @@ import simplekml
 from concurrent.futures import ThreadPoolExecutor
 import pulp
 import re
-import tempfile
-from fpdf import FPDF
+import streamlit.components.v1 as components
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="brinc COS Drone Optimizer", layout="wide")
+st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide")
 
-# --- CUSTOM CSS FOR FONT SIZES ---
+# --- MODERNIZED UI & SUPERCHARGED PRINT CSS ---
 st.markdown(
     """
     <style>
-    /* 1. Global font size for standard text */
-    html, body, [class*="css"]  {
-        font-size: 18px !important; 
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=Manrope:wght@400;600;700&display=swap');
+
+    /* FORCE LIGHT MODE FOR THE MAIN SCREEN */
+    .stApp, .main {
+        background-color: #ffffff !important;
     }
 
-    /* 2. Change the font size of the Radio Button Options */
-    div[role="radiogroup"] label div {
-        font-size: 20px !important;
+    /* UNIVERSAL FONTS & DARK TEXT */
+    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 { 
+        font-family: 'Manrope', sans-serif !important; 
+        color: #222222 !important;
     }
 
-    /* 3. Change the font size of the main Widget Titles */
-    .stRadio label p, .stMultiSelect label p {
-        font-size: 22px !important;
-        font-weight: bold !important;
+    /* SIDEBAR & WIDGET CLEANUP */
+    [data-testid="stSidebar"] {
+        background-color: #f8f9fa !important;
+        border-right: 1px solid #e0e0e0;
+    }
+    
+    /* Ensure the File Uploader text is readable */
+    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {
+        color: #444444 !important;
     }
 
-    /* 4. Change the font size of the Multi-Select box items */
-    div[data-baseweb="select"] span {
-        font-size: 18px !important;
+    .stRadio label p, .stMultiSelect label p, .stSlider label p, .stToggle label p, .stCheckbox label p {
+        font-weight: 600 !important;
+        font-size: 0.85rem !important;
+        color: #111111 !important;
+    }
+    div[role="radiogroup"] { gap: 0.5rem !important; }
+
+    /* METRICS & HIGHLIGHTS */
+    div[data-testid="stMetricValue"] {
+        font-family: 'IBM Plex Mono', monospace !important;
+        color: #00D2FF !important;
+    }
+    div[data-testid="stMetricLabel"] * {
+        color: #666666 !important;
+    }
+
+    /* SUPERCHARGED PRINT MEDIA QUERY */
+    @media print {
+        /* Hide UI controls and sidebar */
+        section[data-testid="stSidebar"], 
+        header[data-testid="stHeader"], 
+        .stSlider, 
+        button, 
+        div[data-testid="stToolbar"] {
+            display: none !important;
+        }
+        
+        /* Force background colors to print */
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        /* Expand the main container */
+        .block-container, .stApp, .main, div {
+            max-width: 100% !important;
+            width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: visible !important;
+            height: auto !important;
+        }
+
+        /* UN-SPLIT COLUMNS: Stack vertically */
+        div[data-testid="stHorizontalBlock"] {
+            display: block !important;
+            width: 100% !important;
+        }
+        
+        div[data-testid="stColumn"] {
+            width: 100% !important;
+            max-width: 100% !important;
+            flex: 0 0 100% !important;
+            display: block !important;
+            margin-bottom: 20px !important;
+        }
+
+        /* Map bounds */
+        .js-plotly-plot, .plot-container {
+            width: 100% !important;
+            page-break-inside: avoid !important;
+            margin-bottom: 30px !important;
+        }
+
+        /* Prevent cards splitting */
+        div[style*="border-top: 4px solid"] {
+            page-break-inside: avoid !important;
+            margin-bottom: 15px !important;
+        }
     }
     </style>
     """,
@@ -178,73 +251,6 @@ def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_na
         pnt.style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
 
     return kml.kml()
-
-# --- NEW: PDF REPORT GENERATOR ---
-def generate_pdf_report(fig, summary_stats, active_drones):
-    pdf = FPDF()
-    pdf.add_page()
-    
-    # Fonts & Title
-    pdf.set_font("Arial", 'B', 18)
-    pdf.cell(0, 10, "BRINC COS - Mission Debrief", ln=True, align='C')
-    pdf.set_font("Arial", 'I', 10)
-    pdf.cell(0, 8, "Automated Strategic Deployment Simulation", ln=True, align='C')
-    pdf.ln(5)
-
-    # 1. Summary & Financials
-    pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 10, "1. Executive Advantage & Financials", ln=True)
-    pdf.set_font("Arial", '', 11)
-    
-    pdf.cell(100, 6, f"Annual Taxpayer Savings: ${summary_stats['annual_savings']:,.0f}", ln=False)
-    pdf.cell(90, 6, f"Fleet CapEx: ${summary_stats['fleet_capex']:,.0f}", ln=True)
-    
-    pdf.cell(100, 6, f"Daily Calls in Range: {summary_stats['covered_daily_calls']:.1f}", ln=False)
-    pdf.cell(90, 6, f"System Break-Even: {summary_stats['break_even_text']}", ln=True)
-    
-    pdf.cell(100, 6, f"Daily Calls Deflected: {summary_stats['deflected_daily_calls']:.1f}", ln=False)
-    pdf.cell(90, 6, f"Land Covered: {summary_stats['area_covered_perc']:.1f}%", ln=True)
-    pdf.ln(5)
-
-    # 2. Map Screenshot
-    pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 10, "2. Tactical Placement Map", ln=True)
-    
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-            # Capture the plot securely via kaleido
-            fig.write_image(tmpfile.name, engine="kaleido", width=900, height=500, scale=2)
-            pdf.image(tmpfile.name, x=10, w=190)
-        pdf.ln(5)
-    except Exception as e:
-        pdf.set_font("Arial", 'I', 10)
-        pdf.set_text_color(200, 0, 0)
-        pdf.cell(0, 10, "(Map screenshot unavailable. Ensure 'kaleido' is installed in requirements.)", ln=True)
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(5)
-
-    # 3. Unit-Level Breakdown
-    pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 10, "3. Phased Deployment Timeline", ln=True)
-    
-    for d in active_drones:
-        pdf.set_font("Arial", 'B', 11)
-        # Strip long names for clean print
-        short_name = d['name'].split(',')[0]
-        pdf.cell(0, 6, f"Phase #{d['deploy_step']} - {d['type']} - {short_name}", ln=True)
-        
-        pdf.set_font("Arial", '', 10)
-        pdf.cell(0, 5, f"   Added Net New Calls: {d['marginal_daily']:.1f}/day | Added Deflections: {d['marginal_deflected']:.1f}/day", ln=True)
-        pdf.cell(0, 5, f"   Phase Annual Savings: ${d['annual_savings']:,.0f} | Unit CapEx: ${d['cost']:,.0f} | Phase ROI: {d['be_text']}", ln=True)
-        pdf.ln(3)
-
-    # Generate Bytes
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
-        pdf.output(tmp_pdf.name)
-        with open(tmp_pdf.name, "rb") as f:
-            pdf_bytes = f.read()
-            
-    return pdf_bytes
 
 @st.cache_data
 def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
@@ -442,6 +448,7 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
         )
 
         model += primary_obj + tie_breaker_obj
+
         model.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=10, gapRel=0.0))
 
         res_r = [i for i in range(n_stations) if pulp.value(x_r[i]) == 1]
@@ -578,6 +585,7 @@ if st.session_state['csvs_ready']:
     if k_responder + k_guardian > n:
         st.error("⚠️ Over-Deployment: Total requested drones exceed available stations.")
     elif k_responder > 0 or k_guardian > 0:
+        
         best_combo = None
         
         if opt_strategy == "Maximize Call Coverage":
@@ -681,6 +689,8 @@ if st.session_state['csvs_ready']:
             active_resp_names = [station_metadata[i]['name'] for i in r_best]
             active_guard_names = [station_metadata[i]['name'] for i in g_best]
 
+    st.markdown("---")
+    
     # --- METRICS CALCULATION ---
     area_covered_perc, overlap_perc, calls_covered_perc = 0.0, 0.0, 0.0
     
@@ -711,11 +721,10 @@ if st.session_state['csvs_ready']:
     # ==========================================
     active_drones = []
     fleet_capex = 0
-    summary_stats = {}
     
     with budget_placeholder:
         st.markdown("---")
-        st.subheader("💰 Budget Impact")
+        st.markdown("<h3 style='color:#222;'>💰 Budget Impact</h3>", unsafe_allow_html=True)
         
         inferred_daily_calls = max(1, int(total_calls / 365)) if total_calls > 0 else 20
         max_slider_val = max(100, inferred_daily_calls * 3) 
@@ -747,16 +756,6 @@ if st.session_state['csvs_ready']:
             else:
                 annual_savings = 0
                 break_even_text = "N/A"
-                
-            summary_stats = {
-                'annual_savings': annual_savings,
-                'fleet_capex': fleet_capex,
-                'break_even_text': break_even_text,
-                'covered_daily_calls': covered_daily_calls,
-                'deflected_daily_calls': daily_drone_only_calls,
-                'calls_covered_perc': calls_covered_perc,
-                'area_covered_perc': area_covered_perc
-            }
             
             st.markdown(f"""
             <div style="background-color: #ffffff; border: 1px solid #28a745; padding: 12px; border-radius: 4px; text-align: center; margin-bottom: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
@@ -870,182 +869,35 @@ if st.session_state['csvs_ready']:
                 
         else:
             st.info("🚁 Select at least one drone above to calculate budget impact.")
+            
+        # --- EXPORT TO PDF BUTTON ---
+        st.markdown("---")
+        st.subheader("📄 Export Results")
+
+        components.html(
+            """
+            <script>
+            function printDashboard() {
+                window.parent.print();
+            }
+            </script>
+            <button onclick="printDashboard()" style="
+                background-color: #00D2FF; 
+                color: #000; 
+                border: none; 
+                padding: 10px 20px; 
+                font-family: 'Manrope', sans-serif;
+                font-weight: bold;
+                border-radius: 4px; 
+                cursor: pointer;
+                width: 100%;
+            ">🖨️ Save Dashboard as PDF</button>
+            """,
+            height=50
+        )
+            
     # ==========================================
 
-    # --- BUILD FIGURE EARLY FOR PDF EXPORT ---
-    fig = go.Figure()
-    
-    def calculate_zoom(min_lon, max_lon, min_lat, max_lat):
-        lon_diff = max_lon - min_lon
-        lat_diff = max_lat - min_lat
-        if lon_diff <= 0 or lat_diff <= 0: return 12
-        zoom_lon = np.log2(360 / lon_diff)
-        zoom_lat = np.log2(180 / lat_diff)
-        best_zoom = min(zoom_lon, zoom_lat) + 1.6
-        return min(max(best_zoom, 5), 18)
-
-    if show_boundaries:
-        if city_boundary_geom is not None and not city_boundary_geom.is_empty:
-            if isinstance(city_boundary_geom, Polygon):
-                bx, by = city_boundary_geom.exterior.coords.xy
-                fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color="#222", width=3), name="Jurisdiction Boundary", hoverinfo='skip'))
-            elif isinstance(city_boundary_geom, MultiPolygon):
-                for poly in city_boundary_geom.geoms:
-                    bx, by = poly.exterior.coords.xy
-                    fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color="#222", width=3), name="Jurisdiction Boundary", hoverinfo='skip', showlegend=False))
-
-    if show_heatmap and not display_calls.empty:
-        fig.add_trace(go.Densitymapbox(
-            lat=display_calls.geometry.y,
-            lon=display_calls.geometry.x,
-            z=np.ones(len(display_calls)),
-            radius=12,
-            colorscale='Inferno',
-            opacity=0.6,
-            showscale=False,
-            name="Heatmap",
-            hoverinfo='skip'
-        ))
-
-    if not display_calls.empty:
-        fig.add_trace(go.Scattermapbox(
-            lat=display_calls.geometry.y, 
-            lon=display_calls.geometry.x, 
-            mode='markers', 
-            marker=dict(size=4, color='#000080', opacity=0.35), 
-            name="Incident Data", 
-            hoverinfo='skip'
-        ))
-
-    for i, row in df_stations_all.iterrows():
-        s_name = row['name']
-        color = STATION_COLORS[i % len(STATION_COLORS)]
-        short_name = s_name.split(',')[0]
-
-        if s_name in active_resp_names:
-            clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=2.0)
-            lbl = f"{short_name} (Resp)"
-            drive_time_min = (2.0 / 42.0) * 60 
-        elif s_name in active_guard_names:
-            clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=8.0)
-            lbl = f"{short_name} (Guard)"
-            drive_time_min = (8.0 / 60.0) * 60 
-        else:
-            continue
-
-        fig.add_trace(go.Scattermapbox(
-            lat=list(clats) + [None, row['lat']], 
-            lon=list(clons) + [None, row['lon']], 
-            mode='lines+markers', 
-            marker=dict(size=[0]*len(clats) + [0, 20], color=color), 
-            line=dict(color=color, width=4.5), 
-            fill='toself', 
-            fillcolor='rgba(0,0,0,0)', 
-            name=lbl, 
-            hoverinfo='name'
-        ))
-
-        if simulate_traffic:
-            if traffic_level < 35:
-                t_color = "#28a745"
-                t_fill = "rgba(40, 167, 69, 0.15)"
-            elif traffic_level < 75:
-                t_color = "#ffc107"
-                t_fill = "rgba(255, 193, 7, 0.15)"
-            else:
-                t_color = "#dc3545"
-                t_fill = "rgba(220, 53, 69, 0.15)"
-
-            ground_speed_mph = 35 * (1 - (traffic_level / 100))
-            if ground_speed_mph > 0:
-                ground_range_mi = (ground_speed_mph / 60) * drive_time_min
-                g_angles = np.linspace(0, 2*np.pi, 9) 
-                g_lats = row['lat'] + (ground_range_mi/69.172) * np.sin(g_angles)
-                g_lons = row['lon'] + (ground_range_mi/(69.172 * np.cos(np.radians(row['lat'])))) * np.cos(g_angles)
-
-                fig.add_trace(go.Scattermapbox(
-                    lat=list(g_lats),
-                    lon=list(g_lons),
-                    mode='lines',
-                    line=dict(color=t_color, width=2.5), 
-                    fill='toself',
-                    fillcolor=t_fill,
-                    name=f"Ground Gap",
-                    hoverinfo='skip'
-                ))
-
-    dynamic_zoom = calculate_zoom(minx, maxx, miny, maxy)
-
-    mapbox_config = dict(
-        center=dict(lat=center_lat, lon=center_lon),
-        zoom=dynamic_zoom,
-        style="open-street-map"
-    )
-    
-    if show_satellite:
-        mapbox_config["style"] = "carto-positron"
-        mapbox_config["layers"] = [
-            {
-                "below": 'traces',
-                "sourcetype": "raster",
-                "sourceattribution": "Esri, Maxar, Earthstar Geographics",
-                "source": [
-                    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                ]
-            }
-        ]
-
-    fig.update_layout(
-        uirevision="LOCKED_MAP",
-        mapbox=mapbox_config,
-        margin=dict(l=0, r=0, t=0, b=0), 
-        height=800,
-        font=dict(size=18),
-        showlegend=True,
-        legend=dict(
-            yanchor="top",
-            y=0.98,
-            xanchor="left",
-            x=0.02,
-            bgcolor="rgba(255, 255, 255, 0.9)",
-            bordercolor="#ccc",
-            borderwidth=1,
-            font=dict(size=12, color="#333"),
-            itemclick="toggle"
-        )
-    )
-
-    # --- SIDEBAR EXPORTS ---
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📥 Export Reports")
-    
-    if fleet_capex > 0:
-        pdf_bytes = generate_pdf_report(fig, summary_stats, active_drones)
-        st.sidebar.download_button(
-            label="📄 Download Mission Debrief (PDF)",
-            data=pdf_bytes,
-            file_name="BRINC_Mission_Debrief.pdf",
-            mime="application/pdf"
-        )
-    else:
-        st.sidebar.info("Deploy drones to generate PDF report.")
-
-    kml_data = generate_kml(
-        active_gdf, 
-        df_stations_all, 
-        active_resp_names,
-        active_guard_names,
-        calls_in_city
-    )
-    
-    st.sidebar.download_button(
-        label="🌏 Download for Google Earth (KML)",
-        data=kml_data,
-        file_name="drone_deployment.kml",
-        mime="application/vnd.google-earth.kml+xml"
-    )
-
-    st.markdown("---")
     if show_health:
         norm_redundancy = min(overlap_perc / 35.0, 1.0) * 100
         health_score = (calls_covered_perc * 0.50) + (area_covered_perc * 0.35) + (norm_redundancy * 0.15)
@@ -1102,6 +954,154 @@ if st.session_state['csvs_ready']:
     map_col, stats_col = st.columns([4.2, 1.8])
     
     with map_col:
+        fig = go.Figure()
+        
+        def calculate_zoom(min_lon, max_lon, min_lat, max_lat):
+            lon_diff = max_lon - min_lon
+            lat_diff = max_lat - min_lat
+            if lon_diff <= 0 or lat_diff <= 0: return 12
+            zoom_lon = np.log2(360 / lon_diff)
+            zoom_lat = np.log2(180 / lat_diff)
+            best_zoom = min(zoom_lon, zoom_lat) + 1.6
+            return min(max(best_zoom, 5), 18)
+
+        if show_boundaries:
+            if city_boundary_geom is not None and not city_boundary_geom.is_empty:
+                if isinstance(city_boundary_geom, Polygon):
+                    bx, by = city_boundary_geom.exterior.coords.xy
+                    fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color="#222", width=3), name="Jurisdiction Boundary", hoverinfo='skip'))
+                elif isinstance(city_boundary_geom, MultiPolygon):
+                    for poly in city_boundary_geom.geoms:
+                        bx, by = poly.exterior.coords.xy
+                        fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color="#222", width=3), name="Jurisdiction Boundary", hoverinfo='skip', showlegend=False))
+
+        if show_heatmap and not display_calls.empty:
+            fig.add_trace(go.Densitymapbox(
+                lat=display_calls.geometry.y,
+                lon=display_calls.geometry.x,
+                z=np.ones(len(display_calls)),
+                radius=12,
+                colorscale='Inferno',
+                opacity=0.6,
+                showscale=False,
+                name="Heatmap",
+                hoverinfo='skip'
+            ))
+
+        if not display_calls.empty:
+            fig.add_trace(go.Scattermapbox(
+                lat=display_calls.geometry.y, 
+                lon=display_calls.geometry.x, 
+                mode='markers', 
+                marker=dict(size=4, color='#000080', opacity=0.35), 
+                name="Incident Data", 
+                hoverinfo='skip'
+            ))
+
+        for i, row in df_stations_all.iterrows():
+            s_name = row['name']
+            color = STATION_COLORS[i % len(STATION_COLORS)]
+            
+            # Strip city/state for clean legend
+            short_name = s_name.split(',')[0]
+
+            if s_name in active_resp_names:
+                clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=2.0)
+                lbl = f"{short_name} (Resp)"
+                drive_time_min = (2.0 / 42.0) * 60 
+            elif s_name in active_guard_names:
+                clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=8.0)
+                lbl = f"{short_name} (Guard)"
+                drive_time_min = (8.0 / 60.0) * 60 
+            else:
+                continue
+
+            fig.add_trace(go.Scattermapbox(
+                lat=list(clats) + [None, row['lat']], 
+                lon=list(clons) + [None, row['lon']], 
+                mode='lines+markers', 
+                marker=dict(size=[0]*len(clats) + [0, 20], color=color), 
+                line=dict(color=color, width=4.5), 
+                fill='toself', 
+                fillcolor='rgba(0,0,0,0)', 
+                name=lbl, 
+                hoverinfo='name'
+            ))
+
+            if simulate_traffic:
+                if traffic_level < 35:
+                    t_color = "#28a745"
+                    t_fill = "rgba(40, 167, 69, 0.15)"
+                    t_label = "Light Traffic"
+                elif traffic_level < 75:
+                    t_color = "#ffc107"
+                    t_fill = "rgba(255, 193, 7, 0.15)"
+                    t_label = "Moderate Traffic"
+                else:
+                    t_color = "#dc3545"
+                    t_fill = "rgba(220, 53, 69, 0.15)"
+                    t_label = "Heavy Traffic"
+
+                ground_speed_mph = 35 * (1 - (traffic_level / 100))
+                
+                if ground_speed_mph > 0:
+                    ground_range_mi = (ground_speed_mph / 60) * drive_time_min
+                    g_angles = np.linspace(0, 2*np.pi, 9) 
+                    g_lats = row['lat'] + (ground_range_mi/69.172) * np.sin(g_angles)
+                    g_lons = row['lon'] + (ground_range_mi/(69.172 * np.cos(np.radians(row['lat'])))) * np.cos(g_angles)
+
+                    fig.add_trace(go.Scattermapbox(
+                        lat=list(g_lats),
+                        lon=list(g_lons),
+                        mode='lines',
+                        line=dict(color=t_color, width=2.5), 
+                        fill='toself',
+                        fillcolor=t_fill,
+                        name=f"Ground Reach ({t_label})",
+                        hoverinfo='skip'
+                    ))
+
+        dynamic_zoom = calculate_zoom(minx, maxx, miny, maxy)
+
+        mapbox_config = dict(
+            center=dict(lat=center_lat, lon=center_lon),
+            zoom=dynamic_zoom,
+            style="open-street-map"
+        )
+        
+        if show_satellite:
+            mapbox_config["style"] = "carto-positron"
+            mapbox_config["layers"] = [
+                {
+                    "below": 'traces',
+                    "sourcetype": "raster",
+                    "sourceattribution": "Esri, Maxar, Earthstar Geographics",
+                    "source": [
+                        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                    ]
+                }
+            ]
+
+        fig.update_layout(
+            uirevision="LOCKED_MAP",
+            mapbox=mapbox_config,
+            margin=dict(l=0, r=0, t=0, b=0), 
+            height=800,
+            font=dict(size=18),
+            showlegend=True,
+            legend=dict(
+                yanchor="top",
+                y=0.98,
+                xanchor="left",
+                x=0.02,
+                bgcolor="rgba(255, 255, 255, 0.9)",
+                bordercolor="#ccc",
+                borderwidth=1,
+                font=dict(size=12, color="#333"),
+                itemclick="toggle"
+            )
+        )
+
         st.plotly_chart(fig, width='stretch', config={"scrollZoom": True})
         
     with stats_col:
@@ -1119,14 +1119,14 @@ if st.session_state['csvs_ready']:
                         f'padding: 8px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); line-height: 1.2;">'
                         f'<div style="font-weight: 700; font-size: 0.7rem; margin-bottom: 6px; min-height: 3.6em;">{formatted_name}</div>'
                         f'<div style="font-size: 0.6rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d["type"]} • PH: #{d["deploy_step"]}</div>'
-                        f'<div style="font-size: 0.7rem; color: #555; margin-bottom: 2px;">Phase Savings: <span style="color: #28a745; font-weight: 700; float: right;">${d["annual_savings"]:,.0f}</span></div>'
+                        f'<div style="font-size: 0.7rem; color: #555; margin-bottom: 2px;">Savings: <span style="color: #28a745; font-weight: 700; float: right;">${d["annual_savings"]:,.0f}</span></div>'
                         f'<div style="border-top: 1px solid #f0f0f0; margin: 4px 0;"></div>'
-                        f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Added Net New: <span style="font-weight: 600; color: #0055ff; float: right;">{d["marginal_daily"]:.1f}/d</span></div>'
-                        f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Shared Calls: <span style="font-weight: 600; float: right;">{d["shared_daily_calls"]:.1f}/d</span></div>'
-                        f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 6px;">Added Deflected: <span style="font-weight: 600; float: right;">{d["marginal_deflected"]:.1f}/d</span></div>'
+                        f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Net New: <span style="font-weight: 600; color: #0055ff; float: right;">{d["marginal_daily"]:.1f}/d</span></div>'
+                        f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Shared: <span style="font-weight: 600; float: right;">{d["shared_daily_calls"]:.1f}/d</span></div>'
+                        f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 6px;">Deflected: <span style="font-weight: 600; float: right;">{d["marginal_deflected"]:.1f}/d</span></div>'
                         f'<div style="border-top: 1px dashed #ddd; padding-top: 4px; font-size: 0.65rem; color: #555;">'
                         f'CapEx: <strong style="float:right;">${d["cost"]:,.0f}</strong><br>'
-                        f'Phase ROI: <strong style="color: #28a745; float:right;">{d["be_text"]}</strong></div>'
+                        f'ROI: <strong style="color: #28a745; float:right;">{d["be_text"]}</strong></div>'
                         f'</div>'
                     )
                     
