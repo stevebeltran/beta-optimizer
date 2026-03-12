@@ -195,14 +195,14 @@ def format_3_lines(name_str):
             line3 = parts[1].strip()
             return f"{line1}<br>{line2}<br>{line3}"
         else:
-            return f"{line1}<br>{rest}<br>&nbsp;"
+            return f"{line1}<br>{rest}<br> "
     else:
         if ',' in name_str:
             parts = name_str.split(',')
             if len(parts) >= 3:
                 return f"{parts[0].strip()},<br>{parts[1].strip()},<br>{','.join(parts[2:]).strip()}"
-            return f"{name_str}<br>&nbsp;<br>&nbsp;"
-        return f"{name_str}<br>&nbsp;<br>&nbsp;"
+            return f"{name_str}<br> <br> "
+        return f"{name_str}<br> <br> "
 
 def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_names, calls_gdf):
     kml = simplekml.Kml()
@@ -379,6 +379,7 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
     df_profiles['g'] = pd.DataFrame(guard_matrix.T).astype(int).astype(str).agg(''.join, axis=1)
     df_profiles['r'] = df_profiles.drop(columns='g').agg(''.join, axis=1)
     
+    # sort=False is required so we don't scramble the call alignment
     grouped = df_profiles.groupby(['r', 'g'], sort=False)
     weights = grouped.size().values
     unique_idx = grouped.head(1).index
@@ -548,33 +549,47 @@ if st.session_state['csvs_ready']:
 
     # --- OPTIMIZER CONTROLS ---
     st.sidebar.markdown("---")
-    st.sidebar.header("🎯 Optimizer Controls")
-    opt_strategy = st.sidebar.radio("Optimization Goal:", ("Maximize Call Coverage", "Maximize Land Coverage"), index=0)
+    st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#222222;'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
     
-    incremental_build = st.sidebar.toggle(
-        "Phased Rollout (Static List)", 
-        value=True, 
-        help="When ON, builds the fleet one-by-one so existing stations never change. When OFF, re-calculates the absolute mathematical global optimum for the entire network."
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
+    opt_strategy_raw = st.sidebar.radio(
+        "Goal", 
+        ("Call Coverage", "Land Coverage"), 
+        horizontal=True,
+        label_visibility="collapsed"
     )
-
-    k_responder = st.sidebar.slider("🚁 Responder Drones (2-Mile)", 0, n, min(1, n))
-    k_guardian = st.sidebar.slider("🦅 Guardian Drones (8-Mile)", 0, n, 0)
+    opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
     
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
+    k_responder = st.sidebar.slider("🚁 Responder (2-Mile)", 0, n, min(1, n))
+    k_guardian = st.sidebar.slider("🦅 Guardian (8-Mile)", 0, n, 0)
+    
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Deployment Strategy</div>", unsafe_allow_html=True)
+    incremental_build = st.sidebar.toggle(
+        "Phased Rollout", 
+        value=True, 
+        help="When ON, builds the fleet one-by-one so existing stations never change."
+    )
     allow_redundancy = st.sidebar.toggle(
         "Multi-Tier (Allow Overlap)", 
         value=True, 
-        help="Treat Responders and Guardians as independent layers. When ON, drones won't move away just because their coverage rings overlap."
+        help="When ON, drones won't move away just because their coverage rings overlap."
     )
     
-    show_boundaries = st.sidebar.checkbox("Show Jurisdiction Boundaries", value=True)
-    show_heatmap = st.sidebar.toggle("🔥 Show Incident Heatmap", value=False)
-    show_health = st.sidebar.toggle("Show Health Score Banner", value=True)
-    show_satellite = st.sidebar.toggle("🌍 Satellite View", value=False)
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Map Layers</div>", unsafe_allow_html=True)
+    col1, col2 = st.sidebar.columns(2)
+    show_boundaries = col1.toggle("Boundaries", value=True)
+    show_heatmap = col2.toggle("Heatmap", value=False)
+    show_health = col1.toggle("Health Score", value=True)
+    show_satellite = col2.toggle("Satellite", value=False)
     
     st.sidebar.markdown("---")
-    st.sidebar.subheader("🚗 Ground Traffic Simulator")
-    simulate_traffic = st.sidebar.toggle("Show Ground Response Gap", value=False)
-    traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
+    st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#222222;'>🚗 Ground Traffic Simulator</h3>", unsafe_allow_html=True)
+    simulate_traffic = st.sidebar.toggle("Enable Traffic Sim", value=False)
+    if simulate_traffic:
+        traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
+    else:
+        traffic_level = 40
 
     budget_placeholder = st.sidebar.container()
 
@@ -656,6 +671,7 @@ if st.session_state['csvs_ready']:
                     best_combo = (locked_r, locked_g)
                 else:
                     if total_possible > 3000:
+                        st.toast(f"Optimization Mode: Sampling ({total_possible:,} options)")
                         sampled_combos = []
                         for _ in range(3000):
                             chosen = np.random.choice(range(n), k_responder + k_guardian, replace=False)
@@ -697,7 +713,10 @@ if st.session_state['csvs_ready']:
     active_resp_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_resp_names]
     active_guard_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_guard_names]
     
-    active_geos = [station_metadata[idx]['clipped_2m'] for idx in active_resp_idx] + [station_metadata[idx]['clipped_8m'] for idx in active_guard_idx]
+    active_resp_data = [station_metadata[i] for i in active_resp_idx]
+    active_guard_data = [station_metadata[i] for i in active_guard_idx]
+    
+    active_geos = [s['clipped_2m'] for s in active_resp_data] + [s['clipped_8m'] for s in active_guard_data]
 
     if active_geos:
         if not city_m.is_empty:
@@ -759,7 +778,7 @@ if st.session_state['csvs_ready']:
             
             st.markdown(f"""
             <div style="background-color: #ffffff; border: 1px solid #28a745; padding: 12px; border-radius: 4px; text-align: center; margin-bottom: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
-                <h6 style="color: #555; margin: 0; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;">Annual Taxpayer Savings</h6>
+                <h6 style="color: #555; margin: 0; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;">Annual Capacity Value</h6>
                 <h2 style="color: #28a745; margin: 4px 0; font-family: 'Consolas', monospace; font-size: 1.8rem;">${annual_savings:,.0f}</h2>
                 <div style="border-top: 1px solid #eee; margin: 8px 0;"></div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 3px;">
@@ -767,7 +786,7 @@ if st.session_state['csvs_ready']:
                     <span style="color: #222; font-weight: 700;">{covered_daily_calls:.1f} / DAY</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 6px;">
-                    <span style="color: #666;">DEFLECTED (SAVINGS):</span>
+                    <span style="color: #666;">DEFLECTED (CAPACITY):</span>
                     <span style="color: #222; font-weight: 700;">{daily_drone_only_calls:.1f} / DAY</span>
                 </div>
                 <div style="border-top: 1px dashed #ddd; margin: 6px 0;"></div>
@@ -869,7 +888,7 @@ if st.session_state['csvs_ready']:
                 
         else:
             st.info("🚁 Select at least one drone above to calculate budget impact.")
-            
+
         # --- EXPORT TO PDF BUTTON ---
         st.markdown("---")
         st.subheader("📄 Export Results")
@@ -895,7 +914,6 @@ if st.session_state['csvs_ready']:
             """,
             height=50
         )
-            
     # ==========================================
 
     if show_health:
@@ -1002,7 +1020,6 @@ if st.session_state['csvs_ready']:
             s_name = row['name']
             color = STATION_COLORS[i % len(STATION_COLORS)]
             
-            # Strip city/state for clean legend
             short_name = s_name.split(',')[0]
 
             if s_name in active_resp_names:
@@ -1119,7 +1136,7 @@ if st.session_state['csvs_ready']:
                         f'padding: 8px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); line-height: 1.2;">'
                         f'<div style="font-weight: 700; font-size: 0.7rem; margin-bottom: 6px; min-height: 3.6em;">{formatted_name}</div>'
                         f'<div style="font-size: 0.6rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d["type"]} • PH: #{d["deploy_step"]}</div>'
-                        f'<div style="font-size: 0.7rem; color: #555; margin-bottom: 2px;">Savings: <span style="color: #28a745; font-weight: 700; float: right;">${d["annual_savings"]:,.0f}</span></div>'
+                        f'<div style="font-size: 0.7rem; color: #555; margin-bottom: 2px;">Phase Value: <span style="color: #28a745; font-weight: 700; float: right;">${d["annual_savings"]:,.0f}</span></div>'
                         f'<div style="border-top: 1px solid #f0f0f0; margin: 4px 0;"></div>'
                         f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Net New: <span style="font-weight: 600; color: #0055ff; float: right;">{d["marginal_daily"]:.1f}/d</span></div>'
                         f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Shared: <span style="font-weight: 600; float: right;">{d["shared_daily_calls"]:.1f}/d</span></div>'
