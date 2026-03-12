@@ -379,7 +379,6 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
     df_profiles['g'] = pd.DataFrame(guard_matrix.T).astype(int).astype(str).agg(''.join, axis=1)
     df_profiles['r'] = df_profiles.drop(columns='g').agg(''.join, axis=1)
     
-    # sort=False is required so we don't scramble the call alignment
     grouped = df_profiles.groupby(['r', 'g'], sort=False)
     weights = grouped.size().values
     unique_idx = grouped.head(1).index
@@ -580,7 +579,7 @@ if st.session_state['csvs_ready']:
     col1, col2 = st.sidebar.columns(2)
     show_boundaries = col1.toggle("Boundaries", value=True)
     show_heatmap = col2.toggle("Heatmap", value=False)
-    show_health = col1.toggle("Health Score", value=True)
+    show_health = col1.toggle("Health Score", value=False)
     show_satellite = col2.toggle("Satellite", value=False)
     
     st.sidebar.markdown("---")
@@ -713,10 +712,7 @@ if st.session_state['csvs_ready']:
     active_resp_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_resp_names]
     active_guard_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_guard_names]
     
-    active_resp_data = [station_metadata[i] for i in active_resp_idx]
-    active_guard_data = [station_metadata[i] for i in active_guard_idx]
-    
-    active_geos = [s['clipped_2m'] for s in active_resp_data] + [s['clipped_8m'] for s in active_guard_data]
+    active_geos = [station_metadata[idx]['clipped_2m'] for idx in active_resp_idx] + [station_metadata[idx]['clipped_8m'] for idx in active_guard_idx]
 
     if active_geos:
         if not city_m.is_empty:
