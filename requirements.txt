@@ -6,3 +6,5 @@ plotly
 shapely
 simplekml
 pulp
+fpdf
+kaleido
