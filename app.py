@@ -14,7 +14,6 @@ import simplekml
 from concurrent.futures import ThreadPoolExecutor
 import pulp
 import re
-import streamlit.components.v1 as components
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide")
@@ -165,7 +164,6 @@ if not st.session_state['csvs_ready']:
             elif fname == "stations.csv": station_file = f
             
         if call_file and station_file:
-            # FIX: Convert columns to lowercase safely to guarantee backwards compatibility
             df_c = pd.read_csv(call_file)
             df_c.columns = [str(c).lower().strip() for c in df_c.columns]
             st.session_state['df_calls'] = df_c.dropna(subset=['lat', 'lon'])
@@ -190,7 +188,6 @@ def get_circle_coords(lat, lon, r_mi=2.0):
     return c_lats, c_lons
 
 def format_3_lines(name_str):
-    """Smartly parses standard address formats into exactly 3 lines to fit tight grids."""
     match = re.search(r'\s(\d{1,5}\s+[A-Za-z])', name_str)
     if match:
         idx = match.start()
@@ -211,7 +208,7 @@ def format_3_lines(name_str):
             return f"{name_str}<br> <br> "
         return f"{name_str}<br> <br> "
 
-def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_names, calls_gdf):
+def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_names, calls_gdf, guard_radius_mi):
     kml = simplekml.Kml()
     
     fol_bounds = kml.newfolder(name="Jurisdictions")
@@ -244,7 +241,7 @@ def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_na
         add_kml_station(row, 2.0, simplekml.Color.blue, "[Responder]")
         
     for _, row in df_stations_all[df_stations_all['name'].isin(active_guard_names)].iterrows():
-        add_kml_station(row, 8.0, simplekml.Color.orange, "[Guardian]")
+        add_kml_station(row, guard_radius_mi, simplekml.Color.orange, "[Guardian]")
 
     fol_calls = kml.newfolder(name="Incident Data (Sample)")
     calls_export = calls_gdf.to_crs(epsg=4326)
@@ -325,7 +322,7 @@ def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
     return master_gdf
 
 @st.cache_resource
-def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
+def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code, guard_radius_mi):
     city_m = shapely.wkt.loads(city_m_wkt)
     
     gdf_calls = gpd.GeoDataFrame(df_calls, geometry=gpd.points_from_xy(df_calls.lon, df_calls.lat), crs="EPSG:4326")
@@ -337,7 +334,7 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
         calls_in_city = gdf_calls_utm
         
     radius_resp_m = 3218.69   
-    radius_guard_m = 12874.75 
+    radius_guard_m = guard_radius_mi * 1609.34 # Convert dynamic miles to meters
     
     station_metadata = []
     total_calls = len(calls_in_city)
@@ -366,13 +363,13 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code):
             try: clipped_2m = full_buf_2m.intersection(city_m)
             except: clipped_2m = full_buf_2m
 
-            full_buf_8m = s_pt_m.buffer(radius_guard_m)
-            try: clipped_8m = full_buf_8m.intersection(city_m)
-            except: clipped_8m = full_buf_8m
+            full_buf_guard = s_pt_m.buffer(radius_guard_m)
+            try: clipped_guard = full_buf_guard.intersection(city_m)
+            except: clipped_guard = full_buf_guard
                 
             station_metadata.append({
                 'name': row['name'], 'lat': row['lat'], 'lon': row['lon'],
-                'clipped_2m': clipped_2m, 'clipped_8m': clipped_8m
+                'clipped_2m': clipped_2m, 'clipped_guard': clipped_guard
             })
             
     return calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls
@@ -482,7 +479,6 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
 
 # --- MAIN LOGIC ---
 if st.session_state['csvs_ready']:
-    # ALWAYS WORK FROM A COPY TO PREVENT OVERWRITING SESSION STATE
     df_calls = st.session_state['df_calls'].copy()
     df_stations_all = st.session_state['df_stations'].copy()
 
@@ -539,7 +535,6 @@ if st.session_state['csvs_ready']:
     st.sidebar.markdown("---")
     st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#222222;'>⚙️ Data Filters</h3>", unsafe_allow_html=True)
     
-    # Optional Station Type Filter
     if 'type' in df_stations_all.columns:
         all_types = sorted(df_stations_all['type'].dropna().astype(str).unique().tolist())
         if all_types:
@@ -551,7 +546,6 @@ if st.session_state['csvs_ready']:
             df_stations_all = df_stations_all[df_stations_all['type'].astype(str).isin(selected_types)].copy()
             df_stations_all['name'] = "[" + df_stations_all['type'].astype(str) + "] " + df_stations_all['name'].astype(str)
             
-    # Optional Priority Filter
     if 'priority' in df_calls.columns:
         all_priorities = sorted(df_calls['priority'].dropna().unique().tolist())
         if all_priorities:
@@ -570,10 +564,17 @@ if st.session_state['csvs_ready']:
         st.error("No calls match the selected filters.")
         st.stop()
 
+    # --- OPTIMIZER CONTROLS ---
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#222222;'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
+
+    st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Guardian Range</div>", unsafe_allow_html=True)
+    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8, label_visibility="collapsed")
+
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
         city_m_wkt = city_m.wkt  
         calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls = precompute_spatial_data(
-            df_calls, df_stations_all, city_m_wkt, epsg_code
+            df_calls, df_stations_all, city_m_wkt, epsg_code, guard_radius_mi
         )
     n = len(df_stations_all)
 
@@ -586,13 +587,9 @@ if st.session_state['csvs_ready']:
 
     max_area = city_m.area if (city_m and city_m.area > 0) else 1.0
     tb_area_r = [s['clipped_2m'].area / max_area for s in station_metadata]
-    tb_area_g = [s['clipped_8m'].area / max_area for s in station_metadata]
+    tb_area_g = [s['clipped_guard'].area / max_area for s in station_metadata]
     tb_cent = [s['centrality'] for s in station_metadata]
 
-    # --- OPTIMIZER CONTROLS ---
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#222222;'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
-    
     st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
     opt_strategy_raw = st.sidebar.radio(
         "Goal", 
@@ -604,7 +601,7 @@ if st.session_state['csvs_ready']:
     
     st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
     k_responder = st.sidebar.slider("🚁 Responder (2-Mile)", 0, n, min(1, n))
-    k_guardian = st.sidebar.slider("🦅 Guardian (8-Mile)", 0, n, 0)
+    k_guardian = st.sidebar.slider(f"🦅 Guardian ({guard_radius_mi}-Mile)", 0, n, 0)
     
     st.sidebar.markdown("<div style='font-size:0.75rem; color:#666; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Deployment Strategy</div>", unsafe_allow_html=True)
     incremental_build = st.sidebar.toggle(
@@ -661,10 +658,10 @@ if st.session_state['csvs_ready']:
                 r_combo, g_combo = rg_combo
                 if allow_redundancy:
                     r_geos = [station_metadata[i]['clipped_2m'] for i in r_combo]
-                    g_geos = [station_metadata[i]['clipped_8m'] for i in g_combo]
+                    g_geos = [station_metadata[i]['clipped_guard'] for i in g_combo]
                     score_area = (unary_union(r_geos).area if r_geos else 0.0) + (unary_union(g_geos).area if g_geos else 0.0)
                 else:
-                    geos = [station_metadata[i]['clipped_2m'] for i in r_combo] + [station_metadata[i]['clipped_8m'] for i in g_combo]
+                    geos = [station_metadata[i]['clipped_2m'] for i in r_combo] + [station_metadata[i]['clipped_guard'] for i in g_combo]
                     score_area = unary_union(geos).area if geos else 0.0
                 
                 if total_calls > 0:
@@ -755,7 +752,10 @@ if st.session_state['csvs_ready']:
     active_resp_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_resp_names]
     active_guard_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_guard_names]
     
-    active_geos = [station_metadata[idx]['clipped_2m'] for idx in active_resp_idx] + [station_metadata[idx]['clipped_8m'] for idx in active_guard_idx]
+    active_resp_data = [station_metadata[i] for i in active_resp_idx]
+    active_guard_data = [station_metadata[i] for i in active_guard_idx]
+    
+    active_geos = [s['clipped_2m'] for s in active_resp_data] + [s['clipped_guard'] for s in active_guard_data]
 
     if active_geos:
         if not city_m.is_empty:
@@ -854,7 +854,7 @@ if st.session_state['csvs_ready']:
                 st.markdown(f"""
                 <div style="background-color: #f9f9f9; border: 1px solid #e0e0e0; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
                     <h5 style="color: #333; margin: 0 0 4px 0; font-size: 0.85rem;">GUARDIAN <span style="color:#777; font-weight:normal;">(x{actual_k_guardian})</span></h5>
-                    <div style="color: #555; font-size: 0.75rem;">COVERAGE: <span style="color:#222; font-weight:600;">8 MI RADIUS</span></div>
+                    <div style="color: #555; font-size: 0.75rem;">COVERAGE: <span style="color:#222; font-weight:600;">{guard_radius_mi} MI RADIUS</span></div>
                     <div style="color: #555; font-size: 0.75rem;">UNIT CAPEX: <span style="color:#222; font-weight:600;">$160,000</span></div>
                     <div style="color: #555; font-size: 0.75rem; margin-top: 4px; border-top: 1px solid #ddd; padding-top: 4px;">SUBTOTAL: <span style="color:#222; font-weight:600;">${capex_guardian_total:,.0f}</span></div>
                 </div>
@@ -928,31 +928,6 @@ if st.session_state['csvs_ready']:
         else:
             st.info("🚁 Select at least one drone above to calculate budget impact.")
 
-        # --- EXPORT TO PDF BUTTON ---
-        st.markdown("---")
-        st.subheader("📄 Export Results")
-
-        components.html(
-            """
-            <script>
-            function printDashboard() {
-                window.parent.print();
-            }
-            </script>
-            <button onclick="printDashboard()" style="
-                background-color: #00D2FF; 
-                color: #000; 
-                border: none; 
-                padding: 10px 20px; 
-                font-family: 'Manrope', sans-serif;
-                font-weight: bold;
-                border-radius: 4px; 
-                cursor: pointer;
-                width: 100%;
-            ">🖨️ Save Dashboard as PDF</button>
-            """,
-            height=50
-        )
     # ==========================================
 
     if show_health:
@@ -973,9 +948,9 @@ if st.session_state['csvs_ready']:
         m1, m2, m3, m4, m5 = st.columns(5)
         
         if len(active_guard_names) > 0:
-            eval_dist = 8.0
+            eval_dist = guard_radius_mi
             eval_speed = 60.0
-            gain_label = "Efficiency Gain (8-mi)"
+            gain_label = f"Efficiency Gain ({guard_radius_mi}-mi)"
         else:
             eval_dist = 2.0
             eval_speed = 42.0
@@ -1004,6 +979,24 @@ if st.session_state['csvs_ready']:
         m2.metric("Response Capacity %", f"{calls_covered_perc:.1f}%")
         m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
         m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
+
+    # --- KML EXPORT ---
+    kml_data = generate_kml(
+        active_gdf, 
+        df_stations_all, 
+        active_resp_names,
+        active_guard_names,
+        calls_in_city,
+        guard_radius_mi
+    )
+    
+    st.sidebar.markdown("---")
+    st.sidebar.download_button(
+        label="🌏 Download for Google Earth",
+        data=kml_data,
+        file_name="drone_deployment.kml",
+        mime="application/vnd.google-earth.kml+xml"
+    )
 
     # ==========================================
     # --- MAIN UI SPLIT: MAP (LEFT) & STATS (RIGHT) ---
@@ -1066,9 +1059,9 @@ if st.session_state['csvs_ready']:
                 lbl = f"{short_name} (Resp)"
                 drive_time_min = (2.0 / 42.0) * 60 
             elif s_name in active_guard_names:
-                clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=8.0)
+                clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=guard_radius_mi)
                 lbl = f"{short_name} (Guard)"
-                drive_time_min = (8.0 / 60.0) * 60 
+                drive_time_min = (guard_radius_mi / 60.0) * 60 
             else:
                 continue
 
@@ -1158,7 +1151,7 @@ if st.session_state['csvs_ready']:
             )
         )
 
-        st.plotly_chart(fig, width='stretch', config={"scrollZoom": True})
+        st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
         
     with stats_col:
         st.markdown("<h4 style='margin-top:0px; border-bottom: 1px solid #ddd; padding-bottom: 8px; color: #333;'>Unit-Level Economics</h4>", unsafe_allow_html=True)
@@ -1175,7 +1168,7 @@ if st.session_state['csvs_ready']:
                         f'padding: 8px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); line-height: 1.2;">'
                         f'<div style="font-weight: 700; font-size: 0.7rem; margin-bottom: 6px; min-height: 3.6em;">{formatted_name}</div>'
                         f'<div style="font-size: 0.6rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d["type"]} • PH: #{d["deploy_step"]}</div>'
-                        f'<div style="font-size: 0.7rem; color: #555; margin-bottom: 2px;">Phase Value: <span style="color: #28a745; font-weight: 700; float: right;">${d["annual_savings"]:,.0f}</span></div>'
+                        f'<div style="font-size: 0.7rem; color: #555; margin-bottom: 2px;">Capacity Value: <span style="color: #28a745; font-weight: 700; float: right;">${d["annual_savings"]:,.0f}</span></div>'
                         f'<div style="border-top: 1px solid #f0f0f0; margin: 4px 0;"></div>'
                         f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Net New: <span style="font-weight: 600; color: #0055ff; float: right;">{d["marginal_daily"]:.1f}/d</span></div>'
                         f'<div style="font-size: 0.65rem; color: #555; margin-bottom: 2px;">Shared: <span style="font-weight: 600; float: right;">{d["shared_daily_calls"]:.1f}/d</span></div>'
