@@ -14,6 +14,7 @@ import simplekml
 from concurrent.futures import ThreadPoolExecutor
 import pulp
 import re
+import streamlit.components.v1 as components
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide")
@@ -67,13 +68,6 @@ if is_dark:
     /* Popover Dropdown */
     div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
     div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
-
-    /* Sliders to Brinc Blue */
-    .stSlider div[data-baseweb="slider"] div[role="slider"] {{ background-color: {accent_color} !important; border: 2px solid #ffffff !important; }}
-    .stSlider div[data-baseweb="slider"] div[data-testid="stTickBar"] > div {{ background-color: {accent_color} !important; }}
-    
-    /* Toggles */
-    .stToggle div[data-baseweb="checkbox"] div {{ background-color: {accent_color} !important; }}
     """
 else:
     # Light Mode Palette
@@ -104,14 +98,14 @@ else:
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     
-    div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: #00D2FF !important; }}
+    div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
     
     /* Force Multiselect to White */
     div[data-baseweb="select"] > div {{ background-color: #ffffff !important; border-color: #cccccc !important; color: #333333 !important; }}
     """
 
-# --- INJECT CSS ---
+# --- INJECT CSS (Includes specific primary-color overrides for toggles/sliders) ---
 st.markdown(
     f"""
     <style>
@@ -119,12 +113,34 @@ st.markdown(
     
     {theme_css}
     
+    /* General Form Fonts */
     .stRadio label p, .stMultiSelect label p, .stSlider label p, .stToggle label p, .stCheckbox label p {{
         font-weight: 600 !important;
         font-size: 0.85rem !important;
     }}
     div[role="radiogroup"] {{ gap: 0.5rem !important; }}
 
+    /* Streamlit Primary Color Overrides (Changes the default red to Brinc Blue or Green) */
+    div[data-testid="stRadio"] div[role="radio"][aria-checked="true"] div:first-child {{
+        background-color: {accent_color} !important;
+        border-color: {accent_color} !important;
+    }}
+    div[data-testid="stToggle"] [aria-checked="true"] > div:first-child {{
+        background-color: {accent_color} !important;
+    }}
+    div[data-testid="stCheckbox"] [aria-checked="true"] > div:first-child {{
+        background-color: {accent_color} !important;
+        border-color: {accent_color} !important;
+    }}
+    div[data-testid="stSlider"] div[data-baseweb="slider"] div[data-testid="stTickBar"] > div {{
+        background-color: {accent_color} !important;
+    }}
+    div[data-testid="stSlider"] div[data-baseweb="slider"] div[role="slider"] {{
+        background-color: {accent_color} !important;
+        border-color: #ffffff !important;
+    }}
+
+    /* Print settings */
     @media print {{
         section[data-testid="stSidebar"], header[data-testid="stHeader"], .stSlider, button, div[data-testid="stToolbar"] {{ display: none !important; }}
         * {{ -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }}
@@ -152,24 +168,25 @@ SHAPEFILE_DIR = "jurisdiction_data"
 if not os.path.exists(SHAPEFILE_DIR):
     os.makedirs(SHAPEFILE_DIR)
 
-# --- SIDEBAR: MAP LIBRARY MANAGER ---
-with st.sidebar.expander("🗺️ Map Library Manager"):
-    st.write("Upload shapefiles here to populate the 'jurisdiction_data' folder.")
-    map_files = st.file_uploader("Drop .shp, .shx, .dbf, .prj files", accept_multiple_files=True)
-    if map_files:
-        count = 0
-        for f in map_files:
-            with open(os.path.join(SHAPEFILE_DIR, f.name), "wb") as buffer:
-                buffer.write(f.getbuffer())
-            count += 1
-        st.success(f"Saved {count} map files to library!")
-
-# --- MAIN UPLOAD SECTION (CSVs ONLY) ---
 if 'csvs_ready' not in st.session_state:
     st.session_state['csvs_ready'] = False
     st.session_state['df_calls'] = None
     st.session_state['df_stations'] = None
 
+# --- SIDEBAR: MAP LIBRARY MANAGER (HIDDEN WHEN READY) ---
+if not st.session_state['csvs_ready']:
+    with st.sidebar.expander("🗺️ Map Library Manager"):
+        st.write("Upload shapefiles here to populate the 'jurisdiction_data' folder.")
+        map_files = st.file_uploader("Drop .shp, .shx, .dbf, .prj files", accept_multiple_files=True)
+        if map_files:
+            count = 0
+            for f in map_files:
+                with open(os.path.join(SHAPEFILE_DIR, f.name), "wb") as buffer:
+                    buffer.write(f.getbuffer())
+                count += 1
+            st.success(f"Saved {count} map files to library!")
+
+# --- MAIN UPLOAD SECTION (CSVs ONLY) ---
 if not st.session_state['csvs_ready']:
     st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
     uploaded_files = st.file_uploader("Upload Mission Data", accept_multiple_files=True)
@@ -352,7 +369,7 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code, gu
         calls_in_city = gdf_calls_utm
         
     radius_resp_m = 3218.69   
-    radius_guard_m = guard_radius_mi * 1609.34 # Convert dynamic miles to meters
+    radius_guard_m = guard_radius_mi * 1609.34 
     
     station_metadata = []
     total_calls = len(calls_in_city)
@@ -582,31 +599,11 @@ if st.session_state['csvs_ready']:
         st.error("No calls match the selected filters.")
         st.stop()
 
+    n = len(df_stations_all)
+
     # --- OPTIMIZER CONTROLS ---
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
-
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Guardian Range</div>", unsafe_allow_html=True)
-    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8, label_visibility="collapsed")
-
-    with st.spinner("⚡ Precomputing spatial optimization matrices..."):
-        city_m_wkt = city_m.wkt  
-        calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls = precompute_spatial_data(
-            df_calls, df_stations_all, city_m_wkt, epsg_code, guard_radius_mi
-        )
-    n = len(df_stations_all)
-
-    max_dist = max([((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5 for s in station_metadata])
-    if max_dist == 0: max_dist = 1.0
-    
-    for s in station_metadata:
-        dist = ((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5
-        s['centrality'] = 1.0 - (dist / max_dist)
-
-    max_area = city_m.area if (city_m and city_m.area > 0) else 1.0
-    tb_area_r = [s['clipped_2m'].area / max_area for s in station_metadata]
-    tb_area_g = [s['clipped_guard'].area / max_area for s in station_metadata]
-    tb_cent = [s['centrality'] for s in station_metadata]
 
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
     opt_strategy_raw = st.sidebar.radio(
@@ -616,11 +613,12 @@ if st.session_state['csvs_ready']:
         label_visibility="collapsed"
     )
     opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
-    
+
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
-    k_responder = st.sidebar.slider("🚁 Responder (2-Mile)", 0, n, min(1, n))
-    k_guardian = st.sidebar.slider(f"🦅 Guardian ({guard_radius_mi}-Mile)", 0, n, 0)
-    
+    k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
+    k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
+    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
+
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Deployment Strategy</div>", unsafe_allow_html=True)
     incremental_build = st.sidebar.toggle(
         "Phased Rollout", 
@@ -647,6 +645,26 @@ if st.session_state['csvs_ready']:
         traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
     else:
         traffic_level = 40
+
+    # --- TRIGGER THE CACHED HEAVY LIFTING ---
+    # Moved down so it can accept the dynamically selected `guard_radius_mi`
+    with st.spinner("⚡ Precomputing spatial optimization matrices..."):
+        city_m_wkt = city_m.wkt  
+        calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls = precompute_spatial_data(
+            df_calls, df_stations_all, city_m_wkt, epsg_code, guard_radius_mi
+        )
+
+    max_dist = max([((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5 for s in station_metadata])
+    if max_dist == 0: max_dist = 1.0
+    
+    for s in station_metadata:
+        dist = ((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5
+        s['centrality'] = 1.0 - (dist / max_dist)
+
+    max_area = city_m.area if (city_m and city_m.area > 0) else 1.0
+    tb_area_r = [s['clipped_2m'].area / max_area for s in station_metadata]
+    tb_area_g = [s['clipped_guard'].area / max_area for s in station_metadata]
+    tb_cent = [s['centrality'] for s in station_metadata]
 
     budget_placeholder = st.sidebar.container()
 
