@@ -611,9 +611,10 @@ if st.session_state['csvs_ready']:
     
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
     k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
-    
     k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
-    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
+    
+    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Guardian Range</div>", unsafe_allow_html=True)
+    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8, label_visibility="collapsed")
 
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
         city_m_wkt = city_m.wkt  
@@ -934,8 +935,11 @@ if st.session_state['csvs_ready']:
                 }
                 
                 if total_calls > 0:
+                    # Isolate ONLY the net new calls covered by this drone specifically
                     marginal_mask = cov_array & ~cumulative_mask
                     marginal_historic = np.sum(marginal_mask)
+                    d['assigned_indices'] = np.where(marginal_mask)[0] # Save indices for simulation
+                    
                     cumulative_mask = cumulative_mask | cov_array
                     
                     d['marginal_perc'] = marginal_historic / total_calls
@@ -956,6 +960,7 @@ if st.session_state['csvs_ready']:
                         d['annual_savings'] = 0
                         d['be_text'] = "N/A"
                 else:
+                    d['assigned_indices'] = []
                     d['annual_savings'] = 0
                     d['marginal_daily'] = 0
                     d['marginal_deflected'] = 0
@@ -1231,7 +1236,7 @@ if st.session_state['csvs_ready']:
     if fleet_capex > 0:
         st.markdown("---")
         st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🚁 3D Swarm Simulation</h3>", unsafe_allow_html=True)
-        st.info("Watch the deployed drones respond to the covered 911 calls. The historic data has been procedurally distributed over a simulated 24-hour timeline.")
+        st.info("Watch the deployed drones respond to the assigned 911 calls. The historical volume has been procedurally distributed over a simulated 24-hour timeline. Drones fly true 3D arcs out to the incident.")
         
         show_sim = st.toggle("🎬 Enable 3D Swarm Simulation", value=False)
         
@@ -1240,39 +1245,62 @@ if st.session_state['csvs_ready']:
                 stations_json = []
                 flights_json = []
                 
+                # Fetch raw coordinates so we can index them directly
+                calls_coords = np.column_stack((calls_in_city.geometry.x, calls_in_city.geometry.y))
+                
+                # Setup Legend
+                legend_html = ""
+                
                 for d in active_drones:
+                    short_name = d['name'].split(',')[0]
                     stations_json.append({
-                        "name": d['name'],
+                        "name": short_name,
                         "lon": d['lon'],
                         "lat": d['lat'],
                         "color": d['color']
                     })
                     
-                for i, row in enumerate(calls_in_city.itertuples()):
-                    covering_drone = None
-                    for d in active_drones:
-                        if d['cov_array'][i]:
-                            covering_drone = d
-                            break
+                    # Add to HTML Legend
+                    legend_html += f'<div style="margin-bottom:3px;"><span style="display:inline-block;width:10px;height:10px;background-color:{d["color"]};margin-right:8px;border-radius:50%;"></span>{short_name}</div>'
                     
-                    if covering_drone:
-                        dist_mi = ((row.lon - covering_drone['lon'])**2 + (row.lat - covering_drone['lat'])**2)**0.5 * 69.172
+                    hex_c = d['color'].lstrip('#')
+                    rgb = [int(hex_c[j:j+2], 16) for j in (0, 2, 4)]
+                    
+                    # Pull strictly the net new assigned calls for this station
+                    assigned_calls = d.get('assigned_indices', [])
+                    for call_idx in assigned_calls:
+                        lon1, lat1 = calls_coords[call_idx]
+                        lon0, lat0 = d['lon'], d['lat']
                         
-                        # Flight time in seconds. Exaggerate visual time factor slightly so they streak nicely
-                        flight_time_sec = (dist_mi / covering_drone['speed_mph']) * 3600 * 10
-                        flight_time_sec = max(flight_time_sec, 900) 
+                        dist_mi = ((lon1 - lon0)**2 + (lat1 - lat0)**2)**0.5 * 69.172
+                        
+                        # True flight time based on specific drone speed
+                        flight_time_sec = (dist_mi / d['speed_mph']) * 3600
+                        
+                        # Exaggerate visual time so you can actually see it streak
+                        vis_time = max(flight_time_sec * 3, 120) 
                         
                         # Procedurally span the calls over a single 24-hour cycle
                         launch = random.randint(0, 86400)
                         
-                        hex_c = covering_drone['color'].lstrip('#')
-                        rgb = [int(hex_c[j:j+2], 16) for j in (0, 2, 4)]
+                        # Calculate 3D Parabola Arc
+                        mid_lon = (lon0 + lon1) / 2
+                        mid_lat = (lat0 + lat1) / 2
+                        arc_height = min(max(dist_mi * 40, 50), 200) # Arc up to 200 meters high
                         
+                        # Path: [Start at Station, Arc up to midpoint, Land at Call]
                         flights_json.append({
-                            "path": [[covering_drone['lon'], covering_drone['lat']], [row.lon, row.lat], [covering_drone['lon'], covering_drone['lat']]],
-                            "timestamps": [launch, launch + flight_time_sec, launch + flight_time_sec * 2],
+                            "path": [[lon0, lat0, 0], [mid_lon, mid_lat, arc_height], [lon1, lat1, 0]],
+                            "timestamps": [launch, launch + vis_time/2, launch + vis_time],
                             "color": rgb
                         })
+                
+                # Protect Browser RAM
+                warn_html = ""
+                total_flights = len(flights_json)
+                if total_flights > 2000:
+                    flights_json = random.sample(flights_json, 2000)
+                    warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 2,000 flights for performance (Total: {total_flights}).</div>'
                         
                 html = f"""
                 <!DOCTYPE html>
@@ -1285,22 +1313,30 @@ if st.session_state['csvs_ready']:
                         body {{ margin: 0; padding: 0; overflow: hidden; background: #000; font-family: 'Manrope', sans-serif; }}
                         #map {{ width: 100vw; height: 100vh; position: absolute; }}
                         #ui {{ position: absolute; top: 20px; left: 20px; background: rgba(17,17,17,0.9); padding: 20px; border-radius: 8px; color: white; border: 1px solid #333; z-index: 10; box-shadow: 0 4px 10px rgba(0,0,0,0.5); width: 280px;}}
-                        button {{ background: #00D2FF; color: black; border: none; padding: 12px; cursor: pointer; font-weight: bold; border-radius: 4px; width: 100%; font-size: 14px; text-transform: uppercase; }}
+                        button {{ background: #00D2FF; color: black; border: none; padding: 12px; cursor: pointer; font-weight: bold; border-radius: 4px; width: 100%; font-size: 14px; text-transform: uppercase; margin-bottom: 10px;}}
                         button:disabled {{ background: #444; color: #888; cursor: not-allowed; }}
                     </style>
                 </head>
                 <body>
                     <div id="ui">
                         <h3 style="margin: 0 0 10px 0; color: #00D2FF;">DFR Swarm Sim</h3>
-                        <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {len(flights_json)} historic calls covered by the active network over a 24-hour period.</div>
+                        {warn_html}
+                        <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {len(flights_json)} net-new calls over a 24-hour cycle.</div>
                         
                         <div style="margin-bottom: 15px;">
-                            <label style="font-size: 12px; color: #ccc;">Time Speed Multiplier: <span id="speedLabel">25</span>x</label>
-                            <input type="range" id="speedSlider" min="1" max="150" value="25" style="width: 100%;">
+                            <label style="font-size: 12px; color: #ccc;">Time Speed Multiplier: <span id="speedLabel">15</span>x</label>
+                            <input type="range" id="speedSlider" min="1" max="100" value="15" style="width: 100%;">
                         </div>
 
                         <button id="runBtn">LAUNCH SWARM</button>
-                        <div id="timeDisplay" style="margin-top: 15px; font-family: monospace; font-size: 18px; color: #00ffcc; font-weight: bold; text-align: center;">00:00:00</div>
+                        <div id="timeDisplay" style="font-family: monospace; font-size: 18px; color: #00ffcc; font-weight: bold; text-align: center;">00:00:00</div>
+                        
+                        <div style="margin-top: 15px; border-top: 1px solid #333; padding-top: 10px;">
+                            <h4 style="margin: 0 0 5px 0; color: #aaa; font-size: 11px; text-transform: uppercase;">Active Stations</h4>
+                            <div style="font-size: 11px; color: #ddd; max-height: 120px; overflow-y: auto;">
+                                {legend_html}
+                            </div>
+                        </div>
                     </div>
                     <div id="map"></div>
                     <script>
@@ -1345,7 +1381,7 @@ if st.session_state['csvs_ready']:
                                     getColor: d => d.color,
                                     opacity: 0.8,
                                     widthMinPixels: 4,
-                                    trailLength: 1200, 
+                                    trailLength: 120, 
                                     currentTime: time,
                                     rounded: true
                                 }})
@@ -1364,7 +1400,7 @@ if st.session_state['csvs_ready']:
                             if(timer) cancelAnimationFrame(timer);
                             
                             const animate = () => {{
-                                time += parseInt(speedSlider.value); // Dynamic timestep controlled by slider
+                                time += parseInt(speedSlider.value); 
                                 render();
                                 if (time < 86400) {{
                                     timer = requestAnimationFrame(animate);
