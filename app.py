@@ -14,6 +14,8 @@ import simplekml
 from concurrent.futures import ThreadPoolExecutor
 import pulp
 import re
+import random
+import json
 import streamlit.components.v1 as components
 
 # --- PAGE CONFIG ---
@@ -505,6 +507,144 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
             curr_r, curr_g = next_r, next_g
         return curr_r, curr_g, chrono_r, chrono_g
 
+# --- DECK.GL SIMULATION GENERATOR ---
+def generate_deckgl_html(active_drones, calls_in_city):
+    stations_json = []
+    flights_json = []
+    
+    for d in active_drones:
+        stations_json.append({
+            "name": d['name'],
+            "lon": d['lon'],
+            "lat": d['lat'],
+            "color": d['color']
+        })
+        
+    for i, row in enumerate(calls_in_city.itertuples()):
+        covering_drone = None
+        for d in active_drones:
+            if d['cov_array'][i]:
+                covering_drone = d
+                break
+        
+        if covering_drone:
+            dist_mi = ((row.lon - covering_drone['lon'])**2 + (row.lat - covering_drone['lat'])**2)**0.5 * 69.172
+            # Exaggerate flight times visually so we can actually see them cross the screen
+            flight_time_sec = (dist_mi / covering_drone['speed_mph']) * 3600 * 10
+            flight_time_sec = max(flight_time_sec, 600)
+            
+            # Procedurally span the calls over a single 24-hour cycle
+            launch = random.randint(0, 86400)
+            
+            hex_c = covering_drone['color'].lstrip('#')
+            rgb = [int(hex_c[j:j+2], 16) for j in (0, 2, 4)]
+            
+            flights_json.append({
+                "path": [[covering_drone['lon'], covering_drone['lat']], [row.lon, row.lat], [covering_drone['lon'], covering_drone['lat']]],
+                "timestamps": [launch, launch + flight_time_sec, launch + flight_time_sec * 2],
+                "color": rgb
+            })
+            
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <script src="https://unpkg.com/deck.gl@latest/dist.min.js"></script>
+        <script src="https://unpkg.com/maplibre-gl@3.0.0/dist/maplibre-gl.js"></script>
+        <link href="https://unpkg.com/maplibre-gl@3.0.0/dist/maplibre-gl.css" rel="stylesheet" />
+        <style>
+            body {{ margin: 0; padding: 0; overflow: hidden; background: #000; font-family: 'Manrope', sans-serif; }}
+            #map {{ width: 100vw; height: 100vh; position: absolute; }}
+            #ui {{ position: absolute; top: 20px; left: 20px; background: rgba(17,17,17,0.9); padding: 20px; border-radius: 8px; color: white; border: 1px solid #333; z-index: 10; box-shadow: 0 4px 10px rgba(0,0,0,0.5); width: 280px;}}
+            button {{ background: #00D2FF; color: black; border: none; padding: 12px; cursor: pointer; font-weight: bold; border-radius: 4px; width: 100%; margin-top: 15px; font-size: 14px; text-transform: uppercase; }}
+            button:disabled {{ background: #444; color: #888; cursor: not-allowed; }}
+        </style>
+    </head>
+    <body>
+        <div id="ui">
+            <h3 style="margin: 0 0 10px 0; color: #00D2FF;">DFR Swarm Sim</h3>
+            <div style="font-size: 13px; color: #aaa; margin-bottom: 10px;">Simulating {len(flights_json)} historic calls covered by the active network over a 24-hour period.</div>
+            <button id="runBtn">LAUNCH SWARM</button>
+            <div id="timeDisplay" style="margin-top: 15px; font-family: monospace; font-size: 18px; color: #00ffcc; font-weight: bold; text-align: center;">00:00:00</div>
+        </div>
+        <div id="map"></div>
+        <script>
+            const stations = {json.dumps(stations_json)};
+            const flights = {json.dumps(flights_json)};
+            
+            const map = new deck.DeckGL({{
+                container: 'map',
+                mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+                initialViewState: {{
+                    longitude: stations.length > 0 ? stations[0].lon : -90,
+                    latitude: stations.length > 0 ? stations[0].lat : 38,
+                    zoom: 10.5,
+                    pitch: 50,
+                    bearing: 0
+                }},
+                controller: true
+            }});
+
+            let time = 0;
+            let timer = null;
+            
+            function render() {{
+                const layers = [
+                    new deck.ScatterplotLayer({{
+                        id: 'stations',
+                        data: stations,
+                        getPosition: d => [d.lon, d.lat],
+                        getFillColor: [255, 255, 255, 255],
+                        getRadius: 150,
+                        pickable: true
+                    }}),
+                    new deck.TripsLayer({{
+                        id: 'flights',
+                        data: flights,
+                        getPath: d => d.path,
+                        getTimestamps: d => d.timestamps,
+                        getColor: d => d.color,
+                        opacity: 0.8,
+                        widthMinPixels: 4,
+                        trailLength: 1200, 
+                        currentTime: time,
+                        rounded: true
+                    }})
+                ];
+                map.setProps({{layers}});
+                
+                let hrs = Math.floor(time / 3600).toString().padStart(2, '0');
+                let mins = Math.floor((time % 3600) / 60).toString().padStart(2, '0');
+                document.getElementById('timeDisplay').innerText = `Sim Time: ${{hrs}}:${{mins}}`;
+            }}
+
+            document.getElementById('runBtn').onclick = () => {{
+                document.getElementById('runBtn').disabled = true;
+                document.getElementById('runBtn').innerText = "SIMULATING...";
+                time = 0;
+                if(timer) cancelAnimationFrame(timer);
+                
+                const animate = () => {{
+                    time += 100; // Timestep jump per frame
+                    render();
+                    if (time < 86400) {{
+                        timer = requestAnimationFrame(animate);
+                    }} else {{
+                        document.getElementById('runBtn').disabled = false;
+                        document.getElementById('runBtn').innerText = "RESTART SWARM";
+                        time = 0;
+                    }}
+                }};
+                animate();
+            }};
+            
+            render();
+        </script>
+    </body>
+    </html>
+    """
+    return html
+
 # --- MAIN LOGIC ---
 if st.session_state['csvs_ready']:
     df_calls = st.session_state['df_calls'].copy()
@@ -922,12 +1062,15 @@ if st.session_state['csvs_ready']:
 
                 d = {
                     'name': station_metadata[idx]['name'],
+                    'lat': station_metadata[idx]['lat'],
+                    'lon': station_metadata[idx]['lon'],
                     'type': d_type,
                     'cost': cost,
                     'cov_array': cov_array,
                     'color': map_color,
                     'deploy_step': step if (idx in chrono_r or idx in chrono_g) else "MANUAL",
-                    'avg_time_min': avg_time_min
+                    'avg_time_min': avg_time_min,
+                    'speed_mph': speed_mph
                 }
                 
                 if total_calls > 0:
@@ -1221,3 +1364,151 @@ if st.session_state['csvs_ready']:
                         st.markdown(html_card, unsafe_allow_html=True)
         else:
             st.info("🚁 Deploy drones on the map to see individual unit economics.")
+
+    # ==========================================
+    # --- 3D DECK.GL SWARM SIMULATION ---
+    # ==========================================
+    if fleet_capex > 0:
+        st.markdown("---")
+        st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🚁 3D Swarm Simulation</h3>", unsafe_allow_html=True)
+        st.info("Watch the deployed drones respond to the covered 911 calls. The historic data has been procedurally distributed over a simulated 24-hour timeline.")
+        
+        def generate_deckgl_html(active_drones, calls_in_city):
+            stations_json = []
+            flights_json = []
+            
+            for d in active_drones:
+                stations_json.append({
+                    "name": d['name'],
+                    "lon": d['lon'],
+                    "lat": d['lat'],
+                    "color": d['color']
+                })
+                
+            for i, row in enumerate(calls_in_city.itertuples()):
+                covering_drone = None
+                for d in active_drones:
+                    if d['cov_array'][i]:
+                        covering_drone = d
+                        break
+                
+                if covering_drone:
+                    dist_mi = ((row.lon - covering_drone['lon'])**2 + (row.lat - covering_drone['lat'])**2)**0.5 * 69.172
+                    # Flight time in seconds. Exaggerate visual time factor slightly so they streak nicely
+                    flight_time_sec = (dist_mi / covering_drone['speed_mph']) * 3600 * 10
+                    flight_time_sec = max(flight_time_sec, 600) 
+                    
+                    # Procedurally span the calls over a single 24-hour cycle
+                    launch = random.randint(0, 86400)
+                    
+                    hex_c = covering_drone['color'].lstrip('#')
+                    rgb = [int(hex_c[j:j+2], 16) for j in (0, 2, 4)]
+                    
+                    flights_json.append({
+                        "path": [[covering_drone['lon'], covering_drone['lat']], [row.lon, row.lat], [covering_drone['lon'], covering_drone['lat']]],
+                        "timestamps": [launch, launch + flight_time_sec, launch + flight_time_sec * 2],
+                        "color": rgb
+                    })
+                    
+            html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <script src="https://unpkg.com/deck.gl@latest/dist.min.js"></script>
+                <script src="https://unpkg.com/maplibre-gl@3.0.0/dist/maplibre-gl.js"></script>
+                <link href="https://unpkg.com/maplibre-gl@3.0.0/dist/maplibre-gl.css" rel="stylesheet" />
+                <style>
+                    body {{ margin: 0; padding: 0; overflow: hidden; background: #000; font-family: 'Manrope', sans-serif; }}
+                    #map {{ width: 100vw; height: 100vh; position: absolute; }}
+                    #ui {{ position: absolute; top: 20px; left: 20px; background: rgba(17,17,17,0.9); padding: 20px; border-radius: 8px; color: white; border: 1px solid #333; z-index: 10; box-shadow: 0 4px 10px rgba(0,0,0,0.5); width: 280px;}}
+                    button {{ background: #00D2FF; color: black; border: none; padding: 12px; cursor: pointer; font-weight: bold; border-radius: 4px; width: 100%; margin-top: 15px; font-size: 14px; text-transform: uppercase; }}
+                    button:disabled {{ background: #444; color: #888; cursor: not-allowed; }}
+                </style>
+            </head>
+            <body>
+                <div id="ui">
+                    <h3 style="margin: 0 0 10px 0; color: #00D2FF;">DFR Swarm Sim</h3>
+                    <div style="font-size: 13px; color: #aaa; margin-bottom: 10px;">Simulating {len(flights_json)} historic calls covered by the active network over a 24-hour period.</div>
+                    <button id="runBtn">LAUNCH SWARM</button>
+                    <div id="timeDisplay" style="margin-top: 15px; font-family: monospace; font-size: 18px; color: #00ffcc; font-weight: bold; text-align: center;">00:00:00</div>
+                </div>
+                <div id="map"></div>
+                <script>
+                    const stations = {json.dumps(stations_json)};
+                    const flights = {json.dumps(flights_json)};
+                    
+                    const map = new deck.DeckGL({{
+                        container: 'map',
+                        mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+                        initialViewState: {{
+                            longitude: stations.length > 0 ? stations[0].lon : -90,
+                            latitude: stations.length > 0 ? stations[0].lat : 38,
+                            zoom: 10.5,
+                            pitch: 50,
+                            bearing: 0
+                        }},
+                        controller: true
+                    }});
+
+                    let time = 0;
+                    let timer = null;
+                    
+                    function render() {{
+                        const layers = [
+                            new deck.ScatterplotLayer({{
+                                id: 'stations',
+                                data: stations,
+                                getPosition: d => [d.lon, d.lat],
+                                getFillColor: [255, 255, 255, 255],
+                                getRadius: 150,
+                                pickable: true
+                            }}),
+                            new deck.TripsLayer({{
+                                id: 'flights',
+                                data: flights,
+                                getPath: d => d.path,
+                                getTimestamps: d => d.timestamps,
+                                getColor: d => d.color,
+                                opacity: 0.8,
+                                widthMinPixels: 4,
+                                trailLength: 1200, 
+                                currentTime: time,
+                                rounded: true
+                            }})
+                        ];
+                        map.setProps({{layers}});
+                        
+                        let hrs = Math.floor(time / 3600).toString().padStart(2, '0');
+                        let mins = Math.floor((time % 3600) / 60).toString().padStart(2, '0');
+                        document.getElementById('timeDisplay').innerText = `Sim Time: ${{hrs}}:${{mins}}`;
+                    }}
+
+                    document.getElementById('runBtn').onclick = () => {{
+                        document.getElementById('runBtn').disabled = true;
+                        document.getElementById('runBtn').innerText = "SIMULATING...";
+                        time = 0;
+                        if(timer) cancelAnimationFrame(timer);
+                        
+                        const animate = () => {{
+                            time += 100; // Timestep jump per frame
+                            render();
+                            if (time < 86400) {{
+                                timer = requestAnimationFrame(animate);
+                            }} else {{
+                                document.getElementById('runBtn').disabled = false;
+                                document.getElementById('runBtn').innerText = "RESTART SWARM";
+                                time = 0;
+                            }}
+                        }};
+                        animate();
+                    }};
+                    
+                    render();
+                </script>
+            </body>
+            </html>
+            """
+            return html
+
+        sim_html = generate_deckgl_html(active_drones, calls_in_city)
+        components.html(sim_html, height=700)
