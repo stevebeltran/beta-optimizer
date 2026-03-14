@@ -14,7 +14,6 @@ import simplekml
 from concurrent.futures import ThreadPoolExecutor
 import pulp
 import re
-import streamlit.components.v1 as components
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide")
@@ -62,20 +61,47 @@ if is_dark:
     /* Multiselect Box Darkening */
     div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
     div[data-baseweb="select"] > div * {{ color: #ffffff !important; }}
-    div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: {accent_color} !important; color: #000000 !important; font-weight: bold; border: none !important; }}
-    div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #000000 !important; }}
+    /* Tag inside Multiselect (Fixed: Reverted Brinc Blue text highlight, now sleek dark gray) */
+    div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #333333 !important; color: #ffffff !important; font-weight: normal; border: 1px solid #555555 !important; }}
+    div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #ffffff !important; }}
     
     /* Popover Dropdown */
     div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
     div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
+
+    /* ========================================= */
+    /* SURGICAL BRINC BLUE OVERRIDES (DARK MODE) */
+    /* ========================================= */
+
+    /* 1. Sliders */
+    div[data-testid="stSlider"] div[data-baseweb="slider"] div[role="slider"] {{
+        background-color: {accent_color} !important;
+        border-color: #ffffff !important;
+    }}
+    div[data-testid="stSlider"] div[data-baseweb="slider"] > div > div > div > div:first-child {{
+        background-color: {accent_color} !important;
+    }}
+
+    /* 2. Toggles */
+    div[data-testid="stToggle"] div[data-baseweb="checkbox"] input:checked + div {{
+        background-color: {accent_color} !important;
+    }}
+
+    /* 3. Radio Buttons */
+    div[data-testid="stRadio"] [role="radio"][aria-checked="true"] > div:first-of-type {{
+        border-color: {accent_color} !important;
+    }}
+    div[data-testid="stRadio"] [role="radio"][aria-checked="true"] > div:first-of-type > div {{
+        background-color: {accent_color} !important;
+    }}
     """
 else:
-    # Light Mode Palette
+    # Light Mode Palette (Reverted green, now using standard Streamlit default red/pink)
     bg_main = "#ffffff"
     bg_sidebar = "#f8f9fa"
     text_main = "#222222"
     text_muted = "#666666"
-    accent_color = "#28a745" # Classic Green
+    accent_color = "#ff4b4b" # Default Streamlit Red
     
     card_bg = "#ffffff"
     card_border = "#e0e0e0"
@@ -83,7 +109,7 @@ else:
     card_title = "#333333"
     
     budget_box_bg = "#ffffff"
-    budget_box_border = "#28a745"
+    budget_box_border = "#ff4b4b" 
     budget_box_shadow = "rgba(0, 0, 0, 0.05)"
     
     map_style = "open-street-map"
@@ -98,17 +124,15 @@ else:
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     
-    /* Metrics */
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
     
     /* Force Multiselect to White */
     div[data-baseweb="select"] > div {{ background-color: #ffffff !important; border-color: #cccccc !important; color: #333333 !important; }}
     div[data-baseweb="select"] > div * {{ color: #333333 !important; }}
-    div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #eeeeee !important; color: #000000 !important; font-weight: bold; border: none !important; }}
+    div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #eeeeee !important; color: #000000 !important; font-weight: normal; border: 1px solid #cccccc !important; }}
     div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #000000 !important; }}
     
-    /* Popover Dropdown */
     div[data-baseweb="popover"] ul {{ background-color: #ffffff !important; color: #333333 !important; }}
     div[data-baseweb="popover"] li:hover {{ background-color: #f0f0f0 !important; }}
     """
@@ -127,47 +151,6 @@ st.markdown(
         font-size: 0.85rem !important;
     }}
     div[role="radiogroup"] {{ gap: 0.5rem !important; }}
-
-    /* ==============================================================
-       STREAMLIT RED-KILLER CSS 
-       Forces all Sliders, Toggles, Radios, and Checkboxes to Theme Color
-       ============================================================== */
-    
-    /* 1. Sliders */
-    .stSlider [data-baseweb="slider"] [role="slider"] {{
-        background-color: {accent_color} !important;
-        border-color: #ffffff !important;
-    }}
-    /* Targets the inner filled track of the slider */
-    .stSlider [data-baseweb="slider"] > div > div > div > div:first-child {{
-        background-color: {accent_color} !important;
-    }}
-
-    /* 2. Toggles */
-    .stToggle input:checked + div {{
-        background-color: {accent_color} !important;
-    }}
-
-    /* 3. Radio Buttons */
-    .stRadio input:checked + div {{
-        border-color: {accent_color} !important;
-        background-color: transparent !important;
-    }}
-    .stRadio input:checked + div > div {{
-        background-color: {accent_color} !important;
-    }}
-
-    /* 4. Checkboxes */
-    .stCheckbox input:checked + div {{
-        background-color: {accent_color} !important;
-        border-color: {accent_color} !important;
-    }}
-
-    /* Override the root CSS variable just to be totally safe */
-    :root {{
-        --primary-color: {accent_color} !important;
-    }}
-    /* ============================================================== */
 
     /* Print settings */
     @media print {{
@@ -650,7 +633,7 @@ if st.session_state['csvs_ready']:
         label_visibility="collapsed"
     )
     opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
-
+    
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
     k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
     
