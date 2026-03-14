@@ -18,104 +18,122 @@ import re
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide")
 
-# --- MODERNIZED UI & BLACK/BRINC BLUE CSS ---
-st.markdown(
+# --- THEME TOGGLE ---
+st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
+theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed")
+is_dark = theme_choice == "Dark Mode"
+
+# --- DYNAMIC THEME VARIABLES ---
+if is_dark:
+    # Dark Mode Palette
+    bg_main = "#000000"
+    bg_sidebar = "#111111"
+    text_main = "#ffffff"
+    text_muted = "#aaaaaa"
+    accent_color = "#00D2FF" # Brinc Blue
+    
+    card_bg = "#111111"
+    card_border = "#333333"
+    card_text = "#eeeeee"
+    card_title = "#ffffff"
+    
+    budget_box_bg = "#0a0a0a"
+    budget_box_border = "#00D2FF"
+    budget_box_shadow = "rgba(0, 210, 255, 0.15)"
+    
+    map_style = "carto-darkmatter"
+    map_boundary_color = "#ffffff"
+    map_incident_color = "#00D2FF"
+    legend_bg = "rgba(0, 0, 0, 0.7)"
+    legend_text = "#ffffff"
+    
+    # Custom CSS blocks for Dark Mode widgets
+    theme_css = f"""
+    .stApp, .main {{ background-color: {bg_main} !important; }}
+    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
+    [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
+    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
+    
+    /* Metrics */
+    div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
+    div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
+    
+    /* Multiselect Box Darkening */
+    div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
+    div[data-baseweb="select"] > div * {{ color: #ffffff !important; }}
+    div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: {accent_color} !important; color: #000000 !important; font-weight: bold; border: none !important; }}
+    div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #000000 !important; }}
+    
+    /* Popover Dropdown */
+    div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
+    div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
+
+    /* Sliders to Brinc Blue */
+    .stSlider div[data-baseweb="slider"] div[role="slider"] {{ background-color: {accent_color} !important; border: 2px solid #ffffff !important; }}
+    .stSlider div[data-baseweb="slider"] div[data-testid="stTickBar"] > div {{ background-color: {accent_color} !important; }}
+    
+    /* Toggles */
+    .stToggle div[data-baseweb="checkbox"] div {{ background-color: {accent_color} !important; }}
     """
+else:
+    # Light Mode Palette
+    bg_main = "#ffffff"
+    bg_sidebar = "#f8f9fa"
+    text_main = "#222222"
+    text_muted = "#666666"
+    accent_color = "#28a745" # Classic Green
+    
+    card_bg = "#ffffff"
+    card_border = "#e0e0e0"
+    card_text = "#222222"
+    card_title = "#333333"
+    
+    budget_box_bg = "#ffffff"
+    budget_box_border = "#28a745"
+    budget_box_shadow = "rgba(0, 0, 0, 0.05)"
+    
+    map_style = "open-street-map"
+    map_boundary_color = "#222222"
+    map_incident_color = "#000080"
+    legend_bg = "rgba(255, 255, 255, 0.9)"
+    legend_text = "#333333"
+    
+    theme_css = f"""
+    .stApp, .main {{ background-color: {bg_main} !important; }}
+    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
+    [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
+    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
+    
+    div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: #00D2FF !important; }}
+    div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
+    
+    /* Force Multiselect to White */
+    div[data-baseweb="select"] > div {{ background-color: #ffffff !important; border-color: #cccccc !important; color: #333333 !important; }}
+    """
+
+# --- INJECT CSS ---
+st.markdown(
+    f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=Manrope:wght@400;600;700&display=swap');
-
-    /* FORCE DARK MODE FOR THE MAIN SCREEN */
-    .stApp, .main {
-        background-color: #000000 !important;
-    }
-
-    /* UNIVERSAL FONTS & LIGHT TEXT */
-    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 { 
-        font-family: 'Manrope', sans-serif !important; 
-        color: #ffffff !important;
-    }
-
-    /* SIDEBAR & WIDGET CLEANUP */
-    [data-testid="stSidebar"] {
-        background-color: #111111 !important;
-        border-right: 1px solid #333333;
-    }
     
-    /* Ensure the File Uploader text is readable */
-    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {
-        color: #aaaaaa !important;
-    }
-
-    .stRadio label p, .stMultiSelect label p, .stSlider label p, .stToggle label p, .stCheckbox label p {
+    {theme_css}
+    
+    .stRadio label p, .stMultiSelect label p, .stSlider label p, .stToggle label p, .stCheckbox label p {{
         font-weight: 600 !important;
         font-size: 0.85rem !important;
-        color: #ffffff !important;
-    }
-    div[role="radiogroup"] { gap: 0.5rem !important; }
+    }}
+    div[role="radiogroup"] {{ gap: 0.5rem !important; }}
 
-    /* METRICS & HIGHLIGHTS */
-    div[data-testid="stMetricValue"] {
-        font-family: 'IBM Plex Mono', monospace !important;
-        color: #00D2FF !important; /* Brinc Blue */
-    }
-    div[data-testid="stMetricLabel"] * {
-        color: #aaaaaa !important;
-    }
-
-    /* SUPERCHARGED PRINT MEDIA QUERY */
-    @media print {
-        /* Hide UI controls and sidebar */
-        section[data-testid="stSidebar"], 
-        header[data-testid="stHeader"], 
-        .stSlider, 
-        button, 
-        div[data-testid="stToolbar"] {
-            display: none !important;
-        }
-        
-        /* Force background colors to print */
-        * {
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-        }
-
-        /* Expand the main container */
-        .block-container, .stApp, .main, div {
-            max-width: 100% !important;
-            width: 100% !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: visible !important;
-            height: auto !important;
-        }
-
-        /* UN-SPLIT COLUMNS: Stack vertically */
-        div[data-testid="stHorizontalBlock"] {
-            display: block !important;
-            width: 100% !important;
-        }
-        
-        div[data-testid="stColumn"] {
-            width: 100% !important;
-            max-width: 100% !important;
-            flex: 0 0 100% !important;
-            display: block !important;
-            margin-bottom: 20px !important;
-        }
-
-        /* Map bounds */
-        .js-plotly-plot, .plot-container {
-            width: 100% !important;
-            page-break-inside: avoid !important;
-            margin-bottom: 30px !important;
-        }
-
-        /* Prevent cards splitting */
-        div[style*="border-top: 4px solid"] {
-            page-break-inside: avoid !important;
-            margin-bottom: 15px !important;
-        }
-    }
+    @media print {{
+        section[data-testid="stSidebar"], header[data-testid="stHeader"], .stSlider, button, div[data-testid="stToolbar"] {{ display: none !important; }}
+        * {{ -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }}
+        .block-container, .stApp, .main, div {{ max-width: 100% !important; width: 100% !important; padding: 0 !important; margin: 0 !important; overflow: visible !important; height: auto !important; }}
+        div[data-testid="stHorizontalBlock"] {{ display: block !important; width: 100% !important; }}
+        div[data-testid="stColumn"] {{ width: 100% !important; max-width: 100% !important; flex: 0 0 100% !important; display: block !important; margin-bottom: 20px !important; }}
+        .js-plotly-plot, .plot-container {{ width: 100% !important; page-break-inside: avoid !important; margin-bottom: 30px !important; }}
+        div[style*="border-top: 4px solid"] {{ page-break-inside: avoid !important; margin-bottom: 15px !important; }}
+    }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -492,7 +510,7 @@ if st.session_state['csvs_ready']:
     st.sidebar.success(f"**Found {len(master_gdf)} Significant Zones**")
     
     st.sidebar.markdown("---")
-    st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#ffffff;'>📍 Jurisdictions</h3>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>📍 Jurisdictions</h3>", unsafe_allow_html=True)
     total_pts = master_gdf['data_count'].sum()
     master_gdf['LABEL'] = master_gdf['DISPLAY_NAME'] + " (" + (master_gdf['data_count']/total_pts*100).round(1).astype(str) + "%)"
     options_map = dict(zip(master_gdf['LABEL'], master_gdf['DISPLAY_NAME']))
@@ -533,12 +551,12 @@ if st.session_state['csvs_ready']:
 
     # --- DYNAMIC MISSION DATA FILTERS ---
     st.sidebar.markdown("---")
-    st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#ffffff;'>⚙️ Data Filters</h3>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>⚙️ Data Filters</h3>", unsafe_allow_html=True)
     
     if 'type' in df_stations_all.columns:
         all_types = sorted(df_stations_all['type'].dropna().astype(str).unique().tolist())
         if all_types:
-            st.sidebar.markdown("<div style='font-size:0.75rem; color:#aaa; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Facility Type</div>", unsafe_allow_html=True)
+            st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Facility Type</div>", unsafe_allow_html=True)
             selected_types = st.sidebar.multiselect("Facility Type", options=all_types, default=all_types, label_visibility="collapsed")
             if not selected_types:
                 st.warning("Please select at least one Facility Type from the sidebar.")
@@ -549,7 +567,7 @@ if st.session_state['csvs_ready']:
     if 'priority' in df_calls.columns:
         all_priorities = sorted(df_calls['priority'].dropna().unique().tolist())
         if all_priorities:
-            st.sidebar.markdown("<div style='font-size:0.75rem; color:#aaa; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Incident Priority</div>", unsafe_allow_html=True)
+            st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Incident Priority</div>", unsafe_allow_html=True)
             selected_priorities = st.sidebar.multiselect("Incident Priority", options=all_priorities, default=all_priorities, label_visibility="collapsed")
             if not selected_priorities:
                 st.warning("Please select at least one Incident Priority from the sidebar.")
@@ -566,9 +584,9 @@ if st.session_state['csvs_ready']:
 
     # --- OPTIMIZER CONTROLS ---
     st.sidebar.markdown("---")
-    st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#ffffff;'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
 
-    st.sidebar.markdown("<div style='font-size:0.75rem; color:#aaa; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Guardian Range</div>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Guardian Range</div>", unsafe_allow_html=True)
     guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8, label_visibility="collapsed")
 
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
@@ -590,7 +608,7 @@ if st.session_state['csvs_ready']:
     tb_area_g = [s['clipped_guard'].area / max_area for s in station_metadata]
     tb_cent = [s['centrality'] for s in station_metadata]
 
-    st.sidebar.markdown("<div style='font-size:0.75rem; color:#aaa; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
     opt_strategy_raw = st.sidebar.radio(
         "Goal", 
         ("Call Coverage", "Land Coverage"), 
@@ -599,11 +617,11 @@ if st.session_state['csvs_ready']:
     )
     opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
     
-    st.sidebar.markdown("<div style='font-size:0.75rem; color:#aaa; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
     k_responder = st.sidebar.slider("🚁 Responder (2-Mile)", 0, n, min(1, n))
     k_guardian = st.sidebar.slider(f"🦅 Guardian ({guard_radius_mi}-Mile)", 0, n, 0)
     
-    st.sidebar.markdown("<div style='font-size:0.75rem; color:#aaa; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Deployment Strategy</div>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Deployment Strategy</div>", unsafe_allow_html=True)
     incremental_build = st.sidebar.toggle(
         "Phased Rollout", 
         value=True, 
@@ -615,7 +633,7 @@ if st.session_state['csvs_ready']:
         help="When ON, drones won't move away just because their coverage rings overlap."
     )
     
-    st.sidebar.markdown("<div style='font-size:0.75rem; color:#aaa; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Map Layers</div>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Map Layers</div>", unsafe_allow_html=True)
     col1, col2 = st.sidebar.columns(2)
     show_boundaries = col1.toggle("Boundaries", value=True)
     show_heatmap = col2.toggle("Heatmap", value=False)
@@ -623,7 +641,7 @@ if st.session_state['csvs_ready']:
     show_satellite = col2.toggle("Satellite", value=False)
     
     st.sidebar.markdown("---")
-    st.sidebar.markdown("<h3 style='margin-bottom:0px; color:#ffffff;'>🚗 Ground Traffic Simulator</h3>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🚗 Ground Traffic Simulator</h3>", unsafe_allow_html=True)
     simulate_traffic = st.sidebar.toggle("Enable Traffic Sim", value=False)
     if simulate_traffic:
         traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
@@ -782,7 +800,7 @@ if st.session_state['csvs_ready']:
     
     with budget_placeholder:
         st.markdown("---")
-        st.markdown("<h3 style='color:#ffffff;'>💰 Budget Impact</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{text_main};'>💰 Budget Impact</h3>", unsafe_allow_html=True)
         
         inferred_daily_calls = max(1, int(total_calls / 365)) if total_calls > 0 else 20
         max_slider_val = max(100, inferred_daily_calls * 3) 
@@ -816,47 +834,47 @@ if st.session_state['csvs_ready']:
                 break_even_text = "N/A"
             
             st.markdown(f"""
-            <div style="background-color: #0a0a0a; border: 1px solid #00D2FF; padding: 12px; border-radius: 4px; text-align: center; margin-bottom: 12px; box-shadow: 0 2px 5px rgba(0,210,255,0.1);">
-                <h6 style="color: #aaa; margin: 0; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;">Annual Capacity Value</h6>
-                <h2 style="color: #00D2FF; margin: 4px 0; font-family: 'Consolas', monospace; font-size: 1.8rem;">${annual_savings:,.0f}</h2>
-                <div style="border-top: 1px solid #333; margin: 8px 0;"></div>
+            <div style="background-color: {budget_box_bg}; border: 1px solid {budget_box_border}; padding: 12px; border-radius: 4px; text-align: center; margin-bottom: 12px; box-shadow: 0 2px 5px {budget_box_shadow};">
+                <h6 style="color: {text_muted}; margin: 0; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;">Annual Capacity Value</h6>
+                <h2 style="color: {budget_box_border}; margin: 4px 0; font-family: 'Consolas', monospace; font-size: 1.8rem;">${annual_savings:,.0f}</h2>
+                <div style="border-top: 1px solid {card_border}; margin: 8px 0;"></div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 3px;">
-                    <span style="color: #aaa;">IN DRONE RANGE:</span>
-                    <span style="color: #fff; font-weight: 700;">{covered_daily_calls:.1f} / DAY</span>
+                    <span style="color: {text_muted};">IN DRONE RANGE:</span>
+                    <span style="color: {text_main}; font-weight: 700;">{covered_daily_calls:.1f} / DAY</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 6px;">
-                    <span style="color: #aaa;">DEFLECTED (CAPACITY):</span>
-                    <span style="color: #fff; font-weight: 700;">{daily_drone_only_calls:.1f} / DAY</span>
+                    <span style="color: {text_muted};">DEFLECTED (CAPACITY):</span>
+                    <span style="color: {text_main}; font-weight: 700;">{daily_drone_only_calls:.1f} / DAY</span>
                 </div>
-                <div style="border-top: 1px dashed #333; margin: 6px 0;"></div>
+                <div style="border-top: 1px dashed {card_border}; margin: 6px 0;"></div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 3px;">
-                    <span style="color: #aaa;">FLEET CAPEX:</span>
-                    <span style="color: #fff; font-weight: 700;">${fleet_capex:,.0f}</span>
+                    <span style="color: {text_muted};">FLEET CAPEX:</span>
+                    <span style="color: {text_main}; font-weight: 700;">${fleet_capex:,.0f}</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.75rem;">
-                    <span style="color: #aaa;">BREAK-EVEN:</span>
-                    <span style="color: #00D2FF; font-weight: 700;">{break_even_text}</span>
+                    <span style="color: {text_muted};">BREAK-EVEN:</span>
+                    <span style="color: {budget_box_border}; font-weight: 700;">{break_even_text}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
             if actual_k_responder > 0:
                 st.markdown(f"""
-                <div style="background-color: #111; border: 1px solid #333; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
-                    <h5 style="color: #fff; margin: 0 0 4px 0; font-size: 0.85rem;">RESPONDER <span style="color:#aaa; font-weight:normal;">(x{actual_k_responder})</span></h5>
-                    <div style="color: #aaa; font-size: 0.75rem;">COVERAGE: <span style="color:#fff; font-weight:600;">2 MI RADIUS</span></div>
-                    <div style="color: #aaa; font-size: 0.75rem;">UNIT CAPEX: <span style="color:#fff; font-weight:600;">$80,000</span></div>
-                    <div style="color: #aaa; font-size: 0.75rem; margin-top: 4px; border-top: 1px solid #333; padding-top: 4px;">SUBTOTAL: <span style="color:#fff; font-weight:600;">${capex_responder_total:,.0f}</span></div>
+                <div style="background-color: {card_bg}; border: 1px solid {card_border}; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
+                    <h5 style="color: {text_main}; margin: 0 0 4px 0; font-size: 0.85rem;">RESPONDER <span style="color:{text_muted}; font-weight:normal;">(x{actual_k_responder})</span></h5>
+                    <div style="color: {text_muted}; font-size: 0.75rem;">COVERAGE: <span style="color:{text_main}; font-weight:600;">2 MI RADIUS</span></div>
+                    <div style="color: {text_muted}; font-size: 0.75rem;">UNIT CAPEX: <span style="color:{text_main}; font-weight:600;">$80,000</span></div>
+                    <div style="color: {text_muted}; font-size: 0.75rem; margin-top: 4px; border-top: 1px solid {card_border}; padding-top: 4px;">SUBTOTAL: <span style="color:{text_main}; font-weight:600;">${capex_responder_total:,.0f}</span></div>
                 </div>
                 """, unsafe_allow_html=True)
                 
             if actual_k_guardian > 0:
                 st.markdown(f"""
-                <div style="background-color: #111; border: 1px solid #333; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
-                    <h5 style="color: #fff; margin: 0 0 4px 0; font-size: 0.85rem;">GUARDIAN <span style="color:#aaa; font-weight:normal;">(x{actual_k_guardian})</span></h5>
-                    <div style="color: #aaa; font-size: 0.75rem;">COVERAGE: <span style="color:#fff; font-weight:600;">{guard_radius_mi} MI RADIUS</span></div>
-                    <div style="color: #aaa; font-size: 0.75rem;">UNIT CAPEX: <span style="color:#fff; font-weight:600;">$160,000</span></div>
-                    <div style="color: #aaa; font-size: 0.75rem; margin-top: 4px; border-top: 1px solid #333; padding-top: 4px;">SUBTOTAL: <span style="color:#fff; font-weight:600;">${capex_guardian_total:,.0f}</span></div>
+                <div style="background-color: {card_bg}; border: 1px solid {card_border}; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
+                    <h5 style="color: {text_main}; margin: 0 0 4px 0; font-size: 0.85rem;">GUARDIAN <span style="color:{text_muted}; font-weight:normal;">(x{actual_k_guardian})</span></h5>
+                    <div style="color: {text_muted}; font-size: 0.75rem;">COVERAGE: <span style="color:{text_main}; font-weight:600;">{guard_radius_mi} MI RADIUS</span></div>
+                    <div style="color: {text_muted}; font-size: 0.75rem;">UNIT CAPEX: <span style="color:{text_main}; font-weight:600;">$160,000</span></div>
+                    <div style="color: {text_muted}; font-size: 0.75rem; margin-top: 4px; border-top: 1px solid {card_border}; padding-top: 4px;">SUBTOTAL: <span style="color:{text_main}; font-weight:600;">${capex_guardian_total:,.0f}</span></div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -933,15 +951,15 @@ if st.session_state['csvs_ready']:
     if show_health:
         norm_redundancy = min(overlap_perc / 35.0, 1.0) * 100
         health_score = (calls_covered_perc * 0.50) + (area_covered_perc * 0.35) + (norm_redundancy * 0.15)
-        if health_score >= 80: h_color, h_label = "#00D2FF", "OPTIMAL" # Brinc Blue for Optimal
+        if health_score >= 80: h_color, h_label = accent_color, "OPTIMAL" 
         elif health_score >= 70: h_color, h_label = "#94c11f", "GOOD"
         elif health_score >= 55: h_color, h_label = "#ffc107", "MARGINAL"
         else: h_color, h_label = "#dc3545", "ESSENTIAL"
         
         st.markdown(f"""
-            <div style="background-color: #111; border-left: 5px solid {h_color}; border-top: 1px solid #333; border-right: 1px solid #333; border-bottom: 1px solid #333; padding: 10px; border-radius: 4px; color: white; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between;">
+            <div style="background-color: {card_bg}; border-left: 5px solid {h_color}; border-top: 1px solid {card_border}; border-right: 1px solid {card_border}; border-bottom: 1px solid {card_border}; padding: 10px; border-radius: 4px; color: {text_main}; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between;">
                 <span style="font-size: 1.5em; font-weight: bold; color: {h_color};">Department Health Score: {health_score:.1f}%</span>
-                <span style="font-size: 1.3em; background: rgba(255,255,255,0.1); padding: 2px 10px; border-radius: 4px;">{h_label}</span>
+                <span style="font-size: 1.3em; background: rgba(128,128,128,0.15); padding: 2px 10px; border-radius: 4px;">{h_label}</span>
             </div>""", unsafe_allow_html=True)
 
     if simulate_traffic:
@@ -1019,12 +1037,11 @@ if st.session_state['csvs_ready']:
             if city_boundary_geom is not None and not city_boundary_geom.is_empty:
                 if isinstance(city_boundary_geom, Polygon):
                     bx, by = city_boundary_geom.exterior.coords.xy
-                    # Make boundary lines white for deep contrast against dark map
-                    fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color="#ffffff", width=2), name="Jurisdiction Boundary", hoverinfo='skip'))
+                    fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color=map_boundary_color, width=2), name="Jurisdiction Boundary", hoverinfo='skip'))
                 elif isinstance(city_boundary_geom, MultiPolygon):
                     for poly in city_boundary_geom.geoms:
                         bx, by = poly.exterior.coords.xy
-                        fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color="#ffffff", width=2), name="Jurisdiction Boundary", hoverinfo='skip', showlegend=False))
+                        fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color=map_boundary_color, width=2), name="Jurisdiction Boundary", hoverinfo='skip', showlegend=False))
 
         if show_heatmap and not display_calls.empty:
             fig.add_trace(go.Densitymapbox(
@@ -1044,8 +1061,7 @@ if st.session_state['csvs_ready']:
                 lat=display_calls.geometry.y, 
                 lon=display_calls.geometry.x, 
                 mode='markers', 
-                # Incident points in Brinc Blue
-                marker=dict(size=4, color='#00D2FF', opacity=0.4), 
+                marker=dict(size=4, color=map_incident_color, opacity=0.4), 
                 name="Incident Data", 
                 hoverinfo='skip'
             ))
@@ -1117,7 +1133,7 @@ if st.session_state['csvs_ready']:
         mapbox_config = dict(
             center=dict(lat=center_lat, lon=center_lon),
             zoom=dynamic_zoom,
-            style="carto-darkmatter" # --- CHANGED TO DARK MODE MAP ---
+            style=map_style
         )
         
         if show_satellite:
@@ -1145,10 +1161,10 @@ if st.session_state['csvs_ready']:
                 y=0.98,
                 xanchor="left",
                 x=0.02,
-                bgcolor="rgba(0, 0, 0, 0.7)", # Dark translucent legend
-                bordercolor="#00D2FF", # Brinc Blue border
+                bgcolor=legend_bg,
+                bordercolor=accent_color, 
                 borderwidth=1,
-                font=dict(size=12, color="#ffffff"),
+                font=dict(size=12, color=legend_text),
                 itemclick="toggle"
             )
         )
@@ -1156,7 +1172,7 @@ if st.session_state['csvs_ready']:
         st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
         
     with stats_col:
-        st.markdown("<h4 style='margin-top:0px; border-bottom: 1px solid #333; padding-bottom: 8px; color: #fff;'>Unit-Level Economics</h4>", unsafe_allow_html=True)
+        st.markdown(f"<h4 style='margin-top:0px; border-bottom: 1px solid {card_border}; padding-bottom: 8px; color: {text_main};'>Unit-Level Economics</h4>", unsafe_allow_html=True)
         if fleet_capex > 0:
             with st.container():
                 c1, c2 = st.columns(2)
@@ -1165,19 +1181,19 @@ if st.session_state['csvs_ready']:
                     formatted_name = format_3_lines(d['name'])
                     
                     html_card = (
-                        f'<div style="background-color: #111; color: #eee; border-top: 4px solid {d["color"]}; '
-                        f'border-left: 1px solid #333; border-right: 1px solid #333; border-bottom: 1px solid #333; '
-                        f'padding: 8px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.5); line-height: 1.2;">'
-                        f'<div style="font-weight: 700; font-size: 0.7rem; margin-bottom: 6px; min-height: 3.6em; color: #fff;">{formatted_name}</div>'
+                        f'<div style="background-color: {card_bg}; color: {card_text}; border-top: 4px solid {d["color"]}; '
+                        f'border-left: 1px solid {card_border}; border-right: 1px solid {card_border}; border-bottom: 1px solid {card_border}; '
+                        f'padding: 8px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); line-height: 1.2;">'
+                        f'<div style="font-weight: 700; font-size: 0.7rem; margin-bottom: 6px; min-height: 3.6em; color: {card_title};">{formatted_name}</div>'
                         f'<div style="font-size: 0.6rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d["type"]} • PH: #{d["deploy_step"]}</div>'
-                        f'<div style="font-size: 0.7rem; color: #aaa; margin-bottom: 2px;">Capacity Value: <span style="color: #00D2FF; font-weight: 700; float: right;">${d["annual_savings"]:,.0f}</span></div>'
-                        f'<div style="border-top: 1px solid #333; margin: 4px 0;"></div>'
-                        f'<div style="font-size: 0.65rem; color: #aaa; margin-bottom: 2px;">Net New: <span style="font-weight: 600; color: #00D2FF; float: right;">{d["marginal_daily"]:.1f}/d</span></div>'
-                        f'<div style="font-size: 0.65rem; color: #aaa; margin-bottom: 2px;">Shared: <span style="font-weight: 600; float: right; color:#fff;">{d["shared_daily_calls"]:.1f}/d</span></div>'
-                        f'<div style="font-size: 0.65rem; color: #aaa; margin-bottom: 6px;">Deflected: <span style="font-weight: 600; float: right; color:#fff;">{d["marginal_deflected"]:.1f}/d</span></div>'
-                        f'<div style="border-top: 1px dashed #444; padding-top: 4px; font-size: 0.65rem; color: #aaa;">'
-                        f'CapEx: <strong style="float:right; color:#fff;">${d["cost"]:,.0f}</strong><br>'
-                        f'ROI: <strong style="color: #00D2FF; float:right;">{d["be_text"]}</strong></div>'
+                        f'<div style="font-size: 0.7rem; color: {text_muted}; margin-bottom: 2px;">Capacity Value: <span style="color: {accent_color}; font-weight: 700; float: right;">${d["annual_savings"]:,.0f}</span></div>'
+                        f'<div style="border-top: 1px solid {card_border}; margin: 4px 0;"></div>'
+                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Net New: <span style="font-weight: 600; color: {accent_color}; float: right;">{d["marginal_daily"]:.1f}/d</span></div>'
+                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Shared: <span style="font-weight: 600; float: right; color:{card_title};">{d["shared_daily_calls"]:.1f}/d</span></div>'
+                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Deflected: <span style="font-weight: 600; float: right; color:{card_title};">{d["marginal_deflected"]:.1f}/d</span></div>'
+                        f'<div style="border-top: 1px dashed {card_border}; padding-top: 4px; font-size: 0.65rem; color: {text_muted};">'
+                        f'CapEx: <strong style="float:right; color:{card_title};">${d["cost"]:,.0f}</strong><br>'
+                        f'ROI: <strong style="color: {accent_color}; float:right;">{d["be_text"]}</strong></div>'
                         f'</div>'
                     )
                     
