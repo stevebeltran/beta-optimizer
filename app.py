@@ -105,7 +105,7 @@ else:
     div[data-baseweb="select"] > div {{ background-color: #ffffff !important; border-color: #cccccc !important; color: #333333 !important; }}
     """
 
-# --- INJECT CSS (Includes specific primary-color overrides for toggles/sliders) ---
+# --- INJECT CSS ---
 st.markdown(
     f"""
     <style>
@@ -120,7 +120,7 @@ st.markdown(
     }}
     div[role="radiogroup"] {{ gap: 0.5rem !important; }}
 
-    /* Streamlit Primary Color Overrides (Changes the default red to Brinc Blue or Green) */
+    /* Streamlit Primary Color Overrides */
     div[data-testid="stRadio"] div[role="radio"][aria-checked="true"] div:first-child {{
         background-color: {accent_color} !important;
         border-color: {accent_color} !important;
@@ -390,9 +390,13 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code, gu
             s_pt_m = gpd.GeoSeries([Point(row['lon'], row['lat'])], crs="EPSG:4326").to_crs(epsg=epsg_code).iloc[0]
             
             dists = np.sqrt((calls_array[:,0] - s_pt_m.x)**2 + (calls_array[:,1] - s_pt_m.y)**2)
+            dists_mi = dists / 1609.34
             
-            resp_matrix[i, :] = dists <= radius_resp_m
-            guard_matrix[i, :] = dists <= radius_guard_m
+            mask_r = dists <= radius_resp_m
+            mask_g = dists <= radius_guard_m
+            
+            resp_matrix[i, :] = mask_r
+            guard_matrix[i, :] = mask_g
 
             full_buf_2m = s_pt_m.buffer(radius_resp_m)
             try: clipped_2m = full_buf_2m.intersection(city_m)
@@ -401,10 +405,15 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code, gu
             full_buf_guard = s_pt_m.buffer(radius_guard_m)
             try: clipped_guard = full_buf_guard.intersection(city_m)
             except: clipped_guard = full_buf_guard
+            
+            # Calculate the true average distance to historical incidents within the coverage area
+            avg_dist_r = dists_mi[mask_r].mean() if mask_r.any() else (2.0 * (2/3))
+            avg_dist_g = dists_mi[mask_g].mean() if mask_g.any() else (guard_radius_mi * (2/3))
                 
             station_metadata.append({
                 'name': row['name'], 'lat': row['lat'], 'lon': row['lon'],
-                'clipped_2m': clipped_2m, 'clipped_guard': clipped_guard
+                'clipped_2m': clipped_2m, 'clipped_guard': clipped_guard,
+                'avg_dist_r': avg_dist_r, 'avg_dist_g': avg_dist_g
             })
             
     return calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls
@@ -605,6 +614,31 @@ if st.session_state['csvs_ready']:
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
 
+    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
+    k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
+    k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
+    
+    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Guardian Range</div>", unsafe_allow_html=True)
+    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8, label_visibility="collapsed")
+
+    with st.spinner("⚡ Precomputing spatial optimization matrices..."):
+        city_m_wkt = city_m.wkt  
+        calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls = precompute_spatial_data(
+            df_calls, df_stations_all, city_m_wkt, epsg_code, guard_radius_mi
+        )
+
+    max_dist = max([((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5 for s in station_metadata])
+    if max_dist == 0: max_dist = 1.0
+    
+    for s in station_metadata:
+        dist = ((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5
+        s['centrality'] = 1.0 - (dist / max_dist)
+
+    max_area = city_m.area if (city_m and city_m.area > 0) else 1.0
+    tb_area_r = [s['clipped_2m'].area / max_area for s in station_metadata]
+    tb_area_g = [s['clipped_guard'].area / max_area for s in station_metadata]
+    tb_cent = [s['centrality'] for s in station_metadata]
+
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
     opt_strategy_raw = st.sidebar.radio(
         "Goal", 
@@ -613,12 +647,7 @@ if st.session_state['csvs_ready']:
         label_visibility="collapsed"
     )
     opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
-
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
-    k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
-    k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
-    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
-
+    
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Deployment Strategy</div>", unsafe_allow_html=True)
     incremental_build = st.sidebar.toggle(
         "Phased Rollout", 
@@ -645,26 +674,6 @@ if st.session_state['csvs_ready']:
         traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
     else:
         traffic_level = 40
-
-    # --- TRIGGER THE CACHED HEAVY LIFTING ---
-    # Moved down so it can accept the dynamically selected `guard_radius_mi`
-    with st.spinner("⚡ Precomputing spatial optimization matrices..."):
-        city_m_wkt = city_m.wkt  
-        calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls = precompute_spatial_data(
-            df_calls, df_stations_all, city_m_wkt, epsg_code, guard_radius_mi
-        )
-
-    max_dist = max([((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5 for s in station_metadata])
-    if max_dist == 0: max_dist = 1.0
-    
-    for s in station_metadata:
-        dist = ((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5
-        s['centrality'] = 1.0 - (dist / max_dist)
-
-    max_area = city_m.area if (city_m and city_m.area > 0) else 1.0
-    tb_area_r = [s['clipped_2m'].area / max_area for s in station_metadata]
-    tb_area_g = [s['clipped_guard'].area / max_area for s in station_metadata]
-    tb_cent = [s['centrality'] for s in station_metadata]
 
     budget_placeholder = st.sidebar.container()
 
@@ -914,19 +923,26 @@ if st.session_state['csvs_ready']:
                 if d_type == 'RESPONDER':
                     cov_array = resp_matrix[idx]
                     cost = 80000
+                    speed_mph = 42.0
+                    avg_dist = station_metadata[idx]['avg_dist_r']
                 else:
                     cov_array = guard_matrix[idx]
                     cost = 160000
+                    speed_mph = 60.0
+                    avg_dist = station_metadata[idx]['avg_dist_g']
                     
                 map_color = STATION_COLORS[idx % len(STATION_COLORS)]
                 
+                avg_time_min = (avg_dist / speed_mph) * 60
+
                 d = {
                     'name': station_metadata[idx]['name'],
                     'type': d_type,
                     'cost': cost,
                     'cov_array': cov_array,
                     'color': map_color,
-                    'deploy_step': step if (idx in chrono_r or idx in chrono_g) else "MANUAL"
+                    'deploy_step': step if (idx in chrono_r or idx in chrono_g) else "MANUAL",
+                    'avg_time_min': avg_time_min
                 }
                 
                 if total_calls > 0:
@@ -1208,7 +1224,8 @@ if st.session_state['csvs_ready']:
                         f'<div style="border-top: 1px solid {card_border}; margin: 4px 0;"></div>'
                         f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Net New: <span style="font-weight: 600; color: {accent_color}; float: right;">{d["marginal_daily"]:.1f}/d</span></div>'
                         f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Shared: <span style="font-weight: 600; float: right; color:{card_title};">{d["shared_daily_calls"]:.1f}/d</span></div>'
-                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Deflected: <span style="font-weight: 600; float: right; color:{card_title};">{d["marginal_deflected"]:.1f}/d</span></div>'
+                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Deflected: <span style="font-weight: 600; float: right; color:{card_title};">{d["marginal_deflected"]:.1f}/d</span></div>'
+                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Avg Resp Time: <span style="font-weight: 600; float: right; color:{card_title};">{d["avg_time_min"]:.1f} min</span></div>'
                         f'<div style="border-top: 1px dashed {card_border}; padding-top: 4px; font-size: 0.65rem; color: {text_muted};">'
                         f'CapEx: <strong style="float:right; color:{card_title};">${d["cost"]:,.0f}</strong><br>'
                         f'ROI: <strong style="color: {accent_color}; float:right;">{d["be_text"]}</strong></div>'
