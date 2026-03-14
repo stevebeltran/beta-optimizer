@@ -14,6 +14,7 @@ import simplekml
 from concurrent.futures import ThreadPoolExecutor
 import pulp
 import re
+import streamlit.components.v1 as components
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide")
@@ -49,23 +50,40 @@ if is_dark:
     
     # Custom CSS blocks for Dark Mode widgets
     theme_css = f"""
-    .stApp, .main {{ background-color: {bg_main} !important; }}
-    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
-    [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
-    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
+    /* Overwrite Streamlit's absolute base theme variables */
+    :root, .stApp, .main {{
+        --primary-color: {accent_color} !important;
+        background-color: {bg_main} !important; 
+    }}
+    
+    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ 
+        font-family: 'Manrope', sans-serif !important; 
+        color: {text_main} !important; 
+    }}
+    
+    [data-testid="stSidebar"] {{ 
+        background-color: {bg_sidebar} !important; 
+        border-right: 1px solid {card_border}; 
+    }}
+    
+    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ 
+        color: {text_muted} !important; 
+    }}
     
     /* Metrics */
-    div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
-    div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
+    div[data-testid="stMetricValue"] {{ 
+        font-family: 'IBM Plex Mono', monospace !important; 
+        color: {accent_color} !important; 
+    }}
+    div[data-testid="stMetricLabel"] * {{ 
+        color: {text_muted} !important; 
+    }}
     
     /* Multiselect Box Darkening */
     div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
     div[data-baseweb="select"] > div * {{ color: #ffffff !important; }}
-    /* Tag inside Multiselect (Fixed: Reverted Brinc Blue text highlight, now sleek dark gray) */
     div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #333333 !important; color: #ffffff !important; font-weight: normal; border: 1px solid #555555 !important; }}
     div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #ffffff !important; }}
-    
-    /* Popover Dropdown */
     div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
     div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
 
@@ -78,30 +96,40 @@ if is_dark:
         background-color: {accent_color} !important;
         border-color: #ffffff !important;
     }}
-    div[data-testid="stSlider"] div[data-baseweb="slider"] > div > div > div > div:first-child {{
+    div[data-testid="stSlider"] div[data-baseweb="slider"] > div > div > div:first-of-type {{
+        background-color: {accent_color} !important;
+    }}
+    div[data-testid="stSlider"] div[data-baseweb="slider"] div[data-testid="stTickBar"] > div {{
         background-color: {accent_color} !important;
     }}
 
     /* 2. Toggles */
-    div[data-testid="stToggle"] div[data-baseweb="checkbox"] input:checked + div {{
+    div[data-testid="stToggle"] input[type="checkbox"]:checked + div {{
         background-color: {accent_color} !important;
     }}
 
-    /* 3. Radio Buttons */
-    div[data-testid="stRadio"] [role="radio"][aria-checked="true"] > div:first-of-type {{
+    /* 3. Checkboxes */
+    div[data-testid="stCheckbox"] input[type="checkbox"]:checked + div {{
+        background-color: {accent_color} !important;
         border-color: {accent_color} !important;
     }}
-    div[data-testid="stRadio"] [role="radio"][aria-checked="true"] > div:first-of-type > div {{
+
+    /* 4. Radio Buttons */
+    div[role="radiogroup"] [role="radio"][aria-checked="true"] > div:first-of-type {{
+        background-color: {accent_color} !important;
+        border-color: {accent_color} !important;
+    }}
+    div[role="radiogroup"] [role="radio"][aria-checked="true"] > div:first-of-type > div {{
         background-color: {accent_color} !important;
     }}
     """
 else:
-    # Light Mode Palette (Reverted green, now using standard Streamlit default red/pink)
+    # Light Mode Palette (Default Streamlit Red)
     bg_main = "#ffffff"
     bg_sidebar = "#f8f9fa"
     text_main = "#222222"
     text_muted = "#666666"
-    accent_color = "#ff4b4b" # Default Streamlit Red
+    accent_color = "#ff4b4b" 
     
     card_bg = "#ffffff"
     card_border = "#e0e0e0"
