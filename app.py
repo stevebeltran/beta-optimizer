@@ -98,11 +98,19 @@ else:
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     
+    /* Metrics */
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
     
     /* Force Multiselect to White */
     div[data-baseweb="select"] > div {{ background-color: #ffffff !important; border-color: #cccccc !important; color: #333333 !important; }}
+    div[data-baseweb="select"] > div * {{ color: #333333 !important; }}
+    div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #eeeeee !important; color: #000000 !important; font-weight: bold; border: none !important; }}
+    div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #000000 !important; }}
+    
+    /* Popover Dropdown */
+    div[data-baseweb="popover"] ul {{ background-color: #ffffff !important; color: #333333 !important; }}
+    div[data-baseweb="popover"] li:hover {{ background-color: #f0f0f0 !important; }}
     """
 
 # --- INJECT CSS ---
@@ -120,25 +128,46 @@ st.markdown(
     }}
     div[role="radiogroup"] {{ gap: 0.5rem !important; }}
 
-    /* Streamlit Primary Color Overrides */
-    div[data-testid="stRadio"] div[role="radio"][aria-checked="true"] div:first-child {{
-        background-color: {accent_color} !important;
-        border-color: {accent_color} !important;
-    }}
-    div[data-testid="stToggle"] [aria-checked="true"] > div:first-child {{
-        background-color: {accent_color} !important;
-    }}
-    div[data-testid="stCheckbox"] [aria-checked="true"] > div:first-child {{
-        background-color: {accent_color} !important;
-        border-color: {accent_color} !important;
-    }}
-    div[data-testid="stSlider"] div[data-baseweb="slider"] div[data-testid="stTickBar"] > div {{
-        background-color: {accent_color} !important;
-    }}
-    div[data-testid="stSlider"] div[data-baseweb="slider"] div[role="slider"] {{
+    /* ==============================================================
+       STREAMLIT RED-KILLER CSS 
+       Forces all Sliders, Toggles, Radios, and Checkboxes to Theme Color
+       ============================================================== */
+    
+    /* 1. Sliders */
+    .stSlider [data-baseweb="slider"] [role="slider"] {{
         background-color: {accent_color} !important;
         border-color: #ffffff !important;
     }}
+    /* Targets the inner filled track of the slider */
+    .stSlider [data-baseweb="slider"] > div > div > div > div:first-child {{
+        background-color: {accent_color} !important;
+    }}
+
+    /* 2. Toggles */
+    .stToggle input:checked + div {{
+        background-color: {accent_color} !important;
+    }}
+
+    /* 3. Radio Buttons */
+    .stRadio input:checked + div {{
+        border-color: {accent_color} !important;
+        background-color: transparent !important;
+    }}
+    .stRadio input:checked + div > div {{
+        background-color: {accent_color} !important;
+    }}
+
+    /* 4. Checkboxes */
+    .stCheckbox input:checked + div {{
+        background-color: {accent_color} !important;
+        border-color: {accent_color} !important;
+    }}
+
+    /* Override the root CSS variable just to be totally safe */
+    :root {{
+        --primary-color: {accent_color} !important;
+    }}
+    /* ============================================================== */
 
     /* Print settings */
     @media print {{
@@ -406,7 +435,6 @@ def precompute_spatial_data(df_calls, df_stations_all, city_m_wkt, epsg_code, gu
             try: clipped_guard = full_buf_guard.intersection(city_m)
             except: clipped_guard = full_buf_guard
             
-            # Calculate the true average distance to historical incidents within the coverage area
             avg_dist_r = dists_mi[mask_r].mean() if mask_r.any() else (2.0 * (2/3))
             avg_dist_g = dists_mi[mask_g].mean() if mask_g.any() else (guard_radius_mi * (2/3))
                 
@@ -614,13 +642,23 @@ if st.session_state['csvs_ready']:
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
 
+    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
+    opt_strategy_raw = st.sidebar.radio(
+        "Goal", 
+        ("Call Coverage", "Land Coverage"), 
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+    opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
+
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
     k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
-    k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
     
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Guardian Range</div>", unsafe_allow_html=True)
-    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8, label_visibility="collapsed")
+    # Guardian Sliders Grouped Together
+    k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
+    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
 
+    # Precompute triggered AFTER the radius slider
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
         city_m_wkt = city_m.wkt  
         calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls = precompute_spatial_data(
@@ -638,15 +676,6 @@ if st.session_state['csvs_ready']:
     tb_area_r = [s['clipped_2m'].area / max_area for s in station_metadata]
     tb_area_g = [s['clipped_guard'].area / max_area for s in station_metadata]
     tb_cent = [s['centrality'] for s in station_metadata]
-
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
-    opt_strategy_raw = st.sidebar.radio(
-        "Goal", 
-        ("Call Coverage", "Land Coverage"), 
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-    opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
     
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Deployment Strategy</div>", unsafe_allow_html=True)
     incremental_build = st.sidebar.toggle(
@@ -1224,7 +1253,7 @@ if st.session_state['csvs_ready']:
                         f'<div style="border-top: 1px solid {card_border}; margin: 4px 0;"></div>'
                         f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Net New: <span style="font-weight: 600; color: {accent_color}; float: right;">{d["marginal_daily"]:.1f}/d</span></div>'
                         f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Shared: <span style="font-weight: 600; float: right; color:{card_title};">{d["shared_daily_calls"]:.1f}/d</span></div>'
-                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Deflected: <span style="font-weight: 600; float: right; color:{card_title};">{d["marginal_deflected"]:.1f}/d</span></div>'
+                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Deflected: <span style="font-weight: 600; float: right; color:{card_title};">{d["marginal_deflected"]:.1f}/d</span></div>'
                         f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Avg Resp Time: <span style="font-weight: 600; float: right; color:{card_title};">{d["avg_time_min"]:.1f} min</span></div>'
                         f'<div style="border-top: 1px dashed {card_border}; padding-top: 4px; font-size: 0.65rem; color: {text_muted};">'
                         f'CapEx: <strong style="float:right; color:{card_title};">${d["cost"]:,.0f}</strong><br>'
