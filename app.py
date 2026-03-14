@@ -810,6 +810,7 @@ if st.session_state['csvs_ready']:
     # ==========================================
     active_drones = []
     fleet_capex = 0
+    dfr_dispatch_rate = 0.25 # Default 25% if sliders don't render yet
     
     with budget_placeholder:
         st.markdown("---")
@@ -819,7 +820,10 @@ if st.session_state['csvs_ready']:
         max_slider_val = max(100, inferred_daily_calls * 3) 
         
         calls_per_day = st.slider("TOTAL DAILY CALLS (CITYWIDE)", min_value=1, max_value=max_slider_val, value=inferred_daily_calls)
-        deflection_rate = st.slider("DRONE-ONLY RESOLUTION (%)", min_value=0, max_value=100, value=30) / 100.0
+        
+        col_r1, col_r2 = st.columns(2)
+        dfr_dispatch_rate = col_r1.slider("DFR DISPATCH RATE (%)", min_value=1, max_value=100, value=25) / 100.0
+        deflection_rate = col_r2.slider("DRONE-ONLY RESOLUTION (%)", min_value=0, max_value=100, value=30) / 100.0
         
         cost_officer = 82
         cost_drone = 6
@@ -835,7 +839,8 @@ if st.session_state['csvs_ready']:
         if fleet_capex > 0:
             effective_coverage_rate = calls_covered_perc / 100.0
             covered_daily_calls = calls_per_day * effective_coverage_rate
-            daily_drone_only_calls = covered_daily_calls * deflection_rate
+            daily_dfr_responses = covered_daily_calls * dfr_dispatch_rate
+            daily_drone_only_calls = daily_dfr_responses * deflection_rate
             
             if daily_drone_only_calls > 0:
                 monthly_savings = savings_per_call * daily_drone_only_calls * 30.4
@@ -852,8 +857,12 @@ if st.session_state['csvs_ready']:
                 <h2 style="color: {budget_box_border}; margin: 4px 0; font-family: 'Consolas', monospace; font-size: 1.8rem;">${annual_savings:,.0f}</h2>
                 <div style="border-top: 1px solid {card_border}; margin: 8px 0;"></div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 3px;">
-                    <span style="color: {text_muted};">IN DRONE RANGE:</span>
+                    <span style="color: {text_muted};">CALLS IN RANGE:</span>
                     <span style="color: {text_main}; font-weight: 700;">{covered_daily_calls:.1f} / DAY</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 3px;">
+                    <span style="color: {text_muted};">DFR FLIGHTS ({int(dfr_dispatch_rate*100)}%):</span>
+                    <span style="color: {text_main}; font-weight: 700;">{daily_dfr_responses:.1f} / DAY</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 6px;">
                     <span style="color: {text_muted};">DEFLECTED (CAPACITY):</span>
@@ -938,18 +947,20 @@ if st.session_state['csvs_ready']:
                     # Isolate ONLY the net new calls covered by this drone specifically
                     marginal_mask = cov_array & ~cumulative_mask
                     marginal_historic = np.sum(marginal_mask)
-                    d['assigned_indices'] = np.where(marginal_mask)[0] # Save indices for simulation
+                    d['assigned_indices'] = np.where(marginal_mask)[0] # Save indices for 3D simulation
                     
                     cumulative_mask = cumulative_mask | cov_array
                     
                     d['marginal_perc'] = marginal_historic / total_calls
-                    d['marginal_daily'] = calls_per_day * d['marginal_perc']
-                    d['marginal_deflected'] = d['marginal_daily'] * deflection_rate
+                    marginal_daily = calls_per_day * d['marginal_perc']
+                    d['marginal_flights'] = marginal_daily * dfr_dispatch_rate
+                    d['marginal_deflected'] = d['marginal_flights'] * deflection_rate
                     
                     temp_all_cov = np.vstack([x['cov_array'] for x in [{'cov_array': resp_matrix[i]} for i in active_resp_idx] + [{'cov_array': guard_matrix[i]} for i in active_guard_idx]])
                     overlap_counts = temp_all_cov.sum(axis=0)
                     shared_mask = d['cov_array'] & (overlap_counts > 1)
-                    d['shared_daily_calls'] = (np.sum(shared_mask) / total_calls) * calls_per_day
+                    shared_daily_calls = (np.sum(shared_mask) / total_calls) * calls_per_day
+                    d['shared_flights'] = shared_daily_calls * dfr_dispatch_rate
 
                     d['monthly_savings'] = savings_per_call * d['marginal_deflected'] * 30.4
                     d['annual_savings'] = d['monthly_savings'] * 12
@@ -962,9 +973,9 @@ if st.session_state['csvs_ready']:
                 else:
                     d['assigned_indices'] = []
                     d['annual_savings'] = 0
-                    d['marginal_daily'] = 0
+                    d['marginal_flights'] = 0
                     d['marginal_deflected'] = 0
-                    d['shared_daily_calls'] = 0
+                    d['shared_flights'] = 0
                     d['be_text'] = "N/A"
                     
                 active_drones.append(d)
@@ -1215,8 +1226,8 @@ if st.session_state['csvs_ready']:
                         f'<div style="font-size: 0.6rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d["type"]} • PH: #{d["deploy_step"]}</div>'
                         f'<div style="font-size: 0.7rem; color: {text_muted}; margin-bottom: 2px;">Capacity Value: <span style="color: {accent_color}; font-weight: 700; float: right;">${d["annual_savings"]:,.0f}</span></div>'
                         f'<div style="border-top: 1px solid {card_border}; margin: 4px 0;"></div>'
-                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Net New: <span style="font-weight: 600; color: {accent_color}; float: right;">{d["marginal_daily"]:.1f}/d</span></div>'
-                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Shared: <span style="font-weight: 600; float: right; color:{card_title};">{d["shared_daily_calls"]:.1f}/d</span></div>'
+                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Net New Flights: <span style="font-weight: 600; color: {accent_color}; float: right;">{d["marginal_flights"]:.1f}/d</span></div>'
+                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Shared Flights: <span style="font-weight: 600; float: right; color:{card_title};">{d["shared_flights"]:.1f}/d</span></div>'
                         f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Deflected: <span style="font-weight: 600; float: right; color:{card_title};">{d["marginal_deflected"]:.1f}/d</span></div>'
                         f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Avg Resp Time: <span style="font-weight: 600; float: right; color:{card_title};">{d["avg_time_min"]:.1f} min</span></div>'
                         f'<div style="border-top: 1px dashed {card_border}; padding-top: 4px; font-size: 0.65rem; color: {text_muted};">'
@@ -1236,17 +1247,17 @@ if st.session_state['csvs_ready']:
     if fleet_capex > 0:
         st.markdown("---")
         st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🚁 3D Swarm Simulation</h3>", unsafe_allow_html=True)
-        st.info("Watch the deployed drones respond to the assigned 911 calls. The historical volume has been procedurally distributed over a simulated 24-hour timeline. Drones fly true 3D arcs out to the incident.")
+        st.info(f"Watch the deployed drones respond to the assigned 911 calls. The historical volume has been procedurally distributed over a simulated 24-hour timeline. Drones fly true 3D arcs out to the incident.")
         
         show_sim = st.toggle("🎬 Enable 3D Swarm Simulation", value=False)
         
         if show_sim:
-            def generate_deckgl_html(active_drones, calls_in_city):
+            def generate_deckgl_html(active_drones, calls_in_city, dfr_dispatch_rate):
                 stations_json = []
                 flights_json = []
                 
-                # Fetch raw coordinates so we can index them directly
-                calls_coords = np.column_stack((calls_in_city.geometry.x, calls_in_city.geometry.y))
+                # Fetch raw TRUE LAT/LON coordinates to fix the flight path bug
+                calls_coords = np.column_stack((calls_in_city['lon'], calls_in_city['lat']))
                 
                 # Setup Legend
                 legend_html = ""
@@ -1268,6 +1279,15 @@ if st.session_state['csvs_ready']:
                     
                     # Pull strictly the net new assigned calls for this station
                     assigned_calls = d.get('assigned_indices', [])
+                    
+                    # SIMULATION SCALER: Apply the 25% dispatch rate mathematically to the visual output!
+                    num_to_simulate = int(len(assigned_calls) * dfr_dispatch_rate)
+                    if num_to_simulate > 0:
+                        # Randomly sample the calls so it correctly represents the reduced load
+                        assigned_calls = random.sample(list(assigned_calls), num_to_simulate)
+                    else:
+                        assigned_calls = []
+
                     for call_idx in assigned_calls:
                         lon1, lat1 = calls_coords[call_idx]
                         lon0, lat0 = d['lon'], d['lat']
@@ -1321,7 +1341,7 @@ if st.session_state['csvs_ready']:
                     <div id="ui">
                         <h3 style="margin: 0 0 10px 0; color: #00D2FF;">DFR Swarm Sim</h3>
                         {warn_html}
-                        <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {len(flights_json)} net-new calls over a 24-hour cycle.</div>
+                        <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {len(flights_json)} net-new flights (approx {int(dfr_dispatch_rate*100)}% dispatch rate) over a 24-hour cycle.</div>
                         
                         <div style="margin-bottom: 15px;">
                             <label style="font-size: 12px; color: #ccc;">Time Speed Multiplier: <span id="speedLabel">15</span>x</label>
@@ -1420,5 +1440,5 @@ if st.session_state['csvs_ready']:
                 """
                 return html
 
-            sim_html = generate_deckgl_html(active_drones, calls_in_city)
+            sim_html = generate_deckgl_html(active_drones, calls_in_city, dfr_dispatch_rate)
             components.html(sim_html, height=700)
