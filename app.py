@@ -31,7 +31,7 @@ if is_dark:
     bg_sidebar = "#111111"
     text_main = "#ffffff"
     text_muted = "#aaaaaa"
-    accent_color = "#00D2FF" # Brinc Blue
+    accent_color = "#00D2FF" # Brinc Blue for custom cards/metrics
     
     card_bg = "#111111"
     card_border = "#333333"
@@ -48,36 +48,16 @@ if is_dark:
     legend_bg = "rgba(0, 0, 0, 0.7)"
     legend_text = "#ffffff"
     
-    # Custom CSS blocks for Dark Mode widgets
+    # Custom CSS blocks for Dark Mode layout
     theme_css = f"""
-    /* Overwrite Streamlit's absolute base theme variables */
-    :root, .stApp, .main {{
-        --primary-color: {accent_color} !important;
-        background-color: {bg_main} !important; 
-    }}
-    
-    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ 
-        font-family: 'Manrope', sans-serif !important; 
-        color: {text_main} !important; 
-    }}
-    
-    [data-testid="stSidebar"] {{ 
-        background-color: {bg_sidebar} !important; 
-        border-right: 1px solid {card_border}; 
-    }}
-    
-    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ 
-        color: {text_muted} !important; 
-    }}
+    .stApp, .main {{ background-color: {bg_main} !important; }}
+    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
+    [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
+    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     
     /* Metrics */
-    div[data-testid="stMetricValue"] {{ 
-        font-family: 'IBM Plex Mono', monospace !important; 
-        color: {accent_color} !important; 
-    }}
-    div[data-testid="stMetricLabel"] * {{ 
-        color: {text_muted} !important; 
-    }}
+    div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
+    div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
     
     /* Multiselect Box Darkening */
     div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
@@ -86,50 +66,14 @@ if is_dark:
     div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #ffffff !important; }}
     div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
     div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
-
-    /* ========================================= */
-    /* SURGICAL BRINC BLUE OVERRIDES (DARK MODE) */
-    /* ========================================= */
-
-    /* 1. Sliders */
-    div[data-testid="stSlider"] div[data-baseweb="slider"] div[role="slider"] {{
-        background-color: {accent_color} !important;
-        border-color: #ffffff !important;
-    }}
-    div[data-testid="stSlider"] div[data-baseweb="slider"] > div > div > div:first-of-type {{
-        background-color: {accent_color} !important;
-    }}
-    div[data-testid="stSlider"] div[data-baseweb="slider"] div[data-testid="stTickBar"] > div {{
-        background-color: {accent_color} !important;
-    }}
-
-    /* 2. Toggles */
-    div[data-testid="stToggle"] input[type="checkbox"]:checked + div {{
-        background-color: {accent_color} !important;
-    }}
-
-    /* 3. Checkboxes */
-    div[data-testid="stCheckbox"] input[type="checkbox"]:checked + div {{
-        background-color: {accent_color} !important;
-        border-color: {accent_color} !important;
-    }}
-
-    /* 4. Radio Buttons */
-    div[role="radiogroup"] [role="radio"][aria-checked="true"] > div:first-of-type {{
-        background-color: {accent_color} !important;
-        border-color: {accent_color} !important;
-    }}
-    div[role="radiogroup"] [role="radio"][aria-checked="true"] > div:first-of-type > div {{
-        background-color: {accent_color} !important;
-    }}
     """
 else:
-    # Light Mode Palette (Default Streamlit Red)
+    # Light Mode Palette
     bg_main = "#ffffff"
     bg_sidebar = "#f8f9fa"
     text_main = "#222222"
     text_muted = "#666666"
-    accent_color = "#ff4b4b" 
+    accent_color = "#ff4b4b" # Streamlit Default Red for custom cards/metrics
     
     card_bg = "#ffffff"
     card_border = "#e0e0e0"
@@ -152,6 +96,7 @@ else:
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     
+    /* Metrics */
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
     
