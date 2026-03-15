@@ -52,16 +52,8 @@ if is_dark:
     
     # Highly Diversified Neon Palette (Strictly Sequential)
     STATION_COLORS = [
-        "#00D2FF", # Brinc Blue
-        "#39FF14", # Neon Green
-        "#FFD700", # Cyber Yellow
-        "#FF007F", # Bright Pink
-        "#FF4500", # Orange Red
-        "#00FFCC", # Bright Cyan
-        "#FF3333", # Bright Red
-        "#7FFF00", # Chartreuse/Lime
-        "#00FFFF", # Pure Aqua
-        "#FF9900"  # Vivid Orange
+        "#00D2FF", "#39FF14", "#FFD700", "#FF007F", "#FF4500", 
+        "#00FFCC", "#FF3333", "#7FFF00", "#00FFFF", "#FF9900"
     ]
     
     theme_css = f"""
@@ -189,6 +181,23 @@ if not st.session_state['csvs_ready']:
 # --- MAIN UPLOAD SECTION (CSVs ONLY) ---
 if not st.session_state['csvs_ready']:
     st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
+    
+    # Optional Demo Data Implementation
+    if st.button("🚀 Don't have data? Load Demo Dataset"):
+        if os.path.exists("demo_calls.csv") and os.path.exists("demo_stations.csv"):
+            st.session_state['df_calls'] = pd.read_csv("demo_calls.csv").dropna(subset=['lat', 'lon'])
+            st.session_state['df_stations'] = pd.read_csv("demo_stations.csv").dropna(subset=['lat', 'lon'])
+            st.session_state['csvs_ready'] = True
+            st.rerun()
+        else:
+            st.warning("Demo data files not found in the root directory. Please upload your own CSVs below.")
+
+    with st.expander("❓ View expected CSV formats"):
+        st.markdown("""
+        **calls.csv needs:** `lat`, `lon`, `priority` (optional)
+        **stations.csv needs:** `name`, `lat`, `lon`, `type` (optional)
+        """)
+
     uploaded_files = st.file_uploader("Upload Mission Data", accept_multiple_files=True)
     
     call_file, station_file = None, None
@@ -201,10 +210,20 @@ if not st.session_state['csvs_ready']:
         if call_file and station_file:
             df_c = pd.read_csv(call_file)
             df_c.columns = [str(c).lower().strip() for c in df_c.columns]
+            
+            # Data Validation for Calls
+            if 'lat' not in df_c.columns or 'lon' not in df_c.columns:
+                st.error("❌ Your calls.csv is missing required 'lat' and 'lon' columns.")
+                st.stop()
             st.session_state['df_calls'] = df_c.dropna(subset=['lat', 'lon'])
             
             df_s = pd.read_csv(station_file)
             df_s.columns = [str(c).lower().strip() for c in df_s.columns]
+            
+            # Data Validation for Stations
+            if 'lat' not in df_s.columns or 'lon' not in df_s.columns:
+                st.error("❌ Your stations.csv is missing required 'lat' and 'lon' columns.")
+                st.stop()
             st.session_state['df_stations'] = df_s.dropna(subset=['lat', 'lon'])
             
             st.session_state['csvs_ready'] = True
@@ -228,14 +247,14 @@ def format_3_lines(name_str):
             line3 = parts[1].strip()
             return f"{line1}<br>{line2}<br>{line3}"
         else:
-            return f"{line1}<br>{rest}<br> "
+            return f"{line1}<br>{rest}<br> "
     else:
         if ',' in name_str:
             parts = name_str.split(',')
             if len(parts) >= 3:
                 return f"{parts[0].strip()},<br>{parts[1].strip()},<br>{','.join(parts[2:]).strip()}"
-            return f"{name_str}<br> <br> "
-        return f"{name_str}<br> <br> "
+            return f"{name_str}<br> <br> "
+        return f"{name_str}<br> <br> "
 
 def to_kml_color(hex_str):
     h = hex_str.lstrip('#')
@@ -623,25 +642,28 @@ if st.session_state['csvs_ready']:
 
     n = len(df_stations_all)
 
-    # --- OPTIMIZER CONTROLS ---
+    # --- OPTIMIZER CONTROLS (WRAPPED IN FORM FOR PERFORMANCE) ---
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
 
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
-    opt_strategy_raw = st.sidebar.radio(
-        "Goal", 
-        ("Call Coverage", "Land Coverage"), 
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-    opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
-    
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
-    k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
-    k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
-    
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Guardian Range</div>", unsafe_allow_html=True)
-    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8, label_visibility="collapsed")
+    with st.sidebar.form("optimizer_controls"):
+        st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
+        opt_strategy_raw = st.radio(
+            "Goal", 
+            ("Call Coverage", "Land Coverage"), 
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+        opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
+        
+        st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
+        k_responder = st.slider("🚁 Responder Count", 0, n, min(1, n))
+        k_guardian = st.slider("🦅 Guardian Count", 0, n, 0)
+        
+        st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Guardian Range</div>", unsafe_allow_html=True)
+        guard_radius_mi = st.slider("🦅 Guardian Range (Miles)", 1, 8, 8, label_visibility="collapsed")
+
+        submit_optimization = st.form_submit_button("⚡ Run Optimization")
 
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
         city_m_wkt = city_m.wkt  
@@ -869,8 +891,16 @@ if st.session_state['csvs_ready']:
         calls_per_day = st.slider("TOTAL DAILY CALLS (CITYWIDE)", min_value=1, max_value=max_slider_val, value=inferred_daily_calls)
         
         col_r1, col_r2 = st.columns(2)
-        dfr_dispatch_rate = col_r1.slider("DFR DISPATCH RATE (%)", min_value=1, max_value=100, value=25) / 100.0
-        deflection_rate = col_r2.slider("DRONE-ONLY RESOLUTION (%)", min_value=0, max_value=100, value=30) / 100.0
+        dfr_dispatch_rate = col_r1.slider(
+            "DFR DISPATCH RATE (%)", 
+            min_value=1, max_value=100, value=25,
+            help="The percentage of incoming calls eligible for a Drone as a First Responder dispatch."
+        ) / 100.0
+        deflection_rate = col_r2.slider(
+            "DRONE-ONLY RESOLUTION (%)", 
+            min_value=0, max_value=100, value=30,
+            help="The percentage of calls where the drone resolves the issue without requiring physical officers to be dispatched."
+        ) / 100.0
         
         cost_officer = 82
         cost_drone = 6
