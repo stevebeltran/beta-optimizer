@@ -68,14 +68,26 @@ if is_dark:
     html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
+    
+    /* Metrics */
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
+    
+    /* Multiselect Box Darkening */
     div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
     div[data-baseweb="select"] > div * {{ color: #ffffff !important; }}
     div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #333333 !important; color: #ffffff !important; font-weight: normal; border: 1px solid #555555 !important; }}
     div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #ffffff !important; }}
     div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
     div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
+    
+    /* Fix Streamlit Alerts */
+    div[data-testid="stAlert"] {{ background-color: #111111 !important; border: 1px solid #333333 !important; }}
+    div[data-testid="stAlert"] p, div[data-testid="stAlert"] span, div[data-testid="stAlert"] div {{ color: #ffffff !important; }}
+    
+    /* Style Buttons */
+    div[data-testid="stButton"] button {{ background-color: {accent_color} !important; color: #000000 !important; border: none !important; font-weight: 700 !important; }}
+    div[data-testid="stButton"] button:hover {{ opacity: 0.8; }}
     """
 else:
     bg_main = "#ffffff"
@@ -106,14 +118,24 @@ else:
     html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
+    
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
+    
     div[data-baseweb="select"] > div {{ background-color: #ffffff !important; border-color: #cccccc !important; color: #333333 !important; }}
     div[data-baseweb="select"] > div * {{ color: #333333 !important; }}
     div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #eeeeee !important; color: #000000 !important; font-weight: normal; border: 1px solid #cccccc !important; }}
     div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #000000 !important; }}
     div[data-baseweb="popover"] ul {{ background-color: #ffffff !important; color: #333333 !important; }}
     div[data-baseweb="popover"] li:hover {{ background-color: #f0f0f0 !important; }}
+    
+    /* Fix Streamlit Alerts */
+    div[data-testid="stAlert"] {{ background-color: #f8f9fa !important; border: 1px solid #e0e0e0 !important; }}
+    div[data-testid="stAlert"] p, div[data-testid="stAlert"] span, div[data-testid="stAlert"] div {{ color: #222222 !important; }}
+    
+    /* Style Buttons */
+    div[data-testid="stButton"] button {{ background-color: {accent_color} !important; color: #ffffff !important; border: none !important; font-weight: 700 !important; }}
+    div[data-testid="stButton"] button:hover {{ opacity: 0.8; }}
     """
 
 # --- INJECT CSS ---
@@ -631,9 +653,7 @@ if st.session_state['csvs_ready']:
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
     k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
     k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
-    
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Guardian Range</div>", unsafe_allow_html=True)
-    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8, label_visibility="collapsed")
+    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
 
     # Cache Optimization: Replaced large string hash with tiny bounding box hash
     bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{len(df_stations_all)}"
