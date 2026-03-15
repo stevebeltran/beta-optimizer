@@ -25,9 +25,9 @@ CONFIG = {
     "RESPONDER_RANGE_MI": 2.0,
     "OFFICER_COST_PER_CALL": 82,
     "DRONE_COST_PER_CALL": 6,
-    "DEFAULT_TRAFFIC_SPEED": 35.0, # Base ground speed (mph)
-    "RESPONDER_SPEED": 42.0,       # Drone speed (mph)
-    "GUARDIAN_SPEED": 60.0         # Drone speed (mph)
+    "DEFAULT_TRAFFIC_SPEED": 35.0, 
+    "RESPONDER_SPEED": 42.0,       
+    "GUARDIAN_SPEED": 60.0         
 }
 
 # --- PAGE CONFIG ---
@@ -158,7 +158,6 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['df_calls'] = None
     st.session_state['df_stations'] = None
 
-# --- SIDEBAR: MAP LIBRARY MANAGER (HIDDEN WHEN READY) ---
 if not st.session_state['csvs_ready']:
     with st.sidebar.expander("🗺️ Map Library Manager"):
         st.write("Upload shapefiles here to populate the 'jurisdiction_data' folder.")
@@ -173,17 +172,14 @@ if not st.session_state['csvs_ready']:
 
 # --- MAIN UPLOAD & VALIDATION SECTION ---
 if not st.session_state['csvs_ready']:
-    
-    # 1. DEMO MODE LOADER
     st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
     if st.button("🚀 Don't have data? Load Synthetic Demo Dataset"):
         np.random.seed(42)
-        center_lat, center_lon = 38.8339, -104.8214 # COS base
+        center_lat, center_lon = 38.8339, -104.8214 
         c_lat = np.random.normal(center_lat, 0.025, 5000)
         c_lon = np.random.normal(center_lon, 0.025, 5000)
         st.session_state['df_calls'] = pd.DataFrame({'lat': c_lat, 'lon': c_lon, 'priority': np.random.choice(['High', 'Medium', 'Low'], 5000)})
         
-        # 13 strategically gridded stations to guarantee 100% coverage is solvable
         s_lat = center_lat + np.array([0, 0.03, -0.03, 0.03, -0.03, 0.06, -0.06, 0, 0, 0.04, -0.04, 0.05, -0.05])
         s_lon = center_lon + np.array([0, 0.03, -0.03, -0.03, 0.03, 0, 0, 0.06, -0.06, 0.04, -0.04, -0.02, 0.02])
         st.session_state['df_stations'] = pd.DataFrame({
@@ -194,7 +190,6 @@ if not st.session_state['csvs_ready']:
         st.session_state['csvs_ready'] = True
         st.rerun()
 
-    # 2. FILE UPLOADER & VALIDATOR
     uploaded_files = st.file_uploader("Upload Mission Data", accept_multiple_files=True)
     call_file, station_file = None, None
     
@@ -205,10 +200,9 @@ if not st.session_state['csvs_ready']:
             elif fname == "stations.csv": station_file = f
             
         if call_file and station_file:
-            # Process Calls
             df_c = pd.read_csv(call_file)
             df_c.columns = [str(c).lower().strip() for c in df_c.columns]
-            df_c = df_c.rename(columns={'latitude': 'lat', 'longitude': 'lon'}) # Schema fallback
+            df_c = df_c.rename(columns={'latitude': 'lat', 'longitude': 'lon'}) 
             
             if 'lat' not in df_c.columns or 'lon' not in df_c.columns:
                 st.error(f"❌ **Validation Error:** Your calls.csv must contain 'lat' and 'lon' columns. Found: {', '.join(df_c.columns)}")
@@ -221,7 +215,6 @@ if not st.session_state['csvs_ready']:
                 
             st.session_state['df_calls'] = df_c
             
-            # Process Stations
             df_s = pd.read_csv(station_file)
             df_s.columns = [str(c).lower().strip() for c in df_s.columns]
             df_s = df_s.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
@@ -234,8 +227,7 @@ if not st.session_state['csvs_ready']:
             st.session_state['csvs_ready'] = True
             st.rerun()
 
-# --- SPATIAL MATH ENGINE ---
-def get_circle_coords(lat, lon, r_mi=CONFIG["RESPONDER_RANGE_MI"]):
+def get_circle_coords(lat, lon, r_mi=2.0):
     angles = np.linspace(0, 2*np.pi, 100)
     c_lats = lat + (r_mi/69.172) * np.sin(angles)
     c_lons = lon + (r_mi/(69.172 * np.cos(np.radians(lat)))) * np.cos(angles)
@@ -261,7 +253,7 @@ def to_kml_color(hex_str):
     h = hex_str.lstrip('#')
     return f"ff{h[4:6]}{h[2:4]}{h[0:2]}" if len(h) == 6 else "ff0000ff"
 
-def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_names, calls_gdf, guard_radius_mi, color_map):
+def generate_kml(active_gdf, active_drones, calls_gdf):
     kml = simplekml.Kml()
     fol_bounds = kml.newfolder(name="Jurisdictions")
     for _, row in active_gdf.iterrows():
@@ -276,25 +268,22 @@ def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_na
     fol_stations = kml.newfolder(name="Stations Points")
     fol_rings = kml.newfolder(name="Coverage Rings")
 
-    def add_kml_station(row, radius, color_hex, name_prefix):
+    def add_kml_station(d_obj, radius, color_hex, name_prefix):
         kml_c = to_kml_color(color_hex)
-        pnt = fol_stations.newpoint(name=f"{name_prefix} {row['name']}")
-        pnt.coords = [(row['lon'], row['lat'])]
+        pnt = fol_stations.newpoint(name=f"{name_prefix} {d_obj['name']}")
+        pnt.coords = [(d_obj['lon'], d_obj['lat'])]
         pnt.style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/paddle/blu-blank.png'
-        lats, lons = get_circle_coords(row['lat'], row['lon'], r_mi=radius)
+        lats, lons = get_circle_coords(d_obj['lat'], d_obj['lon'], r_mi=radius)
         ring_coords = list(zip(lons, lats))
         ring_coords.append(ring_coords[0])
-        pol = fol_rings.newpolygon(name=f"Range: {row['name']}")
+        pol = fol_rings.newpolygon(name=f"Range: {d_obj['name']}")
         pol.outerboundaryis = ring_coords
         pol.style.linestyle.color = kml_c
         pol.style.linestyle.width = 2
         pol.style.polystyle.color = simplekml.Color.changealphaint(60, kml_c)
 
-    for _, row in df_stations_all[df_stations_all['name'].isin(active_resp_names)].iterrows():
-        add_kml_station(row, CONFIG["RESPONDER_RANGE_MI"], color_map.get(row['name'], "#00D2FF"), "[Responder]")
-        
-    for _, row in df_stations_all[df_stations_all['name'].isin(active_guard_names)].iterrows():
-        add_kml_station(row, guard_radius_mi, color_map.get(row['name'], "#FFD700"), "[Guardian]")
+    for d in active_drones:
+        add_kml_station(d, d['radius_m']/1609.34, d['color'], f"[{d['type'][:3]}]")
 
     fol_calls = kml.newfolder(name="Incident Data (Sample)")
     calls_export = calls_gdf.to_crs(epsg=4326)
@@ -505,30 +494,58 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
             curr_r, curr_g = next_r, next_g
         return curr_r, curr_g, chrono_r, chrono_g
 
-@st.cache_data
-def compute_elbow_curve(n_calls, _resp_matrix):
-    n_st, n_c = _resp_matrix.shape
-    if n_c == 0: return pd.DataFrame()
-    uncovered = np.ones(n_c, dtype=bool)
-    curve = [{'Drones': 0, 'Coverage %': 0.0}]
-    cov_count = 0
-    # Process until 100% coverage or all stations are used
-    for i in range(n_st):
-        best_s = -1
-        best_cov = -1
-        for s in range(n_st):
-            cov = (_resp_matrix[s] & uncovered).sum()
-            if cov > best_cov:
-                best_cov = cov
-                best_s = s
-        if best_s != -1 and best_cov > 0:
-            uncovered = uncovered & ~_resp_matrix[best_s]
-            cov_count += best_cov
-            curve.append({'Drones': i+1, 'Coverage %': (cov_count / n_c) * 100})
-            if cov_count == n_c: break
-        else:
-            break
-    return pd.DataFrame(curve)
+@st.cache_resource
+def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash):
+    n_st = _resp_matrix.shape[0]
+    
+    def greedy_calls(matrix):
+        uncovered = np.ones(n_calls, dtype=bool)
+        curve = [0.0]
+        cov_count = 0
+        for _ in range(n_st):
+            best_s, best_cov = -1, -1
+            for s in range(n_st):
+                cov = (matrix[s] & uncovered).sum()
+                if cov > best_cov: best_cov, best_s = cov, s
+            if best_s != -1 and best_cov > 0:
+                uncovered = uncovered & ~matrix[best_s]
+                cov_count += best_cov
+                curve.append((cov_count / max(1, n_calls)) * 100)
+            else:
+                curve.append(curve[-1])
+        return curve
+        
+    def greedy_area(geos):
+        if total_area <= 0: return [0.0] * (n_st + 1)
+        current_union = Polygon()
+        curve = [0.0]
+        available = list(range(n_st))
+        for _ in range(n_st):
+            best_s, best_poly, best_area = -1, None, -1
+            for s in available:
+                cand = current_union.union(geos[s])
+                if cand.area > best_area:
+                    best_area, best_poly, best_s = cand.area, cand, s
+            if best_s != -1:
+                current_union = best_poly
+                available.remove(best_s)
+                curve.append((current_union.area / total_area) * 100)
+            else:
+                curve.append(curve[-1])
+        return curve
+
+    c_r = greedy_calls(_resp_matrix) if n_calls > 0 else [0]*(n_st+1)
+    c_g = greedy_calls(_guard_matrix) if n_calls > 0 else [0]*(n_st+1)
+    a_r = greedy_area(_geos_r)
+    a_g = greedy_area(_geos_g)
+    
+    return pd.DataFrame({
+        'Drones': range(n_st + 1),
+        'Responder (Calls)': c_r[:n_st+1],
+        'Responder (Area)': a_r[:n_st+1],
+        'Guardian (Calls)': c_g[:n_st+1],
+        'Guardian (Area)': a_g[:n_st+1]
+    })
 
 # --- MAIN LOGIC ---
 if st.session_state['csvs_ready']:
@@ -539,7 +556,6 @@ if st.session_state['csvs_ready']:
         master_gdf = find_relevant_jurisdictions(df_calls, df_stations_all, SHAPEFILE_DIR)
 
     if master_gdf is None or master_gdf.empty:
-        # Generate an automatic bounding box if shapefiles are missing so demo works instantly
         min_lon, min_lat = df_calls['lon'].min(), df_calls['lat'].min()
         max_lon, max_lat = df_calls['lon'].max(), df_calls['lat'].max()
         lon_pad = (max_lon - min_lon) * 0.1
@@ -600,7 +616,6 @@ if st.session_state['csvs_ready']:
             if not selected_types:
                 st.warning("Please select at least one Facility Type from the sidebar.")
                 st.stop()
-            # Must reset index after filtering to prevent spatial array index crashes
             df_stations_all = df_stations_all[df_stations_all['type'].astype(str).isin(selected_types)].copy().reset_index(drop=True)
             df_stations_all['name'] = "[" + df_stations_all['type'].astype(str) + "] " + df_stations_all['name'].astype(str)
             
@@ -796,13 +811,14 @@ if st.session_state['csvs_ready']:
     active_resp_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_resp_names]
     active_guard_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_guard_names]
     
-    # --- BUILD SEQUENTIAL COLOR MAP ---
+    # --- BUILD STRICTLY ISOLATED DRONE DEPLOYMENTS ---
     ordered_deployments_raw = []
     for idx in chrono_g:
         if idx in active_guard_idx: ordered_deployments_raw.append((idx, 'GUARDIAN'))
     for idx in chrono_r:
         if idx in active_resp_idx: ordered_deployments_raw.append((idx, 'RESPONDER'))
 
+    # Catch any manually selected stations not in the optimization output
     for idx in active_resp_idx:
         if idx not in chrono_r: ordered_deployments_raw.append((idx, 'RESPONDER'))
     for idx in active_guard_idx:
@@ -811,9 +827,11 @@ if st.session_state['csvs_ready']:
     active_color_map = {}
     c_idx = 0
     for idx, d_type in ordered_deployments_raw:
-        name = station_metadata[idx]['name']
-        if name not in active_color_map:
-            active_color_map[name] = STATION_COLORS[c_idx % len(STATION_COLORS)]
+        # Key the color by both the station name AND the drone type
+        # This completely decouples Responder vs Guardian units at the same location
+        key = f"{station_metadata[idx]['name']}_{d_type}"
+        if key not in active_color_map:
+            active_color_map[key] = STATION_COLORS[c_idx % len(STATION_COLORS)]
             c_idx += 1
             
     active_resp_data = [station_metadata[i] for i in active_resp_idx]
@@ -946,7 +964,7 @@ if st.session_state['csvs_ready']:
                     avg_dist = station_metadata[idx]['avg_dist_g']
                     radius_m = guard_radius_mi * 1609.34
                     
-                map_color = active_color_map[station_metadata[idx]['name']]
+                map_color = active_color_map[f"{station_metadata[idx]['name']}_{d_type}"]
                 avg_time_min = (avg_dist / speed_mph) * 60
 
                 d = {
@@ -1058,12 +1076,8 @@ if st.session_state['csvs_ready']:
     # --- KML EXPORT ---
     kml_data = generate_kml(
         active_gdf, 
-        df_stations_all, 
-        active_resp_names,
-        active_guard_names,
-        calls_in_city,
-        guard_radius_mi,
-        active_color_map
+        active_drones, 
+        calls_in_city
     )
     
     st.sidebar.markdown("---")
@@ -1211,19 +1225,44 @@ if st.session_state['csvs_ready']:
         
         # --- Coverage Elbow Curve ---
         st.markdown(f"<h4 style='margin-top:0px; border-bottom: 1px solid {card_border}; padding-bottom: 8px; color: {text_main};'>Coverage Optimization</h4>", unsafe_allow_html=True)
-        df_curve = compute_elbow_curve(total_calls, resp_matrix)
+        
+        df_curve = compute_all_elbow_curves(
+            total_calls, resp_matrix, guard_matrix, 
+            [s['clipped_2m'] for s in station_metadata], 
+            [s['clipped_guard'] for s in station_metadata], 
+            city_m.area if city_m else 1.0,
+            bounds_hash
+        )
+        
         if not df_curve.empty:
             fig_curve = go.Figure()
-            fig_curve.add_trace(go.Scatter(x=df_curve['Drones'], y=df_curve['Coverage %'], mode='lines+markers', line=dict(color=accent_color, width=3), marker=dict(size=6)))
+            
+            line_configs = [
+                ('Responder (Calls)', accent_color, 'solid'),
+                ('Guardian (Calls)', '#FFD700', 'solid'),
+                ('Responder (Area)', accent_color, 'dash'),
+                ('Guardian (Area)', '#FFD700', 'dash'),
+            ]
+            
+            for col, color, dash in line_configs:
+                fig_curve.add_trace(go.Scatter(
+                    x=df_curve['Drones'], y=df_curve[col], 
+                    mode='lines+markers', name=col,
+                    line=dict(color=color, width=2, dash=dash), marker=dict(size=4)
+                ))
+                
             fig_curve.update_layout(
-                title="Responder Coverage vs. Fleet Size",
                 title_font=dict(size=12, color=text_muted),
                 xaxis_title="Drones", 
                 yaxis_title="Coverage %",
                 xaxis=dict(showgrid=True, gridcolor=card_border, tickfont=dict(color=text_muted)),
                 yaxis=dict(showgrid=True, gridcolor=card_border, tickfont=dict(color=text_muted)),
-                margin=dict(l=10, r=10, t=30, b=10),
-                height=220,
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                    font=dict(size=10, color=text_muted)
+                ),
+                margin=dict(l=10, r=10, t=20, b=10),
+                height=260,
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)'
             )
@@ -1282,7 +1321,7 @@ if st.session_state['csvs_ready']:
                 legend_html = ""
                 
                 for d in active_drones:
-                    short_name = d['name'].split(',')[0]
+                    short_name = f"{d['name'].split(',')[0]} ({d['type'][:3]})"
                     hex_c = d['color'].lstrip('#')
                     rgb = [int(hex_c[j:j+2], 16) for j in (0, 2, 4)]
                     
