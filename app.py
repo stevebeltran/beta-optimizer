@@ -236,11 +236,10 @@ def format_3_lines(name_str):
         return f"{name_str}<br> <br> "
 
 def to_kml_color(hex_str):
-    """Converts a standard Hex color to KML's required aabbggrr format"""
     h = hex_str.lstrip('#')
     if len(h) == 6:
         return f"ff{h[4:6]}{h[2:4]}{h[0:2]}"
-    return "ff0000ff" # Fallback Red
+    return "ff0000ff"
 
 def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_names, calls_gdf, guard_radius_mi, color_map):
     kml = simplekml.Kml()
@@ -845,6 +844,7 @@ if st.session_state['csvs_ready']:
     # ==========================================
     active_drones = []
     fleet_capex = 0
+    dfr_dispatch_rate = 0.25 # Default 25% if sliders don't render yet
     
     with budget_placeholder:
         st.markdown("---")
@@ -934,6 +934,8 @@ if st.session_state['csvs_ready']:
                 </div>
                 """, unsafe_allow_html=True)
 
+            cumulative_mask = np.zeros(total_calls, dtype=bool) if total_calls > 0 else None
+            
             step = 1
             for idx, d_type in ordered_deployments_raw:
                 if d_type == 'RESPONDER':
@@ -1333,7 +1335,10 @@ if st.session_state['csvs_ready']:
                 if total_flights > 2000:
                     flights_json = random.sample(flights_json, 2000)
                     warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 2,000 flights for performance (Total: {total_flights}).</div>'
-                        
+                
+                # Top-down Quadcopter SVG Icon embedded directly as Data URI
+                drone_svg = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M18 6a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4zm12 12a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4z'/%3E%3Cpath stroke='white' stroke-width='2' stroke-linecap='round' d='M8.5 8.5l7 7m0-7l-7 7'/%3E%3Ccircle cx='12' cy='12' r='2' fill='white'/%3E%3C/svg%3E"
+                
                 html = f"""
                 <!DOCTYPE html>
                 <html>
@@ -1422,13 +1427,13 @@ if st.session_state['csvs_ready']:
                                     data: stations,
                                     pickable: false,
                                     getIcon: d => ({{
-                                        url: "data:image/svg+xml;charset=utf-8,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='white' d='M12 9a3 3 0 100 6 3 3 0 000-6zm-7-5a3 3 0 100 6 3 3 0 000-6zm14 0a3 3 0 100 6 3 3 0 000-6zm-14 14a3 3 0 100 6 3 3 0 000-6zm14 0a3 3 0 100 6 3 3 0 000-6z'/%3E%3Cpath stroke='white' stroke-width='2' stroke-linecap='round' d='M7 7l10 10m0-10L7 17'/%3E%3C/svg%3E",
+                                        url: "{drone_svg}",
                                         width: 24,
                                         height: 24,
                                         anchorY: 12
                                     }}),
                                     getPosition: d => [d.lon, d.lat],
-                                    getSize: d => 35,
+                                    getSize: d => 40,
                                     sizeScale: 1
                                 }}),
                                 new deck.TripsLayer({{
