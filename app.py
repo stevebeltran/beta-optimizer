@@ -33,7 +33,7 @@ if is_dark:
     bg_sidebar = "#111111"
     text_main = "#ffffff"
     text_muted = "#aaaaaa"
-    accent_color = "#00D2FF" # Brinc Blue for custom cards/metrics
+    accent_color = "#00D2FF" # Brinc Blue
     
     card_bg = "#111111"
     card_border = "#333333"
@@ -173,6 +173,7 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['df_calls'] = None
     st.session_state['df_stations'] = None
 
+# --- SIDEBAR: MAP LIBRARY MANAGER (HIDDEN WHEN READY) ---
 if not st.session_state['csvs_ready']:
     with st.sidebar.expander("🗺️ Map Library Manager"):
         st.write("Upload shapefiles here to populate the 'jurisdiction_data' folder.")
@@ -185,6 +186,7 @@ if not st.session_state['csvs_ready']:
                 count += 1
             st.success(f"Saved {count} map files to library!")
 
+# --- MAIN UPLOAD SECTION (CSVs ONLY) ---
 if not st.session_state['csvs_ready']:
     st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
     uploaded_files = st.file_uploader("Upload Mission Data", accept_multiple_files=True)
@@ -291,6 +293,16 @@ def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_na
         pnt.style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
 
     return kml.kml()
+
+# --- GLOBALLY CALCULATE MAP ZOOM ---
+def calculate_zoom(min_lon, max_lon, min_lat, max_lat):
+    lon_diff = max_lon - min_lon
+    lat_diff = max_lat - min_lat
+    if lon_diff <= 0 or lat_diff <= 0: return 12
+    zoom_lon = np.log2(360 / lon_diff)
+    zoom_lat = np.log2(180 / lat_diff)
+    best_zoom = min(zoom_lon, zoom_lat) + 1.6
+    return min(max(best_zoom, 5), 18)
 
 @st.cache_data
 def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
@@ -555,6 +567,7 @@ if st.session_state['csvs_ready']:
     
     center_lon = (minx + maxx) / 2
     center_lat = (miny + maxy) / 2
+    dynamic_zoom = calculate_zoom(minx, maxx, miny, maxy)
     
     utm_zone = int((center_lon + 180) / 6) + 1
     epsg_code = f"326{utm_zone}" if center_lat > 0 else f"327{utm_zone}"
@@ -1087,15 +1100,6 @@ if st.session_state['csvs_ready']:
     
     with map_col:
         fig = go.Figure()
-        
-        def calculate_zoom(min_lon, max_lon, min_lat, max_lat):
-            lon_diff = max_lon - min_lon
-            lat_diff = max_lat - min_lat
-            if lon_diff <= 0 or lat_diff <= 0: return 12
-            zoom_lon = np.log2(360 / lon_diff)
-            zoom_lat = np.log2(180 / lat_diff)
-            best_zoom = min(zoom_lon, zoom_lat) + 1.6
-            return min(max(best_zoom, 5), 18)
 
         if show_boundaries:
             if city_boundary_geom is not None and not city_boundary_geom.is_empty:
@@ -1193,8 +1197,6 @@ if st.session_state['csvs_ready']:
                         hoverinfo='skip'
                     ))
 
-        dynamic_zoom = calculate_zoom(minx, maxx, miny, maxy)
-
         mapbox_config = dict(
             center=dict(lat=center_lat, lon=center_lon),
             zoom=dynamic_zoom,
@@ -1279,7 +1281,7 @@ if st.session_state['csvs_ready']:
         show_sim = st.toggle("🎬 Enable 3D Swarm Simulation", value=False)
         
         if show_sim:
-            def generate_deckgl_html(active_drones, calls_in_city, dfr_dispatch_rate):
+            def generate_deckgl_html(active_drones, calls_in_city, dfr_dispatch_rate, lat, lon, zoom):
                 stations_json = []
                 flights_json = []
                 
@@ -1336,7 +1338,6 @@ if st.session_state['csvs_ready']:
                     flights_json = random.sample(flights_json, 2000)
                     warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 2,000 flights for performance (Total: {total_flights}).</div>'
                 
-                # Top-down Quadcopter SVG Icon embedded directly as Data URI
                 drone_svg = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M18 6a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4zm12 12a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4z'/%3E%3Cpath stroke='white' stroke-width='2' stroke-linecap='round' d='M8.5 8.5l7 7m0-7l-7 7'/%3E%3Ccircle cx='12' cy='12' r='2' fill='white'/%3E%3C/svg%3E"
                 
                 html = f"""
@@ -1388,9 +1389,9 @@ if st.session_state['csvs_ready']:
                             container: 'map',
                             mapStyle: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
                             initialViewState: {{
-                                longitude: stations.length > 0 ? stations[0].lon : -90,
-                                latitude: stations.length > 0 ? stations[0].lat : 38,
-                                zoom: 10.5,
+                                longitude: {lon},
+                                latitude: {lat},
+                                zoom: {zoom},
                                 pitch: 50,
                                 bearing: 0
                             }},
@@ -1494,5 +1495,5 @@ if st.session_state['csvs_ready']:
                 """
                 return html
 
-            sim_html = generate_deckgl_html(active_drones, calls_in_city, dfr_dispatch_rate)
+            sim_html = generate_deckgl_html(active_drones, calls_in_city, dfr_dispatch_rate, center_lat, center_lon, dynamic_zoom)
             components.html(sim_html, height=700)
