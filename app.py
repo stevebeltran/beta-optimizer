@@ -64,7 +64,7 @@ if is_dark:
         "#FF9900"  # Vivid Orange
     ]
     
-    # Custom CSS blocks for Dark Mode layout (Removed widget overrides to fix highlighting bug)
+    # Custom CSS blocks for Dark Mode layout
     theme_css = f"""
     .stApp, .main {{ background-color: {bg_main} !important; }}
     html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
@@ -625,11 +625,12 @@ if st.session_state['csvs_ready']:
     
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
     k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
-    k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
     
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Guardian Range</div>", unsafe_allow_html=True)
-    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8, label_visibility="collapsed")
+    # Guardian Sliders Grouped Together
+    k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
+    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
 
+    # Precompute triggered AFTER the radius slider
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
         city_m_wkt = city_m.wkt  
         calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls = precompute_spatial_data(
@@ -1400,12 +1401,21 @@ if st.session_state['csvs_ready']:
                                     pickable: false
                                 }}),
                                 new deck.ScatterplotLayer({{
-                                    id: 'stations',
+                                    id: 'stations-pad',
                                     data: stations,
                                     getPosition: d => [d.lon, d.lat],
-                                    getFillColor: [255, 255, 255, 255],
-                                    getRadius: 150,
-                                    pickable: true
+                                    getFillColor: d => [d.color[0], d.color[1], d.color[2], 100],
+                                    getRadius: 200,
+                                    pickable: false
+                                }}),
+                                new deck.TextLayer({{
+                                    id: 'station-icons',
+                                    data: stations,
+                                    getPosition: d => [d.lon, d.lat],
+                                    getText: d => '🚁',
+                                    getSize: 36,
+                                    getTextAnchor: 'middle',
+                                    getAlignmentBaseline: 'center'
                                 }}),
                                 new deck.TripsLayer({{
                                     id: 'flights',
