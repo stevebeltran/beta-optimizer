@@ -50,7 +50,7 @@ if is_dark:
     legend_bg = "rgba(0, 0, 0, 0.7)"
     legend_text = "#ffffff"
     
-    # Highly Diversified Neon Palette (No heavy purples)
+    # Highly Diversified Neon Palette (Strictly Sequential)
     STATION_COLORS = [
         "#00D2FF", # Brinc Blue
         "#39FF14", # Neon Green
@@ -64,18 +64,15 @@ if is_dark:
         "#FF9900"  # Vivid Orange
     ]
     
-    # Custom CSS blocks for Dark Mode layout
     theme_css = f"""
     .stApp, .main {{ background-color: {bg_main} !important; }}
     html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     
-    /* Metrics */
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
     
-    /* Multiselect Box Darkening */
     div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
     div[data-baseweb="select"] > div * {{ color: #ffffff !important; }}
     div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #333333 !important; color: #ffffff !important; font-weight: normal; border: 1px solid #555555 !important; }}
@@ -89,7 +86,7 @@ else:
     bg_sidebar = "#f8f9fa"
     text_main = "#222222"
     text_muted = "#666666"
-    accent_color = "#ff4b4b" # Streamlit Default Red for custom cards/metrics
+    accent_color = "#ff4b4b" 
     
     card_bg = "#ffffff"
     card_border = "#e0e0e0"
@@ -118,11 +115,9 @@ else:
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     
-    /* Metrics */
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
     
-    /* Force Multiselect to White */
     div[data-baseweb="select"] > div {{ background-color: #ffffff !important; border-color: #cccccc !important; color: #333333 !important; }}
     div[data-baseweb="select"] > div * {{ color: #333333 !important; }}
     div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #eeeeee !important; color: #000000 !important; font-weight: normal; border: 1px solid #cccccc !important; }}
@@ -140,14 +135,12 @@ st.markdown(
     
     {theme_css}
     
-    /* General Form Fonts */
     .stRadio label p, .stMultiSelect label p, .stSlider label p, .stToggle label p, .stCheckbox label p {{
         font-weight: 600 !important;
         font-size: 0.85rem !important;
     }}
     div[role="radiogroup"] {{ gap: 0.5rem !important; }}
 
-    /* Print settings */
     @media print {{
         section[data-testid="stSidebar"], header[data-testid="stHeader"], .stSlider, button, div[data-testid="stToolbar"] {{ display: none !important; }}
         * {{ -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }}
@@ -180,7 +173,6 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['df_calls'] = None
     st.session_state['df_stations'] = None
 
-# --- SIDEBAR: MAP LIBRARY MANAGER (HIDDEN WHEN READY) ---
 if not st.session_state['csvs_ready']:
     with st.sidebar.expander("🗺️ Map Library Manager"):
         st.write("Upload shapefiles here to populate the 'jurisdiction_data' folder.")
@@ -193,7 +185,6 @@ if not st.session_state['csvs_ready']:
                 count += 1
             st.success(f"Saved {count} map files to library!")
 
-# --- MAIN UPLOAD SECTION (CSVs ONLY) ---
 if not st.session_state['csvs_ready']:
     st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
     uploaded_files = st.file_uploader("Upload Mission Data", accept_multiple_files=True)
@@ -244,7 +235,14 @@ def format_3_lines(name_str):
             return f"{name_str}<br> <br> "
         return f"{name_str}<br> <br> "
 
-def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_names, calls_gdf, guard_radius_mi):
+def to_kml_color(hex_str):
+    """Converts a standard Hex color to KML's required aabbggrr format"""
+    h = hex_str.lstrip('#')
+    if len(h) == 6:
+        return f"ff{h[4:6]}{h[2:4]}{h[0:2]}"
+    return "ff0000ff" # Fallback Red
+
+def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_names, calls_gdf, guard_radius_mi, color_map):
     kml = simplekml.Kml()
     
     fol_bounds = kml.newfolder(name="Jurisdictions")
@@ -260,7 +258,8 @@ def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_na
     fol_stations = kml.newfolder(name="Stations Points")
     fol_rings = kml.newfolder(name="Coverage Rings")
 
-    def add_kml_station(row, radius, color, name_prefix):
+    def add_kml_station(row, radius, color_hex, name_prefix):
+        kml_c = to_kml_color(color_hex)
         pnt = fol_stations.newpoint(name=f"{name_prefix} {row['name']}")
         pnt.coords = [(row['lon'], row['lat'])]
         pnt.style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/paddle/blu-blank.png'
@@ -269,15 +268,17 @@ def generate_kml(active_gdf, df_stations_all, active_resp_names, active_guard_na
         ring_coords.append(ring_coords[0])
         pol = fol_rings.newpolygon(name=f"Range: {row['name']}")
         pol.outerboundaryis = ring_coords
-        pol.style.linestyle.color = color
+        pol.style.linestyle.color = kml_c
         pol.style.linestyle.width = 2
-        pol.style.polystyle.color = simplekml.Color.changealphaint(60, color)
+        pol.style.polystyle.color = simplekml.Color.changealphaint(60, kml_c)
 
     for _, row in df_stations_all[df_stations_all['name'].isin(active_resp_names)].iterrows():
-        add_kml_station(row, 2.0, simplekml.Color.blue, "[Responder]")
+        c = color_map.get(row['name'], "#00D2FF")
+        add_kml_station(row, 2.0, c, "[Responder]")
         
     for _, row in df_stations_all[df_stations_all['name'].isin(active_guard_names)].iterrows():
-        add_kml_station(row, guard_radius_mi, simplekml.Color.orange, "[Guardian]")
+        c = color_map.get(row['name'], "#FFD700")
+        add_kml_station(row, guard_radius_mi, c, "[Guardian]")
 
     fol_calls = kml.newfolder(name="Incident Data (Sample)")
     calls_export = calls_gdf.to_crs(epsg=4326)
@@ -625,12 +626,11 @@ if st.session_state['csvs_ready']:
     
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
     k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
-    
-    # Guardian Sliders Grouped Together
     k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
-    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
+    
+    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Guardian Range</div>", unsafe_allow_html=True)
+    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8, label_visibility="collapsed")
 
-    # Precompute triggered AFTER the radius slider
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
         city_m_wkt = city_m.wkt  
         calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls = precompute_spatial_data(
@@ -798,6 +798,26 @@ if st.session_state['csvs_ready']:
     active_resp_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_resp_names]
     active_guard_idx = [i for i, s in enumerate(station_metadata) if s['name'] in active_guard_names]
     
+    # --- BUILD SEQUENTIAL COLOR MAP ---
+    ordered_deployments_raw = []
+    for idx in chrono_g:
+        if idx in active_guard_idx: ordered_deployments_raw.append((idx, 'GUARDIAN'))
+    for idx in chrono_r:
+        if idx in active_resp_idx: ordered_deployments_raw.append((idx, 'RESPONDER'))
+
+    for idx in active_resp_idx:
+        if idx not in chrono_r: ordered_deployments_raw.append((idx, 'RESPONDER'))
+    for idx in active_guard_idx:
+        if idx not in chrono_g: ordered_deployments_raw.append((idx, 'GUARDIAN'))
+
+    active_color_map = {}
+    c_idx = 0
+    for idx, d_type in ordered_deployments_raw:
+        name = station_metadata[idx]['name']
+        if name not in active_color_map:
+            active_color_map[name] = STATION_COLORS[c_idx % len(STATION_COLORS)]
+            c_idx += 1
+            
     active_resp_data = [station_metadata[i] for i in active_resp_idx]
     active_guard_data = [station_metadata[i] for i in active_guard_idx]
     
@@ -914,21 +934,8 @@ if st.session_state['csvs_ready']:
                 </div>
                 """, unsafe_allow_html=True)
 
-            ordered_deployments = []
-            for idx in chrono_g:
-                if idx in active_guard_idx: ordered_deployments.append((idx, 'GUARDIAN'))
-            for idx in chrono_r:
-                if idx in active_resp_idx: ordered_deployments.append((idx, 'RESPONDER'))
-
-            for idx in active_resp_idx:
-                if idx not in chrono_r: ordered_deployments.append((idx, 'RESPONDER'))
-            for idx in active_guard_idx:
-                if idx not in chrono_g: ordered_deployments.append((idx, 'GUARDIAN'))
-
-            cumulative_mask = np.zeros(total_calls, dtype=bool) if total_calls > 0 else None
-            
             step = 1
-            for idx, d_type in ordered_deployments:
+            for idx, d_type in ordered_deployments_raw:
                 if d_type == 'RESPONDER':
                     cov_array = resp_matrix[idx]
                     cost = 80000
@@ -942,7 +949,7 @@ if st.session_state['csvs_ready']:
                     avg_dist = station_metadata[idx]['avg_dist_g']
                     radius_m = guard_radius_mi * 1609.34
                     
-                map_color = STATION_COLORS[idx % len(STATION_COLORS)]
+                map_color = active_color_map[station_metadata[idx]['name']]
                 
                 avg_time_min = (avg_dist / speed_mph) * 60
 
@@ -1059,7 +1066,8 @@ if st.session_state['csvs_ready']:
         active_resp_names,
         active_guard_names,
         calls_in_city,
-        guard_radius_mi
+        guard_radius_mi,
+        active_color_map
     )
     
     st.sidebar.markdown("---")
@@ -1122,8 +1130,11 @@ if st.session_state['csvs_ready']:
 
         for i, row in df_stations_all.iterrows():
             s_name = row['name']
-            color = STATION_COLORS[i % len(STATION_COLORS)]
             
+            if s_name not in active_resp_names and s_name not in active_guard_names:
+                continue
+
+            color = active_color_map[s_name]
             short_name = s_name.split(',')[0]
 
             if s_name in active_resp_names:
@@ -1134,8 +1145,6 @@ if st.session_state['csvs_ready']:
                 clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=guard_radius_mi)
                 lbl = f"{short_name} (Guard)"
                 drive_time_min = (guard_radius_mi / 60.0) * 60 
-            else:
-                continue
 
             fig.add_trace(go.Scattermapbox(
                 lat=list(clats) + [None, row['lat']], 
@@ -1408,14 +1417,19 @@ if st.session_state['csvs_ready']:
                                     getRadius: 200,
                                     pickable: false
                                 }}),
-                                new deck.TextLayer({{
+                                new deck.IconLayer({{
                                     id: 'station-icons',
                                     data: stations,
+                                    pickable: false,
+                                    getIcon: d => ({{
+                                        url: "data:image/svg+xml;charset=utf-8,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='white' d='M12 9a3 3 0 100 6 3 3 0 000-6zm-7-5a3 3 0 100 6 3 3 0 000-6zm14 0a3 3 0 100 6 3 3 0 000-6zm-14 14a3 3 0 100 6 3 3 0 000-6zm14 0a3 3 0 100 6 3 3 0 000-6z'/%3E%3Cpath stroke='white' stroke-width='2' stroke-linecap='round' d='M7 7l10 10m0-10L7 17'/%3E%3C/svg%3E",
+                                        width: 24,
+                                        height: 24,
+                                        anchorY: 12
+                                    }}),
                                     getPosition: d => [d.lon, d.lat],
-                                    getText: d => '🚁',
-                                    getSize: 36,
-                                    getTextAnchor: 'middle',
-                                    getAlignmentBaseline: 'center'
+                                    getSize: d => 35,
+                                    sizeScale: 1
                                 }}),
                                 new deck.TripsLayer({{
                                     id: 'flights',
