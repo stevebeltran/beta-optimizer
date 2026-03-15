@@ -52,14 +52,34 @@ if is_dark:
     
     # Custom CSS blocks for Dark Mode layout
     theme_css = f"""
-    .stApp, .main {{ background-color: {bg_main} !important; }}
-    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
-    [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
-    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
+    /* Overwrite Streamlit's absolute base theme variables */
+    :root, .stApp, .main {{
+        --primary-color: {accent_color} !important;
+        background-color: {bg_main} !important; 
+    }}
+    
+    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ 
+        font-family: 'Manrope', sans-serif !important; 
+        color: {text_main} !important; 
+    }}
+    
+    [data-testid="stSidebar"] {{ 
+        background-color: {bg_sidebar} !important; 
+        border-right: 1px solid {card_border}; 
+    }}
+    
+    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ 
+        color: {text_muted} !important; 
+    }}
     
     /* Metrics */
-    div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
-    div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
+    div[data-testid="stMetricValue"] {{ 
+        font-family: 'IBM Plex Mono', monospace !important; 
+        color: {accent_color} !important; 
+    }}
+    div[data-testid="stMetricLabel"] * {{ 
+        color: {text_muted} !important; 
+    }}
     
     /* Multiselect Box Darkening */
     div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
@@ -68,14 +88,50 @@ if is_dark:
     div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #ffffff !important; }}
     div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
     div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
+
+    /* ========================================= */
+    /* SURGICAL BRINC BLUE OVERRIDES (DARK MODE) */
+    /* ========================================= */
+
+    /* 1. Sliders */
+    div[data-testid="stSlider"] div[data-baseweb="slider"] div[role="slider"] {{
+        background-color: {accent_color} !important;
+        border-color: #ffffff !important;
+    }}
+    div[data-testid="stSlider"] div[data-baseweb="slider"] > div > div > div:first-of-type {{
+        background-color: {accent_color} !important;
+    }}
+    div[data-testid="stSlider"] div[data-baseweb="slider"] div[data-testid="stTickBar"] > div {{
+        background-color: {accent_color} !important;
+    }}
+
+    /* 2. Toggles */
+    div[data-testid="stToggle"] input[type="checkbox"]:checked + div {{
+        background-color: {accent_color} !important;
+    }}
+
+    /* 3. Checkboxes */
+    div[data-testid="stCheckbox"] input[type="checkbox"]:checked + div {{
+        background-color: {accent_color} !important;
+        border-color: {accent_color} !important;
+    }}
+
+    /* 4. Radio Buttons */
+    div[role="radiogroup"] [role="radio"][aria-checked="true"] > div:first-of-type {{
+        background-color: {accent_color} !important;
+        border-color: {accent_color} !important;
+    }}
+    div[role="radiogroup"] [role="radio"][aria-checked="true"] > div:first-of-type > div {{
+        background-color: {accent_color} !important;
+    }}
     """
 else:
-    # Light Mode Palette
+    # Light Mode Palette (Default Streamlit Red)
     bg_main = "#ffffff"
     bg_sidebar = "#f8f9fa"
     text_main = "#222222"
     text_muted = "#666666"
-    accent_color = "#ff4b4b" # Streamlit Default Red for custom cards/metrics
+    accent_color = "#ff4b4b" 
     
     card_bg = "#ffffff"
     card_border = "#e0e0e0"
@@ -98,7 +154,6 @@ else:
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     
-    /* Metrics */
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
     
@@ -197,10 +252,18 @@ if not st.session_state['csvs_ready']:
             st.session_state['csvs_ready'] = True
             st.rerun()
 
-# High-Contrast Palette
+# High-Visibility Neon Palette designed to pop on Dark/Light mode maps
 STATION_COLORS = [
-    "#E6194B", "#3CB44B", "#4363D8", "#F58231", "#911EB4", 
-    "#800000", "#333333", "#000075", "#808000", "#9A6324"
+    "#00D2FF", # Brinc Blue
+    "#39FF14", # Neon Green
+    "#FF007F", # Bright Pink
+    "#FFD700", # Cyber Yellow
+    "#B026FF", # Neon Purple
+    "#FF4500", # Orange Red
+    "#00FFCC", # Bright Cyan
+    "#FF3333", # Bright Red
+    "#9D00FF", # Bright Violet
+    "#7FFF00"  # Chartreuse
 ]
 
 def get_circle_coords(lat, lon, r_mi=2.0):
@@ -944,10 +1007,9 @@ if st.session_state['csvs_ready']:
                 }
                 
                 if total_calls > 0:
-                    # Isolate ONLY the net new calls covered by this drone specifically
                     marginal_mask = cov_array & ~cumulative_mask
                     marginal_historic = np.sum(marginal_mask)
-                    d['assigned_indices'] = np.where(marginal_mask)[0] # Save indices for 3D simulation
+                    d['assigned_indices'] = np.where(marginal_mask)[0] 
                     
                     cumulative_mask = cumulative_mask | cov_array
                     
@@ -1256,10 +1318,8 @@ if st.session_state['csvs_ready']:
                 stations_json = []
                 flights_json = []
                 
-                # Fetch raw TRUE LAT/LON coordinates to fix the flight path bug
                 calls_coords = np.column_stack((calls_in_city['lon'], calls_in_city['lat']))
                 
-                # Setup Legend
                 legend_html = ""
                 
                 for d in active_drones:
@@ -1271,19 +1331,14 @@ if st.session_state['csvs_ready']:
                         "color": d['color']
                     })
                     
-                    # Add to HTML Legend
                     legend_html += f'<div style="margin-bottom:3px;"><span style="display:inline-block;width:10px;height:10px;background-color:{d["color"]};margin-right:8px;border-radius:50%;"></span>{short_name}</div>'
                     
                     hex_c = d['color'].lstrip('#')
                     rgb = [int(hex_c[j:j+2], 16) for j in (0, 2, 4)]
                     
-                    # Pull strictly the net new assigned calls for this station
                     assigned_calls = d.get('assigned_indices', [])
-                    
-                    # SIMULATION SCALER: Apply the 25% dispatch rate mathematically to the visual output!
                     num_to_simulate = int(len(assigned_calls) * dfr_dispatch_rate)
                     if num_to_simulate > 0:
-                        # Randomly sample the calls so it correctly represents the reduced load
                         assigned_calls = random.sample(list(assigned_calls), num_to_simulate)
                     else:
                         assigned_calls = []
@@ -1294,28 +1349,21 @@ if st.session_state['csvs_ready']:
                         
                         dist_mi = ((lon1 - lon0)**2 + (lat1 - lat0)**2)**0.5 * 69.172
                         
-                        # True flight time based on specific drone speed
                         flight_time_sec = (dist_mi / d['speed_mph']) * 3600
-                        
-                        # Exaggerate visual time so you can actually see it streak
                         vis_time = max(flight_time_sec * 3, 120) 
                         
-                        # Procedurally span the calls over a single 24-hour cycle
                         launch = random.randint(0, 86400)
                         
-                        # Calculate 3D Parabola Arc
                         mid_lon = (lon0 + lon1) / 2
                         mid_lat = (lat0 + lat1) / 2
-                        arc_height = min(max(dist_mi * 40, 50), 200) # Arc up to 200 meters high
+                        arc_height = min(max(dist_mi * 40, 50), 200) 
                         
-                        # Path: [Start at Station, Arc up to midpoint, Land at Call]
                         flights_json.append({
                             "path": [[lon0, lat0, 0], [mid_lon, mid_lat, arc_height], [lon1, lat1, 0]],
                             "timestamps": [launch, launch + vis_time/2, launch + vis_time],
                             "color": rgb
                         })
                 
-                # Protect Browser RAM
                 warn_html = ""
                 total_flights = len(flights_json)
                 if total_flights > 2000:
@@ -1344,8 +1392,8 @@ if st.session_state['csvs_ready']:
                         <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {len(flights_json)} net-new flights (approx {int(dfr_dispatch_rate*100)}% dispatch rate) over a 24-hour cycle.</div>
                         
                         <div style="margin-bottom: 15px;">
-                            <label style="font-size: 12px; color: #ccc;">Time Speed Multiplier: <span id="speedLabel">15</span>x</label>
-                            <input type="range" id="speedSlider" min="1" max="100" value="15" style="width: 100%;">
+                            <label style="font-size: 12px; color: #ccc;">Time Speed Multiplier: <span id="speedLabel">1</span>x</label>
+                            <input type="range" id="speedSlider" min="1" max="100" value="1" style="width: 100%;">
                         </div>
 
                         <button id="runBtn">LAUNCH SWARM</button>
@@ -1404,6 +1452,17 @@ if st.session_state['csvs_ready']:
                                     trailLength: 120, 
                                     currentTime: time,
                                     rounded: true
+                                }}),
+                                new deck.ScatterplotLayer({{
+                                    id: 'landed-calls',
+                                    data: flights,
+                                    getPosition: d => d.path[2],
+                                    getFillColor: d => time >= d.timestamps[2] ? [d.color[0], d.color[1], d.color[2], 255] : [0, 0, 0, 0],
+                                    getRadius: 25,
+                                    radiusMinPixels: 3,
+                                    updateTriggers: {{
+                                        getFillColor: time
+                                    }}
                                 }})
                             ];
                             map.setProps({{layers}});
