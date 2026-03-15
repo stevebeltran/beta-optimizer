@@ -68,26 +68,14 @@ if is_dark:
     html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
-    
-    /* Metrics */
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
-    
-    /* Multiselect Box Darkening */
     div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
     div[data-baseweb="select"] > div * {{ color: #ffffff !important; }}
     div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #333333 !important; color: #ffffff !important; font-weight: normal; border: 1px solid #555555 !important; }}
     div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #ffffff !important; }}
     div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
     div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
-    
-    /* Fix Streamlit Alerts */
-    div[data-testid="stAlert"] {{ background-color: #111111 !important; border: 1px solid #333333 !important; }}
-    div[data-testid="stAlert"] p, div[data-testid="stAlert"] span, div[data-testid="stAlert"] div {{ color: #ffffff !important; }}
-    
-    /* Style Buttons */
-    div[data-testid="stButton"] button {{ background-color: {accent_color} !important; color: #000000 !important; border: none !important; font-weight: 700 !important; }}
-    div[data-testid="stButton"] button:hover {{ opacity: 0.8; }}
     """
 else:
     bg_main = "#ffffff"
@@ -118,24 +106,14 @@ else:
     html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
-    
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
-    
     div[data-baseweb="select"] > div {{ background-color: #ffffff !important; border-color: #cccccc !important; color: #333333 !important; }}
     div[data-baseweb="select"] > div * {{ color: #333333 !important; }}
     div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #eeeeee !important; color: #000000 !important; font-weight: normal; border: 1px solid #cccccc !important; }}
     div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #000000 !important; }}
     div[data-baseweb="popover"] ul {{ background-color: #ffffff !important; color: #333333 !important; }}
     div[data-baseweb="popover"] li:hover {{ background-color: #f0f0f0 !important; }}
-    
-    /* Fix Streamlit Alerts */
-    div[data-testid="stAlert"] {{ background-color: #f8f9fa !important; border: 1px solid #e0e0e0 !important; }}
-    div[data-testid="stAlert"] p, div[data-testid="stAlert"] span, div[data-testid="stAlert"] div {{ color: #222222 !important; }}
-    
-    /* Style Buttons */
-    div[data-testid="stButton"] button {{ background-color: {accent_color} !important; color: #ffffff !important; border: none !important; font-weight: 700 !important; }}
-    div[data-testid="stButton"] button:hover {{ opacity: 0.8; }}
     """
 
 # --- INJECT CSS ---
@@ -201,16 +179,17 @@ if not st.session_state['csvs_ready']:
     if st.button("🚀 Don't have data? Load Synthetic Demo Dataset"):
         np.random.seed(42)
         center_lat, center_lon = 38.8339, -104.8214 # COS base
-        c_lat = np.random.normal(center_lat, 0.05, 5000)
-        c_lon = np.random.normal(center_lon, 0.05, 5000)
+        c_lat = np.random.normal(center_lat, 0.025, 5000)
+        c_lon = np.random.normal(center_lon, 0.025, 5000)
         st.session_state['df_calls'] = pd.DataFrame({'lat': c_lat, 'lon': c_lon, 'priority': np.random.choice(['High', 'Medium', 'Low'], 5000)})
         
-        s_lat = center_lat + np.array([0, 0.04, -0.04, 0.03, -0.03, 0.06, -0.06])
-        s_lon = center_lon + np.array([0, 0.04, -0.04, -0.03, 0.03, -0.01, 0.02])
+        # 13 strategically gridded stations to guarantee 100% coverage is solvable
+        s_lat = center_lat + np.array([0, 0.03, -0.03, 0.03, -0.03, 0.06, -0.06, 0, 0, 0.04, -0.04, 0.05, -0.05])
+        s_lon = center_lon + np.array([0, 0.03, -0.03, -0.03, 0.03, 0, 0, 0.06, -0.06, 0.04, -0.04, -0.02, 0.02])
         st.session_state['df_stations'] = pd.DataFrame({
-            'name': [f'Station {i+1}' for i in range(7)],
+            'name': [f'Station {i+1}' for i in range(13)],
             'lat': s_lat, 'lon': s_lon,
-            'type': ['Police', 'Fire', 'Police', 'Fire', 'Police', 'EMS', 'Fire']
+            'type': ['Police', 'Fire', 'EMS'] * 4 + ['Police']
         })
         st.session_state['csvs_ready'] = True
         st.rerun()
@@ -236,7 +215,7 @@ if not st.session_state['csvs_ready']:
                 st.stop()
                 
             orig_len = len(df_c)
-            df_c = df_c.dropna(subset=['lat', 'lon'])
+            df_c = df_c.dropna(subset=['lat', 'lon']).reset_index(drop=True)
             if len(df_c) < orig_len:
                 st.warning(f"⚠️ Dropped {orig_len - len(df_c)} rows from calls data due to missing or invalid GPS coordinates.")
                 
@@ -251,7 +230,7 @@ if not st.session_state['csvs_ready']:
                 st.error(f"❌ **Validation Error:** Your stations.csv must contain 'lat' and 'lon' columns. Found: {', '.join(df_s.columns)}")
                 st.stop()
                 
-            st.session_state['df_stations'] = df_s.dropna(subset=['lat', 'lon'])
+            st.session_state['df_stations'] = df_s.dropna(subset=['lat', 'lon']).reset_index(drop=True)
             st.session_state['csvs_ready'] = True
             st.rerun()
 
@@ -403,15 +382,15 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, guard
     
     if not calls_in_city.empty:
         calls_array = np.array(list(zip(calls_in_city.geometry.x, calls_in_city.geometry.y)))
-        for i, row in df_stations_all.iterrows():
+        for idx_pos, (i, row) in enumerate(df_stations_all.iterrows()):
             s_pt_m = gpd.GeoSeries([Point(row['lon'], row['lat'])], crs="EPSG:4326").to_crs(epsg=epsg_code).iloc[0]
             dists = np.sqrt((calls_array[:,0] - s_pt_m.x)**2 + (calls_array[:,1] - s_pt_m.y)**2)
             dists_mi = dists / 1609.34
             
             mask_r = dists <= radius_resp_m
             mask_g = dists <= radius_guard_m
-            resp_matrix[i, :] = mask_r
-            guard_matrix[i, :] = mask_g
+            resp_matrix[idx_pos, :] = mask_r
+            guard_matrix[idx_pos, :] = mask_g
 
             full_buf_2m = s_pt_m.buffer(radius_resp_m)
             try: clipped_2m = full_buf_2m.intersection(_city_m)
@@ -533,7 +512,8 @@ def compute_elbow_curve(n_calls, _resp_matrix):
     uncovered = np.ones(n_c, dtype=bool)
     curve = [{'Drones': 0, 'Coverage %': 0.0}]
     cov_count = 0
-    for i in range(min(15, n_st)):
+    # Process until 100% coverage or all stations are used
+    for i in range(n_st):
         best_s = -1
         best_cov = -1
         for s in range(n_st):
@@ -541,14 +521,14 @@ def compute_elbow_curve(n_calls, _resp_matrix):
             if cov > best_cov:
                 best_cov = cov
                 best_s = s
-        if best_s != -1:
+        if best_s != -1 and best_cov > 0:
             uncovered = uncovered & ~_resp_matrix[best_s]
             cov_count += best_cov
             curve.append({'Drones': i+1, 'Coverage %': (cov_count / n_c) * 100})
+            if cov_count == n_c: break
         else:
             break
     return pd.DataFrame(curve)
-
 
 # --- MAIN LOGIC ---
 if st.session_state['csvs_ready']:
@@ -620,7 +600,8 @@ if st.session_state['csvs_ready']:
             if not selected_types:
                 st.warning("Please select at least one Facility Type from the sidebar.")
                 st.stop()
-            df_stations_all = df_stations_all[df_stations_all['type'].astype(str).isin(selected_types)].copy()
+            # Must reset index after filtering to prevent spatial array index crashes
+            df_stations_all = df_stations_all[df_stations_all['type'].astype(str).isin(selected_types)].copy().reset_index(drop=True)
             df_stations_all['name'] = "[" + df_stations_all['type'].astype(str) + "] " + df_stations_all['name'].astype(str)
             
     if 'priority' in df_calls.columns:
@@ -631,7 +612,7 @@ if st.session_state['csvs_ready']:
             if not selected_priorities:
                 st.warning("Please select at least one Incident Priority from the sidebar.")
                 st.stop()
-            df_calls = df_calls[df_calls['priority'].isin(selected_priorities)].copy()
+            df_calls = df_calls[df_calls['priority'].isin(selected_priorities)].copy().reset_index(drop=True)
 
     if len(df_stations_all) == 0:
         st.error("No stations match the selected filters.")
@@ -655,7 +636,6 @@ if st.session_state['csvs_ready']:
     k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
     guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
 
-    # Cache Optimization: Replaced large string hash with tiny bounding box hash
     bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{len(df_stations_all)}"
 
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
@@ -1135,30 +1115,17 @@ if st.session_state['csvs_ready']:
                 hoverinfo='skip'
             ))
 
-        for i, row in df_stations_all.iterrows():
-            s_name = row['name']
-            
-            if s_name not in active_resp_names and s_name not in active_guard_names:
-                continue
-
-            color = active_color_map[s_name]
-            short_name = s_name.split(',')[0]
-
-            if s_name in active_resp_names:
-                clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=CONFIG["RESPONDER_RANGE_MI"])
-                lbl = f"{short_name} (Resp)"
-                drive_time_min = (CONFIG["RESPONDER_RANGE_MI"] / CONFIG["RESPONDER_SPEED"]) * 60 
-            elif s_name in active_guard_names:
-                clats, clons = get_circle_coords(row['lat'], row['lon'], r_mi=guard_radius_mi)
-                lbl = f"{short_name} (Guard)"
-                drive_time_min = (guard_radius_mi / CONFIG["GUARDIAN_SPEED"]) * 60 
+        for d in active_drones:
+            clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m'] / 1609.34)
+            short_name = d['name'].split(',')[0]
+            lbl = f"{short_name} ({'Resp' if d['type'] == 'RESPONDER' else 'Guard'})"
 
             fig.add_trace(go.Scattermapbox(
-                lat=list(clats) + [None, row['lat']], 
-                lon=list(clons) + [None, row['lon']], 
+                lat=list(clats) + [None, d['lat']], 
+                lon=list(clons) + [None, d['lon']], 
                 mode='lines+markers', 
-                marker=dict(size=[0]*len(clats) + [0, 20], color=color), 
-                line=dict(color=color, width=4.5), 
+                marker=dict(size=[0]*len(clats) + [0, 20], color=d['color']), 
+                line=dict(color=d['color'], width=4.5), 
                 fill='toself', 
                 fillcolor='rgba(0,0,0,0)', 
                 name=lbl, 
@@ -1180,12 +1147,13 @@ if st.session_state['csvs_ready']:
                     t_label = "Heavy Traffic"
 
                 ground_speed_mph = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - (traffic_level / 100))
+                drive_time_min = (d['radius_m'] / 1609.34 / d['speed_mph']) * 60 
                 
                 if ground_speed_mph > 0:
                     ground_range_mi = (ground_speed_mph / 60) * drive_time_min
                     g_angles = np.linspace(0, 2*np.pi, 9) 
-                    g_lats = row['lat'] + (ground_range_mi/69.172) * np.sin(g_angles)
-                    g_lons = row['lon'] + (ground_range_mi/(69.172 * np.cos(np.radians(row['lat'])))) * np.cos(g_angles)
+                    g_lats = d['lat'] + (ground_range_mi/69.172) * np.sin(g_angles)
+                    g_lons = d['lon'] + (ground_range_mi/(69.172 * np.cos(np.radians(d['lat'])))) * np.cos(g_angles)
 
                     fig.add_trace(go.Scattermapbox(
                         lat=list(g_lats),
