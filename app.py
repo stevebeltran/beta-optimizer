@@ -50,36 +50,30 @@ if is_dark:
     legend_bg = "rgba(0, 0, 0, 0.7)"
     legend_text = "#ffffff"
     
-    # Custom CSS blocks for Dark Mode layout
+    # Highly Diversified Neon Palette (No heavy purples)
+    STATION_COLORS = [
+        "#00D2FF", # Brinc Blue
+        "#39FF14", # Neon Green
+        "#FFD700", # Cyber Yellow
+        "#FF007F", # Bright Pink
+        "#FF4500", # Orange Red
+        "#00FFCC", # Bright Cyan
+        "#FF3333", # Bright Red
+        "#7FFF00", # Chartreuse/Lime
+        "#00FFFF", # Pure Aqua
+        "#FF9900"  # Vivid Orange
+    ]
+    
+    # Custom CSS blocks for Dark Mode layout (Removed widget overrides to fix highlighting bug)
     theme_css = f"""
-    /* Overwrite Streamlit's absolute base theme variables */
-    :root, .stApp, .main {{
-        --primary-color: {accent_color} !important;
-        background-color: {bg_main} !important; 
-    }}
-    
-    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ 
-        font-family: 'Manrope', sans-serif !important; 
-        color: {text_main} !important; 
-    }}
-    
-    [data-testid="stSidebar"] {{ 
-        background-color: {bg_sidebar} !important; 
-        border-right: 1px solid {card_border}; 
-    }}
-    
-    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ 
-        color: {text_muted} !important; 
-    }}
+    .stApp, .main {{ background-color: {bg_main} !important; }}
+    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
+    [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
+    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     
     /* Metrics */
-    div[data-testid="stMetricValue"] {{ 
-        font-family: 'IBM Plex Mono', monospace !important; 
-        color: {accent_color} !important; 
-    }}
-    div[data-testid="stMetricLabel"] * {{ 
-        color: {text_muted} !important; 
-    }}
+    div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
+    div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
     
     /* Multiselect Box Darkening */
     div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
@@ -88,50 +82,14 @@ if is_dark:
     div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #ffffff !important; }}
     div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
     div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
-
-    /* ========================================= */
-    /* SURGICAL BRINC BLUE OVERRIDES (DARK MODE) */
-    /* ========================================= */
-
-    /* 1. Sliders */
-    div[data-testid="stSlider"] div[data-baseweb="slider"] div[role="slider"] {{
-        background-color: {accent_color} !important;
-        border-color: #ffffff !important;
-    }}
-    div[data-testid="stSlider"] div[data-baseweb="slider"] > div > div > div:first-of-type {{
-        background-color: {accent_color} !important;
-    }}
-    div[data-testid="stSlider"] div[data-baseweb="slider"] div[data-testid="stTickBar"] > div {{
-        background-color: {accent_color} !important;
-    }}
-
-    /* 2. Toggles */
-    div[data-testid="stToggle"] input[type="checkbox"]:checked + div {{
-        background-color: {accent_color} !important;
-    }}
-
-    /* 3. Checkboxes */
-    div[data-testid="stCheckbox"] input[type="checkbox"]:checked + div {{
-        background-color: {accent_color} !important;
-        border-color: {accent_color} !important;
-    }}
-
-    /* 4. Radio Buttons */
-    div[role="radiogroup"] [role="radio"][aria-checked="true"] > div:first-of-type {{
-        background-color: {accent_color} !important;
-        border-color: {accent_color} !important;
-    }}
-    div[role="radiogroup"] [role="radio"][aria-checked="true"] > div:first-of-type > div {{
-        background-color: {accent_color} !important;
-    }}
     """
 else:
-    # Light Mode Palette (Default Streamlit Red)
+    # Light Mode Palette
     bg_main = "#ffffff"
     bg_sidebar = "#f8f9fa"
     text_main = "#222222"
     text_muted = "#666666"
-    accent_color = "#ff4b4b" 
+    accent_color = "#ff4b4b" # Streamlit Default Red for custom cards/metrics
     
     card_bg = "#ffffff"
     card_border = "#e0e0e0"
@@ -148,12 +106,19 @@ else:
     legend_bg = "rgba(255, 255, 255, 0.9)"
     legend_text = "#333333"
     
+    # Original Light Mode Palette
+    STATION_COLORS = [
+        "#E6194B", "#3CB44B", "#4363D8", "#F58231", "#911EB4", 
+        "#800000", "#333333", "#000075", "#808000", "#9A6324"
+    ]
+    
     theme_css = f"""
     .stApp, .main {{ background-color: {bg_main} !important; }}
     html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     
+    /* Metrics */
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
     
@@ -251,20 +216,6 @@ if not st.session_state['csvs_ready']:
             
             st.session_state['csvs_ready'] = True
             st.rerun()
-
-# High-Visibility Neon Palette designed to pop on Dark/Light mode maps
-STATION_COLORS = [
-    "#00D2FF", # Brinc Blue
-    "#39FF14", # Neon Green
-    "#FF007F", # Bright Pink
-    "#FFD700", # Cyber Yellow
-    "#B026FF", # Neon Purple
-    "#FF4500", # Orange Red
-    "#00FFCC", # Bright Cyan
-    "#FF3333", # Bright Red
-    "#9D00FF", # Bright Violet
-    "#7FFF00"  # Chartreuse
-]
 
 def get_circle_coords(lat, lon, r_mi=2.0):
     angles = np.linspace(0, 2*np.pi, 100)
@@ -873,7 +824,6 @@ if st.session_state['csvs_ready']:
     # ==========================================
     active_drones = []
     fleet_capex = 0
-    dfr_dispatch_rate = 0.25 # Default 25% if sliders don't render yet
     
     with budget_placeholder:
         st.markdown("---")
@@ -983,11 +933,13 @@ if st.session_state['csvs_ready']:
                     cost = 80000
                     speed_mph = 42.0
                     avg_dist = station_metadata[idx]['avg_dist_r']
+                    radius_m = 2.0 * 1609.34
                 else:
                     cov_array = guard_matrix[idx]
                     cost = 160000
                     speed_mph = 60.0
                     avg_dist = station_metadata[idx]['avg_dist_g']
+                    radius_m = guard_radius_mi * 1609.34
                     
                 map_color = STATION_COLORS[idx % len(STATION_COLORS)]
                 
@@ -1003,7 +955,8 @@ if st.session_state['csvs_ready']:
                     'color': map_color,
                     'deploy_step': step if (idx in chrono_r or idx in chrono_g) else "MANUAL",
                     'avg_time_min': avg_time_min,
-                    'speed_mph': speed_mph
+                    'speed_mph': speed_mph,
+                    'radius_m': radius_m
                 }
                 
                 if total_calls > 0:
@@ -1324,17 +1277,18 @@ if st.session_state['csvs_ready']:
                 
                 for d in active_drones:
                     short_name = d['name'].split(',')[0]
+                    hex_c = d['color'].lstrip('#')
+                    rgb = [int(hex_c[j:j+2], 16) for j in (0, 2, 4)]
+                    
                     stations_json.append({
                         "name": short_name,
                         "lon": d['lon'],
                         "lat": d['lat'],
-                        "color": d['color']
+                        "color": rgb,
+                        "radius": d['radius_m']
                     })
                     
                     legend_html += f'<div style="margin-bottom:3px;"><span style="display:inline-block;width:10px;height:10px;background-color:{d["color"]};margin-right:8px;border-radius:50%;"></span>{short_name}</div>'
-                    
-                    hex_c = d['color'].lstrip('#')
-                    rgb = [int(hex_c[j:j+2], 16) for j in (0, 2, 4)]
                     
                     assigned_calls = d.get('assigned_indices', [])
                     num_to_simulate = int(len(assigned_calls) * dfr_dispatch_rate)
@@ -1433,6 +1387,18 @@ if st.session_state['csvs_ready']:
                         
                         function render() {{
                             const layers = [
+                                new deck.ScatterplotLayer({{
+                                    id: 'station-rings',
+                                    data: stations,
+                                    getPosition: d => [d.lon, d.lat],
+                                    getFillColor: d => [d.color[0], d.color[1], d.color[2], 30],
+                                    getLineColor: d => [d.color[0], d.color[1], d.color[2], 255],
+                                    lineWidthMinPixels: 2,
+                                    stroked: true,
+                                    filled: true,
+                                    getRadius: d => d.radius,
+                                    pickable: false
+                                }}),
                                 new deck.ScatterplotLayer({{
                                     id: 'stations',
                                     data: stations,
