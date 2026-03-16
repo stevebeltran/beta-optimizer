@@ -45,7 +45,6 @@ STATE_FIPS = {
 }
 
 # Lookup dictionary for the most common demo cities to ensure exact accuracy. 
-# If a city isn't here, the algorithm will dynamically estimate based on square mileage.
 KNOWN_POPULATIONS = {
     "New York": 8336817, "Los Angeles": 3822238, "Chicago": 2665039, "Houston": 1304379, 
     "Phoenix": 1644409, "Philadelphia": 1567258, "San Antonio": 2302878, "San Diego": 1472530, 
@@ -675,12 +674,13 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         uncovered = np.ones(n_calls, dtype=bool)
         curve = [0.0]
         cov_count = 0
+        min_gain = max(1, n_calls * 0.001) # Stop if marginal gain is less than 0.1%
         for _ in range(n_st):
             best_s, best_cov = -1, -1
             for s in range(n_st):
                 cov = (matrix[s] & uncovered).sum()
                 if cov > best_cov: best_cov, best_s = cov, s
-            if best_s != -1 and best_cov > 0:
+            if best_s != -1 and best_cov >= min_gain:
                 uncovered = uncovered & ~matrix[best_s]
                 cov_count += best_cov
                 curve.append((cov_count / max(1, n_calls)) * 100)
@@ -690,17 +690,18 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         return curve
         
     def greedy_area(geos):
-        if total_area <= 0: return [0.0] * (n_st + 1)
+        if total_area <= 0: return [0.0]
         current_union = Polygon()
         curve = [0.0]
         available = list(range(n_st))
+        min_gain = total_area * 0.001 # Stop if marginal gain is less than 0.1%
         for _ in range(n_st):
             best_s, best_poly, best_area = -1, None, -1
             for s in available:
                 cand = current_union.union(geos[s])
                 if cand.area > best_area:
                     best_area, best_poly, best_s = cand.area, cand, s
-            if best_s != -1:
+            if best_s != -1 and (best_area - current_union.area) >= min_gain:
                 current_union = best_poly
                 available.remove(best_s)
                 curve.append((current_union.area / total_area) * 100)
@@ -708,13 +709,19 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
                 break
         return curve
 
-    c_r = greedy_calls(_resp_matrix) if n_calls > 0 else [0]*(n_st+1)
-    c_g = greedy_calls(_guard_matrix) if n_calls > 0 else [0]*(n_st+1)
+    c_r = greedy_calls(_resp_matrix) if n_calls > 0 else [0.0]
+    c_g = greedy_calls(_guard_matrix) if n_calls > 0 else [0.0]
     a_r = greedy_area(_geos_r)
     a_g = greedy_area(_geos_g)
     
     max_len = max(len(c_r), len(c_g), len(a_r), len(a_g))
-    def pad(c): return c + [c[-1]] * (max_len - len(c)) if c else [0]*max_len
+    
+    # Fill with 'None' instead of repeating values, so Plotly naturally stops drawing the line
+    def pad(c):
+        res = list(c)
+        while len(res) < max_len:
+            res.append(None)
+        return res
     
     return pd.DataFrame({
         'Drones': range(max_len),
