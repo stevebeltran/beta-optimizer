@@ -41,8 +41,32 @@ STATE_FIPS = {
     "NH": "33", "NJ": "34", "NM": "35", "NY": "36", "NC": "37", "ND": "38", "OH": "39",
     "OK": "40", "OR": "41", "PA": "42", "RI": "44", "SC": "45", "SD": "46", "TN": "47",
     "TX": "48", "UT": "49", "VT": "50", "VA": "51", "WA": "53", "WV": "54", "WI": "55",
-    "WY": "56"
+    "WY": "56", "DC": "11"
 }
+
+# Top 100 US Cities for Predictive Autocomplete
+MAJOR_US_CITIES = [
+    "New York, NY", "Los Angeles, CA", "Chicago, IL", "Houston, TX", "Phoenix, AZ", 
+    "Philadelphia, PA", "San Antonio, TX", "San Diego, CA", "Dallas, TX", "Austin, TX", 
+    "Jacksonville, FL", "San Jose, CA", "Fort Worth, TX", "Columbus, OH", "Charlotte, NC", 
+    "Indianapolis, IN", "San Francisco, CA", "Seattle, WA", "Denver, CO", "Washington, DC", 
+    "Boston, MA", "El Paso, TX", "Nashville, TN", "Oklahoma City, OK", "Las Vegas, NV", 
+    "Portland, OR", "Detroit, MI", "Memphis, TN", "Louisville, KY", "Milwaukee, WI", 
+    "Baltimore, MD", "Albuquerque, NM", "Tucson, AZ", "Fresno, CA", "Sacramento, CA", 
+    "Kansas City, MO", "Mesa, AZ", "Atlanta, GA", "Omaha, NE", "Colorado Springs, CO", 
+    "Raleigh, NC", "Miami, FL", "Virginia Beach, VA", "Oakland, CA", "Minneapolis, MN", 
+    "Tulsa, OK", "Bakersfield, CA", "Tampa, FL", "Wichita, KS", "Arlington, TX", 
+    "Aurora, CO", "New Orleans, LA", "Cleveland, OH", "Anaheim, CA", "Honolulu, HI", 
+    "Henderson, NV", "Stockton, CA", "Riverside, CA", "Lexington, KY", "Corpus Christi, TX", 
+    "Orlando, FL", "Irvine, CA", "Cincinnati, OH", "Santa Ana, CA", "Newark, NJ", 
+    "St. Paul, MN", "Pittsburgh, PA", "Greensboro, NC", "Lincoln, NE", "Plano, TX", 
+    "Anchorage, AK", "Durham, NC", "Jersey City, NJ", "Chandler, AZ", "Chula Vista, CA", 
+    "Buffalo, NY", "North Las Vegas, NV", "Gilbert, AZ", "Madison, WI", "Reno, NV", 
+    "Toledo, OH", "Fort Wayne, IN", "Lubbock, TX", "St. Petersburg, FL", "Laredo, TX", 
+    "Irving, TX", "Chesapeake, VA", "Glendale, AZ", "Winston-Salem, NC", "Scottsdale, AZ", 
+    "Garland, TX", "Boise, ID", "Norfolk, VA", "Spokane, WA", "Fremont, CA", 
+    "Richmond, VA", "Santa Clarita, CA", "Baton Rouge, LA", "Des Moines, IA"
+]
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide")
@@ -210,6 +234,7 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
     return False, None
 
 def generate_random_points_in_polygon(polygon, num_points):
+    """Fast procedural generator for random points strictly inside a complex geometry"""
     points = []
     minx, miny, maxx, maxy = polygon.bounds
     while len(points) < num_points:
@@ -225,46 +250,56 @@ def generate_random_points_in_polygon(polygon, num_points):
 # --- MAIN UPLOAD & VALIDATION SECTION ---
 if not st.session_state['csvs_ready']:
     
-    st.markdown("### 🚀 Load Synthetic Demo Dataset")
-    st.write("No data? No problem. Enter any major US city to instantly fetch its federal census boundaries and generate a simulated 911 call history and fire station network.")
+    st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
     
-    with st.form("demo_city_form"):
-        col1, col2 = st.columns([3, 1])
-        input_city = col1.text_input("Enter City Name (e.g., Dallas, Orlando, Seattle)", value="Orlando")
-        input_state = col2.selectbox("State", list(STATE_FIPS.keys()), index=8) # FL Default
-        submit_demo = st.form_submit_button("🚀 Simulate City")
+    with st.expander("🚀 Load Synthetic Demo Dataset", expanded=True):
+        st.write("Generate a simulated 911 call history and fire station network for any major US City.")
         
-    if submit_demo:
-        with st.spinner(f"Fetching TIGER boundary data for {input_city}, {input_state} from US Census Bureau..."):
-            success, active_city_gdf = fetch_tiger_city_shapefile(STATE_FIPS[input_state], input_city, SHAPEFILE_DIR)
+        with st.form("demo_city_form"):
+            selected_place = st.selectbox(
+                "Search US City (Type to autocomplete)", 
+                options=sorted(MAJOR_US_CITIES),
+                index=sorted(MAJOR_US_CITIES).index("Orlando, FL")
+            )
+            submit_demo = st.form_submit_button("🚀 Simulate City")
             
-        if not success:
-            st.error(f"Could not find a Census boundary for '{input_city}' in {input_state}. Try checking spelling or using a major city.")
-        else:
-            with st.spinner("Procedurally generating 100% coverage flight geometry..."):
-                np.random.seed(42)
-                city_poly = active_city_gdf.geometry.union_all()
+        if submit_demo:
+            city_name, state_abbr = selected_place.split(", ")
+            with st.spinner(f"Fetching TIGER boundary data for {city_name}, {state_abbr} from US Census Bureau..."):
+                success, active_city_gdf = fetch_tiger_city_shapefile(STATE_FIPS[state_abbr], city_name, SHAPEFILE_DIR)
                 
-                call_points = generate_random_points_in_polygon(city_poly, 5000)
-                st.session_state['df_calls'] = pd.DataFrame({
-                    'lat': [p[0] for p in call_points], 
-                    'lon': [p[1] for p in call_points], 
-                    'priority': np.random.choice(['High', 'Medium', 'Low'], 5000)
-                })
-                
-                station_points = generate_random_points_in_polygon(city_poly, 80)
-                types = ['Police', 'Fire', 'EMS'] * 30
-                st.session_state['df_stations'] = pd.DataFrame({
-                    'name': [f'Station {i+1}' for i in range(len(station_points))],
-                    'lat': [p[0] for p in station_points], 
-                    'lon': [p[1] for p in station_points],
-                    'type': types[:len(station_points)]
-                })
-                st.session_state['csvs_ready'] = True
-                st.rerun()
+            if not success:
+                st.error(f"Could not find a Census boundary for '{city_name}'. Please try another city.")
+            else:
+                with st.spinner("Procedurally generating 100% coverage flight geometry..."):
+                    np.random.seed(42)
+                    city_poly = active_city_gdf.geometry.union_all()
+                    
+                    # Center mathematically on the imported shapefile
+                    center_lat = city_poly.centroid.y
+                    center_lon = city_poly.centroid.x
+                    
+                    # Distribute 5000 calls uniformly strictly INSIDE the city limits
+                    call_points = generate_random_points_in_polygon(city_poly, 5000)
+                    st.session_state['df_calls'] = pd.DataFrame({
+                        'lat': [p[0] for p in call_points], 
+                        'lon': [p[1] for p in call_points], 
+                        'priority': np.random.choice(['High', 'Medium', 'Low'], 5000)
+                    })
+                    
+                    # Scatter 80 random stations across the city to allow the user to slide to 100%
+                    station_points = generate_random_points_in_polygon(city_poly, 80)
+                    types = ['Police', 'Fire', 'EMS'] * 30
+                    st.session_state['df_stations'] = pd.DataFrame({
+                        'name': [f'Station {i+1}' for i in range(len(station_points))],
+                        'lat': [p[0] for p in station_points], 
+                        'lon': [p[1] for p in station_points],
+                        'type': types[:len(station_points)]
+                    })
+                    st.session_state['csvs_ready'] = True
+                    st.rerun()
 
-    st.markdown("---")
-    st.info("📁 Or upload your own 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
+    st.markdown("<br>", unsafe_allow_html=True)
     uploaded_files = st.file_uploader("Upload Mission Data", accept_multiple_files=True)
     call_file, station_file = None, None
     
@@ -614,28 +649,13 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
     a_r = greedy_area(_geos_r)
     a_g = greedy_area(_geos_g)
     
-    df_full = pd.DataFrame({
+    return pd.DataFrame({
         'Drones': range(n_st + 1),
         'Responder (Calls)': c_r[:n_st+1],
         'Responder (Area)': a_r[:n_st+1],
         'Guardian (Calls)': c_g[:n_st+1],
         'Guardian (Area)': a_g[:n_st+1]
     })
-    
-    # --- SMART TRUNCATION LOGIC (1.0% Marginal Gain Threshold) ---
-    if len(df_full) > 2:
-        diffs = df_full.drop(columns=['Drones']).diff()
-        significant_steps = (diffs >= 1.0).any(axis=1)
-        
-        if significant_steps.any():
-            # Find the index of the absolute last drone addition that yielded >= 1% gain
-            last_sig_idx = significant_steps[significant_steps].index[-1]
-            
-            # Slice the dataframe to show the curve just as it goes completely flat
-            cutoff_idx = min(last_sig_idx + 2, len(df_full))
-            df_full = df_full.iloc[:cutoff_idx]
-            
-    return df_full
 
 # --- MAIN LOGIC ---
 if st.session_state['csvs_ready']:
@@ -737,7 +757,9 @@ if st.session_state['csvs_ready']:
     opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
     
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
-    k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
+    
+    # Cap the responder slider to a maximum of 15 drones (or n if n is smaller)
+    k_responder = st.sidebar.slider("🚁 Responder Count", 0, min(15, n), min(1, n))
     k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
     guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
 
@@ -1406,7 +1428,9 @@ if st.session_state['csvs_ready']:
                 
                 calls_coords = np.column_stack((calls_in_city['lon'], calls_in_city['lat']))
                 
-                # --- RESTRICTED NEAREST NEIGHBOR DISPATCH SIMULATION ---
+                # --- STRICTLY CONSTRAINED DISPATCH SIMULATION ---
+                # A drone will ONLY respond to calls mathematically within its exact coverage ring.
+                # If a call overlaps multiple rings, it routes to the closest one.
                 sim_assignments = {i: [] for i in range(len(active_drones))}
                 for c_idx, call_coord in enumerate(calls_coords):
                     best_d_idx = -1
