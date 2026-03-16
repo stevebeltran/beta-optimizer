@@ -33,7 +33,6 @@ CONFIG = {
     "GUARDIAN_SPEED": 60.0         
 }
 
-# Federal Information Processing Standard (FIPS) mapping for the US Census API
 STATE_FIPS = {
     "AL": "01", "AK": "02", "AZ": "04", "AR": "05", "CA": "06", "CO": "08", "CT": "09",
     "DE": "10", "FL": "12", "GA": "13", "HI": "15", "ID": "16", "IL": "17", "IN": "18",
@@ -211,7 +210,6 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
     return False, None
 
 def generate_random_points_in_polygon(polygon, num_points):
-    """Fast procedural generator for random points strictly inside a complex geometry"""
     points = []
     minx, miny, maxx, maxy = polygon.bounds
     while len(points) < num_points:
@@ -247,7 +245,6 @@ if not st.session_state['csvs_ready']:
                 np.random.seed(42)
                 city_poly = active_city_gdf.geometry.union_all()
                 
-                # Distribute 5000 calls uniformly strictly INSIDE the city limits
                 call_points = generate_random_points_in_polygon(city_poly, 5000)
                 st.session_state['df_calls'] = pd.DataFrame({
                     'lat': [p[0] for p in call_points], 
@@ -255,7 +252,6 @@ if not st.session_state['csvs_ready']:
                     'priority': np.random.choice(['High', 'Medium', 'Low'], 5000)
                 })
                 
-                # Scatter 80 random stations across the city to allow the user to slide to 100%
                 station_points = generate_random_points_in_polygon(city_poly, 80)
                 types = ['Police', 'Fire', 'EMS'] * 30
                 st.session_state['df_stations'] = pd.DataFrame({
@@ -618,13 +614,28 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
     a_r = greedy_area(_geos_r)
     a_g = greedy_area(_geos_g)
     
-    return pd.DataFrame({
+    df_full = pd.DataFrame({
         'Drones': range(n_st + 1),
         'Responder (Calls)': c_r[:n_st+1],
         'Responder (Area)': a_r[:n_st+1],
         'Guardian (Calls)': c_g[:n_st+1],
         'Guardian (Area)': a_g[:n_st+1]
     })
+    
+    # --- SMART TRUNCATION LOGIC (1.0% Marginal Gain Threshold) ---
+    if len(df_full) > 2:
+        diffs = df_full.drop(columns=['Drones']).diff()
+        significant_steps = (diffs >= 1.0).any(axis=1)
+        
+        if significant_steps.any():
+            # Find the index of the absolute last drone addition that yielded >= 1% gain
+            last_sig_idx = significant_steps[significant_steps].index[-1]
+            
+            # Slice the dataframe to show the curve just as it goes completely flat
+            cutoff_idx = min(last_sig_idx + 2, len(df_full))
+            df_full = df_full.iloc[:cutoff_idx]
+            
+    return df_full
 
 # --- MAIN LOGIC ---
 if st.session_state['csvs_ready']:
@@ -1396,13 +1407,11 @@ if st.session_state['csvs_ready']:
                 calls_coords = np.column_stack((calls_in_city['lon'], calls_in_city['lat']))
                 
                 # --- RESTRICTED NEAREST NEIGHBOR DISPATCH SIMULATION ---
-                # A call is assigned to the closest drone station that ACTUALLY covers it.
                 sim_assignments = {i: [] for i in range(len(active_drones))}
                 for c_idx, call_coord in enumerate(calls_coords):
                     best_d_idx = -1
                     min_dist = float('inf')
                     for d_idx, d in enumerate(active_drones):
-                        # Only allow the drone to respond if the call is within its mathematical coverage ring
                         if d['cov_array'][c_idx]:
                             dist = (call_coord[0] - d['lon'])**2 + (call_coord[1] - d['lat'])**2
                             if dist < min_dist:
