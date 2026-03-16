@@ -25,7 +25,6 @@ import streamlit.components.v1 as components
 CONFIG = {
     "RESPONDER_COST": 80000,
     "GUARDIAN_COST": 160000,
-    "RESPONDER_RANGE_MI": 2.0,
     "OFFICER_COST_PER_CALL": 82,
     "DRONE_COST_PER_CALL": 6,
     "DEFAULT_TRAFFIC_SPEED": 35.0, 
@@ -232,7 +231,6 @@ def generate_clustered_calls(polygon, num_points):
     points = []
     minx, miny, maxx, maxy = polygon.bounds
     
-    # 1. Establish 5 to 15 hotspots depending on city size
     num_hotspots = random.randint(5, 15)
     hotspots = []
     while len(hotspots) < num_hotspots:
@@ -240,16 +238,13 @@ def generate_clustered_calls(polygon, num_points):
         if polygon.contains(Point(hx, hy)):
             hotspots.append((hx, hy))
             
-    # 2. Distribute 75% of calls into tight Gaussian clusters around the hotspots
     target_clustered = int(num_points * 0.75)
     while len(points) < target_clustered:
         hx, hy = random.choice(hotspots)
-        # Standard deviation of ~0.02 degrees (approx 1.5 miles)
         px, py = np.random.normal(hx, 0.02), np.random.normal(hy, 0.02)
         if polygon.contains(Point(px, py)):
-            points.append((py, px)) # Return Lat, Lon
+            points.append((py, px)) 
             
-    # 3. Distribute the remaining 25% uniformly to test edge coverage
     while len(points) < num_points:
         px, py = random.uniform(minx, maxx), random.uniform(miny, maxy)
         if polygon.contains(Point(px, py)):
@@ -282,15 +277,12 @@ if not st.session_state['csvs_ready']:
                 with st.spinner("Calculating population density and call volume..."):
                     city_poly = active_city_gdf.geometry.union_all()
                     
-                    # Convert to Web Mercator to calculate physical Square Miles
                     gdf_proj = active_city_gdf.to_crs(epsg=3857)
                     area_sq_mi = gdf_proj.geometry.area.sum() / 2589988.11
                     
-                    # Estimate Population and Annual Calls
                     estimated_pop = KNOWN_POPULATIONS.get(input_city, int(area_sq_mi * 3500))
-                    annual_cfs = int(estimated_pop * 0.6) # National avg ~0.6 calls per person per year
+                    annual_cfs = int(estimated_pop * 0.6) 
                     
-                    # Simulate 1 Month of data to prevent browser crash (capped at 25,000 points)
                     simulated_points_count = min(int(annual_cfs / 12), 25000)
                     
                     st.toast(f"Estimated Population: {estimated_pop:,} | Simulated Monthly Calls: {simulated_points_count:,}")
@@ -305,7 +297,6 @@ if not st.session_state['csvs_ready']:
                     })
                     
                 with st.spinner("Generating optimal 100% coverage station grid..."):
-                    # Map an automatic grid every 3.5 miles across the polygon
                     bounds = city_poly.bounds
                     s_lons = np.arange(bounds[0] + 0.01, bounds[2], 0.045)
                     s_lats = np.arange(bounds[1] + 0.01, bounds[3], 0.045)
@@ -367,7 +358,7 @@ if not st.session_state['csvs_ready']:
             st.session_state['csvs_ready'] = True
             st.rerun()
 
-def get_circle_coords(lat, lon, r_mi=2.0):
+def get_circle_coords(lat, lon, r_mi):
     angles = np.linspace(0, 2*np.pi, 100)
     c_lats = lat + (r_mi/69.172) * np.sin(angles)
     c_lons = lon + (r_mi/(69.172 * np.cos(np.radians(lat)))) * np.cos(angles)
@@ -491,14 +482,14 @@ def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
     return master_gdf
 
 @st.cache_resource
-def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, guard_radius_mi, bounds_hash):
+def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, bounds_hash):
     gdf_calls = gpd.GeoDataFrame(df_calls, geometry=gpd.points_from_xy(df_calls.lon, df_calls.lat), crs="EPSG:4326")
     gdf_calls_utm = gdf_calls.to_crs(epsg=epsg_code)
     
     try: calls_in_city = gdf_calls_utm[gdf_calls_utm.within(_city_m)]
     except: calls_in_city = gdf_calls_utm
         
-    radius_resp_m = CONFIG["RESPONDER_RANGE_MI"] * 1609.34
+    radius_resp_m = resp_radius_mi * 1609.34
     radius_guard_m = guard_radius_mi * 1609.34 
     
     station_metadata = []
@@ -529,7 +520,7 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, guard
             try: clipped_guard = full_buf_guard.intersection(_city_m)
             except: clipped_guard = full_buf_guard
             
-            avg_dist_r = dists_mi[mask_r].mean() if mask_r.any() else (CONFIG["RESPONDER_RANGE_MI"] * (2/3))
+            avg_dist_r = dists_mi[mask_r].mean() if mask_r.any() else (resp_radius_mi * (2/3))
             avg_dist_g = dists_mi[mask_g].mean() if mask_g.any() else (guard_radius_mi * (2/3))
                 
             station_metadata.append({
@@ -787,15 +778,18 @@ if st.session_state['csvs_ready']:
     opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
     
     st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
+    
     k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
+    resp_radius_mi = st.sidebar.slider("🚁 Responder Range (Miles)", 2.0, 3.0, 2.0, step=0.5)
+    
     k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
     guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
 
-    bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{len(df_stations_all)}"
+    bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{len(df_stations_all)}_{resp_radius_mi}_{guard_radius_mi}"
 
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
         calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls = precompute_spatial_data(
-            df_calls, df_stations_all, city_m, epsg_code, guard_radius_mi, bounds_hash
+            df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, bounds_hash
         )
 
     max_dist = max([((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5 for s in station_metadata])
@@ -1069,7 +1063,7 @@ if st.session_state['csvs_ready']:
                 st.markdown(f"""
                 <div style="background-color: {card_bg}; border: 1px solid {card_border}; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
                     <h5 style="color: {text_main}; margin: 0 0 4px 0; font-size: 0.85rem;">RESPONDER <span style="color:{text_muted}; font-weight:normal;">(x{actual_k_responder})</span></h5>
-                    <div style="color: {text_muted}; font-size: 0.75rem;">COVERAGE: <span style="color:{text_main}; font-weight:600;">{CONFIG["RESPONDER_RANGE_MI"]} MI RADIUS</span></div>
+                    <div style="color: {text_muted}; font-size: 0.75rem;">COVERAGE: <span style="color:{text_main}; font-weight:600;">{resp_radius_mi} MI RADIUS</span></div>
                     <div style="color: {text_muted}; font-size: 0.75rem;">UNIT CAPEX: <span style="color:{text_main}; font-weight:600;">${CONFIG["RESPONDER_COST"]:,.0f}</span></div>
                     <div style="color: {text_muted}; font-size: 0.75rem; margin-top: 4px; border-top: 1px solid {card_border}; padding-top: 4px;">SUBTOTAL: <span style="color:{text_main}; font-weight:600;">${capex_responder_total:,.0f}</span></div>
                 </div>
@@ -1094,7 +1088,7 @@ if st.session_state['csvs_ready']:
                     cost = CONFIG["RESPONDER_COST"]
                     speed_mph = CONFIG["RESPONDER_SPEED"]
                     avg_dist = station_metadata[idx]['avg_dist_r']
-                    radius_m = CONFIG["RESPONDER_RANGE_MI"] * 1609.34
+                    radius_m = resp_radius_mi * 1609.34
                 else:
                     cov_array = guard_matrix[idx]
                     cost = CONFIG["GUARDIAN_COST"]
@@ -1184,9 +1178,9 @@ if st.session_state['csvs_ready']:
             eval_speed = CONFIG["GUARDIAN_SPEED"]
             gain_label = f"Efficiency Gain ({guard_radius_mi}-mi)"
         else:
-            eval_dist = CONFIG["RESPONDER_RANGE_MI"]
+            eval_dist = resp_radius_mi
             eval_speed = CONFIG["RESPONDER_SPEED"]
-            gain_label = f"Efficiency Gain ({CONFIG['RESPONDER_RANGE_MI']}-mi)"
+            gain_label = f"Efficiency Gain ({resp_radius_mi}-mi)"
 
         avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - (traffic_level / 100))
         
@@ -1458,11 +1452,13 @@ if st.session_state['csvs_ready']:
                 calls_coords = np.column_stack((calls_in_city['lon'], calls_in_city['lat']))
                 
                 # --- RESTRICTED NEAREST NEIGHBOR DISPATCH SIMULATION ---
+                # A call is assigned to the closest drone station that ACTUALLY covers it.
                 sim_assignments = {i: [] for i in range(len(active_drones))}
                 for c_idx, call_coord in enumerate(calls_coords):
                     best_d_idx = -1
                     min_dist = float('inf')
                     for d_idx, d in enumerate(active_drones):
+                        # Only allow the drone to respond if the call is within its mathematical coverage ring
                         if d['cov_array'][c_idx]:
                             dist = (call_coord[0] - d['lon'])**2 + (call_coord[1] - d['lat'])**2
                             if dist < min_dist:
