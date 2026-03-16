@@ -33,6 +33,17 @@ CONFIG = {
     "GUARDIAN_SPEED": 60.0         
 }
 
+STATE_FIPS = {
+    "AL": "01", "AK": "02", "AZ": "04", "AR": "05", "CA": "06", "CO": "08", "CT": "09",
+    "DE": "10", "FL": "12", "GA": "13", "HI": "15", "ID": "16", "IL": "17", "IN": "18",
+    "IA": "19", "KS": "20", "KY": "21", "LA": "22", "ME": "23", "MD": "24", "MA": "25",
+    "MI": "26", "MN": "27", "MS": "28", "MO": "29", "MT": "30", "NE": "31", "NV": "32",
+    "NH": "33", "NJ": "34", "NM": "35", "NY": "36", "NC": "37", "ND": "38", "OH": "39",
+    "OK": "40", "OR": "41", "PA": "42", "RI": "44", "SC": "45", "SD": "46", "TN": "47",
+    "TX": "48", "UT": "49", "VT": "50", "VA": "51", "WA": "53", "WV": "54", "WI": "55",
+    "WY": "56"
+}
+
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide")
 
@@ -192,11 +203,25 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         if not city_gdf.empty:
             save_path = os.path.join(output_dir, f"{city_name.replace(' ', '_')}_{state_fips}.shp")
             city_gdf.to_file(save_path)
-            return True
+            return True, city_gdf
     except Exception as e:
         print(f"Failed to fetch TIGER shapefile: {e}")
-        return False
-    return False
+        return False, None
+    return False, None
+
+def generate_random_points_in_polygon(polygon, num_points):
+    """Fast procedural generator for random points strictly inside a complex geometry"""
+    points = []
+    minx, miny, maxx, maxy = polygon.bounds
+    while len(points) < num_points:
+        x_coords = np.random.uniform(minx, maxx, 1000)
+        y_coords = np.random.uniform(miny, maxy, 1000)
+        for x, y in zip(x_coords, y_coords):
+            if len(points) >= num_points:
+                break
+            if polygon.contains(Point(x, y)):
+                points.append((y, x))
+    return points
 
 # --- MAIN UPLOAD & VALIDATION SECTION ---
 if not st.session_state['csvs_ready']:
@@ -204,40 +229,44 @@ if not st.session_state['csvs_ready']:
     st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
     
     with st.expander("🚀 Load Synthetic Demo Dataset", expanded=True):
-        st.write("Generate a simulated 911 call history and fire station network for a major US City.")
+        st.write("Generate a simulated 911 call history and fire station network for any major US City.")
         
-        demo_cities = {
-            "Colorado Springs, CO": {"lat": 38.8339, "lon": -104.8214, "state_fips": "08", "city_name": "Colorado Springs"},
-            "Austin, TX": {"lat": 30.2672, "lon": -97.7431, "state_fips": "48", "city_name": "Austin"},
-            "Nashville, TN": {"lat": 36.1627, "lon": -86.7816, "state_fips": "47", "city_name": "Nashville"},
-            "Charlotte, NC": {"lat": 35.2271, "lon": -80.8431, "state_fips": "37", "city_name": "Charlotte"},
-            "Raleigh, NC": {"lat": 35.7796, "lon": -78.6382, "state_fips": "37", "city_name": "Raleigh"}
-        }
-        
-        selected_city = st.selectbox("Select Demo City", list(demo_cities.keys()))
-        
-        if st.button(f"Simulate {selected_city}"):
-            with st.spinner(f"Fetching TIGER boundary data for {selected_city} from US Census Bureau..."):
-                city_data = demo_cities[selected_city]
-                fetch_tiger_city_shapefile(city_data["state_fips"], city_data["city_name"], SHAPEFILE_DIR)
+        with st.form("demo_city_form"):
+            col1, col2 = st.columns([3, 1])
+            input_city = col1.text_input("Enter City Name (e.g., Dallas, Orlando, Seattle)", value="Orlando")
+            input_state = col2.selectbox("State", list(STATE_FIPS.keys()), index=8) # FL Default
+            submit_demo = st.form_submit_button("🚀 Simulate City")
+            
+        if submit_demo:
+            with st.spinner(f"Fetching TIGER boundary data for {input_city}, {input_state} from US Census Bureau..."):
+                success, active_city_gdf = fetch_tiger_city_shapefile(STATE_FIPS[input_state], input_city, SHAPEFILE_DIR)
                 
-            with st.spinner("Generating simulated flight geometry..."):
-                np.random.seed(42)
-                center_lat, center_lon = city_data["lat"], city_data["lon"]
-                
-                c_lat = np.random.normal(center_lat, 0.04, 5000)
-                c_lon = np.random.normal(center_lon, 0.04, 5000)
-                st.session_state['df_calls'] = pd.DataFrame({'lat': c_lat, 'lon': c_lon, 'priority': np.random.choice(['High', 'Medium', 'Low'], 5000)})
-                
-                s_lat = center_lat + np.array([0, 0.03, -0.03, 0.03, -0.03, 0.06, -0.06, 0, 0, 0.04, -0.04, 0.05, -0.05])
-                s_lon = center_lon + np.array([0, 0.03, -0.03, -0.03, 0.03, 0, 0, 0.06, -0.06, 0.04, -0.04, -0.02, 0.02])
-                st.session_state['df_stations'] = pd.DataFrame({
-                    'name': [f'Station {i+1}' for i in range(13)],
-                    'lat': s_lat, 'lon': s_lon,
-                    'type': ['Police', 'Fire', 'EMS'] * 4 + ['Police']
-                })
-                st.session_state['csvs_ready'] = True
-                st.rerun()
+            if not success:
+                st.error(f"Could not find a Census boundary for '{input_city}' in {input_state}. Try checking spelling or using a major city.")
+            else:
+                with st.spinner("Procedurally generating 100% coverage flight geometry..."):
+                    np.random.seed(42)
+                    city_poly = active_city_gdf.geometry.union_all()
+                    
+                    # Distribute 5000 calls uniformly strictly INSIDE the city limits
+                    call_points = generate_random_points_in_polygon(city_poly, 5000)
+                    st.session_state['df_calls'] = pd.DataFrame({
+                        'lat': [p[0] for p in call_points], 
+                        'lon': [p[1] for p in call_points], 
+                        'priority': np.random.choice(['High', 'Medium', 'Low'], 5000)
+                    })
+                    
+                    # Scatter 80 random stations across the city to allow the user to slide to 100%
+                    station_points = generate_random_points_in_polygon(city_poly, 80)
+                    types = ['Police', 'Fire', 'EMS'] * 30
+                    st.session_state['df_stations'] = pd.DataFrame({
+                        'name': [f'Station {i+1}' for i in range(len(station_points))],
+                        'lat': [p[0] for p in station_points], 
+                        'lon': [p[1] for p in station_points],
+                        'type': types[:len(station_points)]
+                    })
+                    st.session_state['csvs_ready'] = True
+                    st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
     uploaded_files = st.file_uploader("Upload Mission Data", accept_multiple_files=True)
