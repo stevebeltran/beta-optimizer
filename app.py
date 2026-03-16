@@ -56,7 +56,7 @@ KNOWN_POPULATIONS = {
     "Portland": 635067, "Las Vegas": 656274, "Detroit": 620376, "Memphis": 633104, 
     "Louisville": 628594, "Baltimore": 620961, "Milwaukee": 620251, "Albuquerque": 677122, 
     "Tucson": 564559, "Fresno": 677102, "Sacramento": 808418, "Kansas City": 697738, 
-    "Mesa": 549701, "Atlanta": 499127, "Omaha": 508901, "Colorado Springs": 483956, 
+    "Mesa": 504258, "Atlanta": 499127, "Omaha": 508901, "Colorado Springs": 483956, 
     "Raleigh": 476587, "Miami": 449514, "Virginia Beach": 455369, "Oakland": 530763, 
     "Minneapolis": 563332, "Tulsa": 547239, "Arlington": 398654, "New Orleans": 562503, 
     "Wichita": 402263, "Cleveland": 900000, "Tampa": 449514, "Orlando": 316081
@@ -203,17 +203,27 @@ if not st.session_state['csvs_ready']:
                 count += 1
             st.success(f"Saved {count} map files to library!")
 
-# --- CENSUS TIGER SHAPEFILE & API FETCHER ---
+# --- STRICT CENSUS API FETCHER ---
 @st.cache_data
 def fetch_census_population(state_fips, place_name):
-    """Queries the live US Census API for the exact population of the requested city."""
+    """Queries the live US Census API for exact population using STRICT matching."""
     url = f"https://api.census.gov/data/2020/dec/pl?get=P1_001N,NAME&for=place:*&in=state:{state_fips}"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req) as response:
             data = json.loads(response.read().decode('utf-8'))
+            search_name = place_name.lower().strip()
+            
             for row in data[1:]:
-                if place_name.lower() in row[1].lower().split(',')[0]:
+                # Extract the base place name (e.g. "Mesa city, Arizona" -> "mesa city")
+                place_full = row[1].lower().split(',')[0].strip()
+                
+                # Check 1: Is it an exact match to what the user typed?
+                if place_full == search_name:
+                    return int(row[0])
+                
+                # Check 2: Does it start with the word + a space? (Prevents "Mesa" matching "Second Mesa")
+                elif place_full.startswith(search_name + " "):
                     return int(row[0])
     except Exception:
         pass
@@ -221,7 +231,7 @@ def fetch_census_population(state_fips, place_name):
 
 @st.cache_data
 def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
-    """Downloads, unzips, and extracts strict boundary shapefiles from the Census TIGER database."""
+    """Downloads strict boundary shapefiles from the Census TIGER database."""
     url = f"https://www2.census.gov/geo/tiger/TIGER2023/PLACE/tl_2023_{state_fips}_place.zip"
     try:
         req = urllib.request.urlopen(url)
@@ -233,13 +243,18 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         shp_path = glob.glob(os.path.join(temp_dir, "*.shp"))[0]
         gdf = gpd.read_file(shp_path)
         
-        exact_mask = gdf['NAME'].str.lower() == city_name.lower()
+        search_name = city_name.lower().strip()
+        
+        # 1. Try Strict Exact Match first
+        exact_mask = gdf['NAME'].str.lower().str.strip() == search_name
         if exact_mask.any():
             city_gdf = gdf[exact_mask]
         else:
-            city_gdf = gdf[gdf['NAME'].str.contains(city_name, case=False, na=False)]
+            # 2. Fallback to contains if user spelled it strangely
+            city_gdf = gdf[gdf['NAME'].str.lower().str.contains(search_name, case=False, na=False)]
         
         if not city_gdf.empty:
+            # Dissolve multipolygons to prevent the 50/50 jurisdiction split bug
             city_gdf = city_gdf.dissolve(by='NAME').reset_index()
             save_path = os.path.join(output_dir, f"{city_name.replace(' ', '_')}_{state_fips}.shp")
             city_gdf.to_file(save_path)
@@ -268,20 +283,22 @@ def generate_clustered_calls(polygon, num_points):
     points = []
     minx, miny, maxx, maxy = polygon.bounds
     
-    num_hotspots = random.randint(5, 12)
+    num_hotspots = random.randint(5, 15)
     hotspots = []
     while len(hotspots) < num_hotspots:
         hx, hy = random.uniform(minx, maxx), random.uniform(miny, maxy)
         if polygon.contains(Point(hx, hy)):
             hotspots.append((hx, hy))
             
-    target_clustered = int(num_points * 0.60)
+    # 75% of calls heavily clustered in "downtown" hotspots
+    target_clustered = int(num_points * 0.75)
     while len(points) < target_clustered:
         hx, hy = random.choice(hotspots)
         px, py = np.random.normal(hx, 0.02), np.random.normal(hy, 0.02)
         if polygon.contains(Point(px, py)):
             points.append((py, px)) 
             
+    # 25% uniformly distributed to hit the edges and test 100% coverage map
     while len(points) < num_points:
         px, py = random.uniform(minx, maxx), random.uniform(miny, maxy)
         if polygon.contains(Point(px, py)):
@@ -321,7 +338,7 @@ if not st.session_state['csvs_ready']:
                     else:
                         gdf_proj = active_city_gdf.to_crs(epsg=3857)
                         area_sq_mi = gdf_proj.geometry.area.sum() / 2589988.11
-                        estimated_pop = int(area_sq_mi * 3500)
+                        estimated_pop = KNOWN_POPULATIONS.get(input_city, int(area_sq_mi * 3500))
                         st.toast(f"⚠️ Census API unavailable. Estimated Population: {estimated_pop:,}")
                         
                     annual_cfs = int(estimated_pop * 0.6) 
@@ -337,8 +354,9 @@ if not st.session_state['csvs_ready']:
                     })
                     
                 with st.spinner("Distributing municipal infrastructure grid..."):
-                    station_points = generate_random_points_in_polygon(city_poly, 100)
-                    types = ['Police', 'Fire', 'EMS'] * 34
+                    # Scatter 80 stations dynamically so the user can easily reach 100% coverage
+                    station_points = generate_random_points_in_polygon(city_poly, 80)
+                    types = ['Police', 'Fire', 'EMS'] * 30
                     st.session_state['df_stations'] = pd.DataFrame({
                         'name': [f'Station {i+1}' for i in range(len(station_points))],
                         'lat': [p[0] for p in station_points], 
@@ -1489,13 +1507,11 @@ if st.session_state['csvs_ready']:
                 calls_coords = np.column_stack((calls_in_city['lon'], calls_in_city['lat']))
                 
                 # --- RESTRICTED NEAREST NEIGHBOR DISPATCH SIMULATION ---
-                # A call is assigned to the closest drone station that ACTUALLY covers it.
                 sim_assignments = {i: [] for i in range(len(active_drones))}
                 for c_idx, call_coord in enumerate(calls_coords):
                     best_d_idx = -1
                     min_dist = float('inf')
                     for d_idx, d in enumerate(active_drones):
-                        # Only allow the drone to respond if the call is within its mathematical coverage ring
                         if d['cov_array'][c_idx]:
                             dist = (call_coord[0] - d['lon'])**2 + (call_coord[1] - d['lat'])**2
                             if dist < min_dist:
