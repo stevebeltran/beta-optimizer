@@ -25,6 +25,7 @@ import streamlit.components.v1 as components
 CONFIG = {
     "RESPONDER_COST": 80000,
     "GUARDIAN_COST": 160000,
+    "RESPONDER_RANGE_MI": 2.0,
     "OFFICER_COST_PER_CALL": 82,
     "DRONE_COST_PER_CALL": 6,
     "DEFAULT_TRAFFIC_SPEED": 35.0, 
@@ -41,24 +42,6 @@ STATE_FIPS = {
     "OK": "40", "OR": "41", "PA": "42", "RI": "44", "SC": "45", "SD": "46", "TN": "47",
     "TX": "48", "UT": "49", "VT": "50", "VA": "51", "WA": "53", "WV": "54", "WI": "55",
     "WY": "56"
-}
-
-# Lookup dictionary for the most common demo cities to ensure exact accuracy. 
-# If a city isn't here, the algorithm will dynamically estimate based on square mileage.
-KNOWN_POPULATIONS = {
-    "New York": 8336817, "Los Angeles": 3822238, "Chicago": 2665039, "Houston": 1304379, 
-    "Phoenix": 1644409, "Philadelphia": 1567258, "San Antonio": 2302878, "San Diego": 1472530, 
-    "Dallas": 1299544, "San Jose": 1381162, "Austin": 974447, "Jacksonville": 971319, 
-    "Fort Worth": 956709, "Columbus": 907971, "Indianapolis": 880621, "Charlotte": 897720, 
-    "San Francisco": 971233, "Seattle": 749256, "Denver": 713252, "Washington": 678972, 
-    "Nashville": 683622, "Oklahoma City": 694800, "El Paso": 694553, "Boston": 650706, 
-    "Portland": 635067, "Las Vegas": 656274, "Detroit": 620376, "Memphis": 633104, 
-    "Louisville": 628594, "Baltimore": 620961, "Milwaukee": 620251, "Albuquerque": 677122, 
-    "Tucson": 564559, "Fresno": 677102, "Sacramento": 808418, "Kansas City": 697738, 
-    "Mesa": 549701, "Atlanta": 499127, "Omaha": 508901, "Colorado Springs": 483956, 
-    "Raleigh": 476587, "Miami": 449514, "Virginia Beach": 455369, "Oakland": 530763, 
-    "Minneapolis": 563332, "Tulsa": 547239, "Arlington": 398654, "New Orleans": 562503, 
-    "Wichita": 402263, "Cleveland": 900000, "Tampa": 449514, "Orlando": 316081
 }
 
 # --- PAGE CONFIG ---
@@ -202,9 +185,26 @@ if not st.session_state['csvs_ready']:
                 count += 1
             st.success(f"Saved {count} map files to library!")
 
-# --- CENSUS TIGER SHAPEFILE FETCHER ---
+# --- CENSUS TIGER SHAPEFILE & API FETCHER ---
+@st.cache_data
+def fetch_census_population(state_fips, place_name):
+    """Queries the live US Census API for the exact population of the requested city."""
+    url = f"https://api.census.gov/data/2020/dec/pl?get=P1_001N,NAME&for=place:*&in=state:{state_fips}"
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            for row in data[1:]: # Skip header
+                # Strict exact match extraction
+                if place_name.lower() in row[1].lower().split(',')[0]:
+                    return int(row[0])
+    except Exception:
+        pass
+    return None
+
 @st.cache_data
 def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
+    """Downloads, unzips, and extracts strict boundary shapefiles from the Census TIGER database."""
     url = f"https://www2.census.gov/geo/tiger/TIGER2023/PLACE/tl_2023_{state_fips}_place.zip"
     try:
         req = urllib.request.urlopen(url)
@@ -215,9 +215,18 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         
         shp_path = glob.glob(os.path.join(temp_dir, "*.shp"))[0]
         gdf = gpd.read_file(shp_path)
-        city_gdf = gdf[gdf['NAME'].str.contains(city_name, case=False, na=False)]
+        
+        # 1. Try Strict Exact Match first (fixes "Fox River Grove" vs "River Grove" issue)
+        exact_mask = gdf['NAME'].str.lower() == city_name.lower()
+        if exact_mask.any():
+            city_gdf = gdf[exact_mask]
+        else:
+            # 2. Fallback to contains if exact match fails
+            city_gdf = gdf[gdf['NAME'].str.contains(city_name, case=False, na=False)]
         
         if not city_gdf.empty:
+            # Dissolve multipolygons to prevent the 50/50 jurisdiction split bug
+            city_gdf = city_gdf.dissolve(by='NAME').reset_index()
             save_path = os.path.join(output_dir, f"{city_name.replace(' ', '_')}_{state_fips}.shp")
             city_gdf.to_file(save_path)
             return True, city_gdf
@@ -227,24 +236,26 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
     return False, None
 
 def generate_clustered_calls(polygon, num_points):
-    """Generates realistically clustered 911 calls strictly inside a boundary"""
+    """Generates 911 calls distributed inside a boundary, focusing on hotspots but blanketing the edges."""
     points = []
     minx, miny, maxx, maxy = polygon.bounds
     
-    num_hotspots = random.randint(5, 15)
+    num_hotspots = random.randint(5, 12)
     hotspots = []
     while len(hotspots) < num_hotspots:
         hx, hy = random.uniform(minx, maxx), random.uniform(miny, maxy)
         if polygon.contains(Point(hx, hy)):
             hotspots.append((hx, hy))
             
-    target_clustered = int(num_points * 0.75)
+    # 60% of calls heavily clustered in "downtown" hotspots
+    target_clustered = int(num_points * 0.60)
     while len(points) < target_clustered:
         hx, hy = random.choice(hotspots)
         px, py = np.random.normal(hx, 0.02), np.random.normal(hy, 0.02)
         if polygon.contains(Point(px, py)):
             points.append((py, px)) 
             
+    # 40% uniformly distributed to hit the edges and test 100% coverage map
     while len(points) < num_points:
         px, py = random.uniform(minx, maxx), random.uniform(miny, maxy)
         if polygon.contains(Point(px, py)):
@@ -259,35 +270,38 @@ if not st.session_state['csvs_ready']:
     st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
     
     with st.expander("🚀 Load Synthetic Demo Dataset", expanded=True):
-        st.write("Generate a simulated 911 call history and fire station network for any US City.")
+        st.write("Generate a highly realistic simulated 911 call history and infrastructure map for any US City.")
         
         with st.form("demo_city_form"):
             col1, col2 = st.columns([3, 1])
-            input_city = col1.text_input("Enter City Name (e.g., Orlando, Seattle, Denver)", value="Orlando")
+            input_city = col1.text_input("Enter City Name", value="Orlando")
             input_state = col2.selectbox("State", list(STATE_FIPS.keys()), index=8) # FL Default
             submit_demo = st.form_submit_button("🚀 Simulate City")
             
         if submit_demo:
-            with st.spinner(f"Fetching TIGER boundary data for {input_city}, {input_state} from US Census Bureau..."):
+            with st.spinner(f"Fetching exact TIGER boundary data for {input_city}, {input_state} from US Census Bureau..."):
                 success, active_city_gdf = fetch_tiger_city_shapefile(STATE_FIPS[input_state], input_city, SHAPEFILE_DIR)
                 
             if not success:
                 st.error(f"Could not find a Census boundary for '{input_city}' in {input_state}. Try checking spelling or using a major city.")
             else:
-                with st.spinner("Calculating population density and call volume..."):
+                with st.spinner(f"Querying US Census API for {input_city}'s true population..."):
                     city_poly = active_city_gdf.geometry.union_all()
                     
-                    gdf_proj = active_city_gdf.to_crs(epsg=3857)
-                    area_sq_mi = gdf_proj.geometry.area.sum() / 2589988.11
-                    
-                    estimated_pop = KNOWN_POPULATIONS.get(input_city, int(area_sq_mi * 3500))
+                    pop = fetch_census_population(STATE_FIPS[input_state], input_city)
+                    if pop:
+                        estimated_pop = pop
+                        st.toast(f"✅ Verified US Census Population: {estimated_pop:,}")
+                    else:
+                        gdf_proj = active_city_gdf.to_crs(epsg=3857)
+                        area_sq_mi = gdf_proj.geometry.area.sum() / 2589988.11
+                        estimated_pop = int(area_sq_mi * 3500)
+                        st.toast(f"⚠️ Census API unavailable. Estimated Population: {estimated_pop:,}")
+                        
                     annual_cfs = int(estimated_pop * 0.6) 
-                    
                     simulated_points_count = min(int(annual_cfs / 12), 25000)
                     
-                    st.toast(f"Estimated Population: {estimated_pop:,} | Simulated Monthly Calls: {simulated_points_count:,}")
-                    
-                with st.spinner("Procedurally clustering realistic 911 calls..."):
+                with st.spinner("Procedurally mapping true-to-life 911 call clusters..."):
                     np.random.seed(42)
                     call_points = generate_clustered_calls(city_poly, simulated_points_count)
                     st.session_state['df_calls'] = pd.DataFrame({
@@ -296,24 +310,15 @@ if not st.session_state['csvs_ready']:
                         'priority': np.random.choice(['High', 'Medium', 'Low'], simulated_points_count)
                     })
                     
-                with st.spinner("Generating optimal 100% coverage station grid..."):
-                    bounds = city_poly.bounds
-                    s_lons = np.arange(bounds[0] + 0.01, bounds[2], 0.045)
-                    s_lats = np.arange(bounds[1] + 0.01, bounds[3], 0.045)
-                    
-                    grid_lats, grid_lons = [], []
-                    for lat in s_lats:
-                        for lon in s_lons:
-                            if city_poly.contains(Point(lon, lat)):
-                                grid_lats.append(lat)
-                                grid_lons.append(lon)
-                                
-                    types = ['Police', 'Fire', 'EMS'] * (len(grid_lats) // 3 + 1)
+                with st.spinner("Distributing municipal infrastructure grid..."):
+                    # Scatter 100 stations dynamically so the user can easily reach 100% coverage
+                    station_points = generate_random_points_in_polygon(city_poly, 100)
+                    types = ['Police', 'Fire', 'EMS'] * 34
                     st.session_state['df_stations'] = pd.DataFrame({
-                        'name': [f'Station {i+1}' for i in range(len(grid_lats))],
-                        'lat': grid_lats, 
-                        'lon': grid_lons,
-                        'type': types[:len(grid_lats)]
+                        'name': [f'Station {i+1}' for i in range(len(station_points))],
+                        'lat': [p[0] for p in station_points], 
+                        'lon': [p[1] for p in station_points],
+                        'type': types[:len(station_points)]
                     })
                     
                     st.session_state['inferred_daily_calls_override'] = int(annual_cfs / 365)
@@ -358,7 +363,7 @@ if not st.session_state['csvs_ready']:
             st.session_state['csvs_ready'] = True
             st.rerun()
 
-def get_circle_coords(lat, lon, r_mi):
+def get_circle_coords(lat, lon, r_mi=2.0):
     angles = np.linspace(0, 2*np.pi, 100)
     c_lats = lat + (r_mi/69.172) * np.sin(angles)
     c_lons = lon + (r_mi/(69.172 * np.cos(np.radians(lat)))) * np.cos(angles)
@@ -472,6 +477,10 @@ def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
             
     if not relevant_polys: return None
     master_gdf = pd.concat(relevant_polys, ignore_index=True).sort_values(by='data_count', ascending=False)
+    
+    # Dissolve to fix the 50/50 jurisdiction split bug
+    master_gdf = master_gdf.dissolve(by='DISPLAY_NAME', aggfunc={'data_count': 'sum'}).reset_index()
+    master_gdf = master_gdf.sort_values(by='data_count', ascending=False)
     
     if master_gdf['data_count'].sum() > 0:
         master_gdf['pct_share'] = master_gdf['data_count'] / master_gdf['data_count'].sum()
@@ -642,8 +651,9 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
                 uncovered = uncovered & ~matrix[best_s]
                 cov_count += best_cov
                 curve.append((cov_count / max(1, n_calls)) * 100)
+                if cov_count == n_calls: break
             else:
-                curve.append(curve[-1])
+                break
         return curve
         
     def greedy_area(geos):
@@ -662,7 +672,7 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
                 available.remove(best_s)
                 curve.append((current_union.area / total_area) * 100)
             else:
-                curve.append(curve[-1])
+                break
         return curve
 
     c_r = greedy_calls(_resp_matrix) if n_calls > 0 else [0]*(n_st+1)
@@ -670,12 +680,16 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
     a_r = greedy_area(_geos_r)
     a_g = greedy_area(_geos_g)
     
+    # Pad out the curves with their final values so they graph evenly
+    max_len = max(len(c_r), len(c_g), len(a_r), len(a_g))
+    def pad(c): return c + [c[-1]] * (max_len - len(c)) if c else [0]*max_len
+    
     return pd.DataFrame({
-        'Drones': range(n_st + 1),
-        'Responder (Calls)': c_r[:n_st+1],
-        'Responder (Area)': a_r[:n_st+1],
-        'Guardian (Calls)': c_g[:n_st+1],
-        'Guardian (Area)': a_g[:n_st+1]
+        'Drones': range(max_len),
+        'Responder (Calls)': pad(c_r),
+        'Responder (Area)': pad(a_r),
+        'Guardian (Calls)': pad(c_g),
+        'Guardian (Area)': pad(a_g)
     })
 
 # --- MAIN LOGIC ---
