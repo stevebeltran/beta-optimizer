@@ -203,7 +203,7 @@ if not st.session_state['csvs_ready']:
                 count += 1
             st.success(f"Saved {count} map files to library!")
 
-# --- STRICT CENSUS API FETCHER ---
+# --- CENSUS TIGER SHAPEFILE & API FETCHER ---
 @st.cache_data
 def fetch_census_population(state_fips, place_name):
     """Queries the live US Census API for exact population using STRICT matching."""
@@ -215,14 +215,9 @@ def fetch_census_population(state_fips, place_name):
             search_name = place_name.lower().strip()
             
             for row in data[1:]:
-                # Extract the base place name (e.g. "Mesa city, Arizona" -> "mesa city")
                 place_full = row[1].lower().split(',')[0].strip()
-                
-                # Check 1: Is it an exact match to what the user typed?
                 if place_full == search_name:
                     return int(row[0])
-                
-                # Check 2: Does it start with the word + a space? (Prevents "Mesa" matching "Second Mesa")
                 elif place_full.startswith(search_name + " "):
                     return int(row[0])
     except Exception:
@@ -244,17 +239,13 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         gdf = gpd.read_file(shp_path)
         
         search_name = city_name.lower().strip()
-        
-        # 1. Try Strict Exact Match first
         exact_mask = gdf['NAME'].str.lower().str.strip() == search_name
         if exact_mask.any():
             city_gdf = gdf[exact_mask]
         else:
-            # 2. Fallback to contains if user spelled it strangely
             city_gdf = gdf[gdf['NAME'].str.lower().str.contains(search_name, case=False, na=False)]
         
         if not city_gdf.empty:
-            # Dissolve multipolygons to prevent the 50/50 jurisdiction split bug
             city_gdf = city_gdf.dissolve(by='NAME').reset_index()
             save_path = os.path.join(output_dir, f"{city_name.replace(' ', '_')}_{state_fips}.shp")
             city_gdf.to_file(save_path)
@@ -290,7 +281,6 @@ def generate_clustered_calls(polygon, num_points):
         if polygon.contains(Point(hx, hy)):
             hotspots.append((hx, hy))
             
-    # 75% of calls heavily clustered in "downtown" hotspots
     target_clustered = int(num_points * 0.75)
     while len(points) < target_clustered:
         hx, hy = random.choice(hotspots)
@@ -298,7 +288,6 @@ def generate_clustered_calls(polygon, num_points):
         if polygon.contains(Point(px, py)):
             points.append((py, px)) 
             
-    # 25% uniformly distributed to hit the edges and test 100% coverage map
     while len(points) < num_points:
         px, py = random.uniform(minx, maxx), random.uniform(miny, maxy)
         if polygon.contains(Point(px, py)):
@@ -310,9 +299,50 @@ def generate_clustered_calls(polygon, num_points):
 # --- MAIN UPLOAD & VALIDATION SECTION ---
 if not st.session_state['csvs_ready']:
     
-    st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
+    st.markdown("### 📁 Upload Your Mission Data")
+    st.info("Upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
     
-    with st.expander("🚀 Load Synthetic Demo Dataset", expanded=True):
+    uploaded_files = st.file_uploader("Upload Mission Data (CSV)", accept_multiple_files=True, label_visibility="collapsed")
+    call_file, station_file = None, None
+    
+    if uploaded_files:
+        for f in uploaded_files:
+            fname = f.name.lower()
+            if fname == "calls.csv": call_file = f
+            elif fname == "stations.csv": station_file = f
+            
+        if call_file and station_file:
+            df_c = pd.read_csv(call_file)
+            df_c.columns = [str(c).lower().strip() for c in df_c.columns]
+            df_c = df_c.rename(columns={'latitude': 'lat', 'longitude': 'lon'}) 
+            
+            if 'lat' not in df_c.columns or 'lon' not in df_c.columns:
+                st.error(f"❌ **Validation Error:** Your calls.csv must contain 'lat' and 'lon' columns. Found: {', '.join(df_c.columns)}")
+                st.stop()
+                
+            orig_len = len(df_c)
+            df_c = df_c.dropna(subset=['lat', 'lon']).reset_index(drop=True)
+            if len(df_c) < orig_len:
+                st.warning(f"⚠️ Dropped {orig_len - len(df_c)} rows from calls data due to missing or invalid GPS coordinates.")
+                
+            st.session_state['df_calls'] = df_c
+            
+            df_s = pd.read_csv(station_file)
+            df_s.columns = [str(c).lower().strip() for c in df_s.columns]
+            df_s = df_s.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
+            
+            if 'lat' not in df_s.columns or 'lon' not in df_s.columns:
+                st.error(f"❌ **Validation Error:** Your stations.csv must contain 'lat' and 'lon' columns. Found: {', '.join(df_s.columns)}")
+                st.stop()
+                
+            st.session_state['df_stations'] = df_s.dropna(subset=['lat', 'lon']).reset_index(drop=True)
+            st.session_state['csvs_ready'] = True
+            st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("---")
+    
+    with st.expander("🚀 Don't have data? Run a Synthetic City Simulation", expanded=False):
         st.write("Generate a highly realistic simulated 911 call history and infrastructure map for any US City.")
         
         with st.form("demo_city_form"):
@@ -354,9 +384,8 @@ if not st.session_state['csvs_ready']:
                     })
                     
                 with st.spinner("Distributing municipal infrastructure grid..."):
-                    # Scatter 80 stations dynamically so the user can easily reach 100% coverage
-                    station_points = generate_random_points_in_polygon(city_poly, 80)
-                    types = ['Police', 'Fire', 'EMS'] * 30
+                    station_points = generate_random_points_in_polygon(city_poly, 100)
+                    types = ['Police', 'Fire', 'EMS'] * 34
                     st.session_state['df_stations'] = pd.DataFrame({
                         'name': [f'Station {i+1}' for i in range(len(station_points))],
                         'lat': [p[0] for p in station_points], 
@@ -367,44 +396,6 @@ if not st.session_state['csvs_ready']:
                     st.session_state['inferred_daily_calls_override'] = int(annual_cfs / 365)
                     st.session_state['csvs_ready'] = True
                     st.rerun()
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    uploaded_files = st.file_uploader("Upload Mission Data", accept_multiple_files=True)
-    call_file, station_file = None, None
-    
-    if uploaded_files:
-        for f in uploaded_files:
-            fname = f.name.lower()
-            if fname == "calls.csv": call_file = f
-            elif fname == "stations.csv": station_file = f
-            
-        if call_file and station_file:
-            df_c = pd.read_csv(call_file)
-            df_c.columns = [str(c).lower().strip() for c in df_c.columns]
-            df_c = df_c.rename(columns={'latitude': 'lat', 'longitude': 'lon'}) 
-            
-            if 'lat' not in df_c.columns or 'lon' not in df_c.columns:
-                st.error(f"❌ **Validation Error:** Your calls.csv must contain 'lat' and 'lon' columns. Found: {', '.join(df_c.columns)}")
-                st.stop()
-                
-            orig_len = len(df_c)
-            df_c = df_c.dropna(subset=['lat', 'lon']).reset_index(drop=True)
-            if len(df_c) < orig_len:
-                st.warning(f"⚠️ Dropped {orig_len - len(df_c)} rows from calls data due to missing or invalid GPS coordinates.")
-                
-            st.session_state['df_calls'] = df_c
-            
-            df_s = pd.read_csv(station_file)
-            df_s.columns = [str(c).lower().strip() for c in df_s.columns]
-            df_s = df_s.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
-            
-            if 'lat' not in df_s.columns or 'lon' not in df_s.columns:
-                st.error(f"❌ **Validation Error:** Your stations.csv must contain 'lat' and 'lon' columns. Found: {', '.join(df_s.columns)}")
-                st.stop()
-                
-            st.session_state['df_stations'] = df_s.dropna(subset=['lat', 'lon']).reset_index(drop=True)
-            st.session_state['csvs_ready'] = True
-            st.rerun()
 
 def get_circle_coords(lat, lon, r_mi=2.0):
     angles = np.linspace(0, 2*np.pi, 100)
@@ -863,12 +854,13 @@ if st.session_state['csvs_ready']:
     incremental_build = st.sidebar.toggle("Phased Rollout", value=True, help="When ON, builds the fleet one-by-one so existing stations never change.")
     allow_redundancy = st.sidebar.toggle("Multi-Tier (Allow Overlap)", value=True, help="When ON, drones won't move away just because their coverage rings overlap.")
     
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Map Layers</div>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Display Options</div>", unsafe_allow_html=True)
     col1, col2 = st.sidebar.columns(2)
     show_boundaries = col1.toggle("Boundaries", value=True)
     show_heatmap = col2.toggle("Heatmap", value=False)
     show_health = col1.toggle("Health Score", value=False)
     show_satellite = col2.toggle("Satellite", value=False)
+    show_cards = st.sidebar.toggle("Unit Economics Cards", value=True)
     
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🚗 Ground Traffic Simulator</h3>", unsafe_allow_html=True)
@@ -1458,36 +1450,37 @@ if st.session_state['csvs_ready']:
             st.markdown("<br>", unsafe_allow_html=True)
 
         # --- Unit-Level Economics Cards ---
-        st.markdown(f"<h4 style='margin-top:0px; border-bottom: 1px solid {card_border}; padding-bottom: 8px; color: {text_main};'>Unit-Level Economics</h4>", unsafe_allow_html=True)
-        if fleet_capex > 0:
-            with st.container():
-                c1, c2 = st.columns(2)
-                for i, d in enumerate(active_drones):
-                    target_col = c1 if i % 2 == 0 else c2
-                    formatted_name = format_3_lines(d['name'])
-                    
-                    html_card = (
-                        f'<div style="background-color: {card_bg}; color: {card_text}; border-top: 4px solid {d["color"]}; '
-                        f'border-left: 1px solid {card_border}; border-right: 1px solid {card_border}; border-bottom: 1px solid {card_border}; '
-                        f'padding: 8px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); line-height: 1.2;">'
-                        f'<div style="font-weight: 700; font-size: 0.7rem; margin-bottom: 6px; min-height: 3.6em; color: {card_title};">{formatted_name}</div>'
-                        f'<div style="font-size: 0.6rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d["type"]} • PH: #{d["deploy_step"]}</div>'
-                        f'<div style="font-size: 0.7rem; color: {text_muted}; margin-bottom: 2px;">Capacity Value: <span style="color: {accent_color}; font-weight: 700; float: right;">${d["annual_savings"]:,.0f}</span></div>'
-                        f'<div style="border-top: 1px solid {card_border}; margin: 4px 0;"></div>'
-                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Net New Flights: <span style="font-weight: 600; color: {accent_color}; float: right;">{d["marginal_flights"]:.1f}/d</span></div>'
-                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Shared Flights: <span style="font-weight: 600; float: right; color:{card_title};">{d["shared_flights"]:.1f}/d</span></div>'
-                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Deflected: <span style="font-weight: 600; float: right; color:{card_title};">{d["marginal_deflected"]:.1f}/d</span></div>'
-                        f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Avg Resp Time: <span style="font-weight: 600; float: right; color:{card_title};">{d["avg_time_min"]:.1f} min</span></div>'
-                        f'<div style="border-top: 1px dashed {card_border}; padding-top: 4px; font-size: 0.65rem; color: {text_muted};">'
-                        f'CapEx: <strong style="float:right; color:{card_title};">${d["cost"]:,.0f}</strong><br>'
-                        f'ROI: <strong style="color: {accent_color}; float:right;">{d["be_text"]}</strong></div>'
-                        f'</div>'
-                    )
-                    
-                    with target_col:
-                        st.markdown(html_card, unsafe_allow_html=True)
-        else:
-            st.info("🚁 Deploy drones on the map to see individual unit economics.")
+        if show_cards:
+            st.markdown(f"<h4 style='margin-top:0px; border-bottom: 1px solid {card_border}; padding-bottom: 8px; color: {text_main};'>Unit-Level Economics</h4>", unsafe_allow_html=True)
+            if fleet_capex > 0:
+                with st.container():
+                    c1, c2 = st.columns(2)
+                    for i, d in enumerate(active_drones):
+                        target_col = c1 if i % 2 == 0 else c2
+                        formatted_name = format_3_lines(d['name'])
+                        
+                        html_card = (
+                            f'<div style="background-color: {card_bg}; color: {card_text}; border-top: 4px solid {d["color"]}; '
+                            f'border-left: 1px solid {card_border}; border-right: 1px solid {card_border}; border-bottom: 1px solid {card_border}; '
+                            f'padding: 8px; border-radius: 4px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); line-height: 1.2;">'
+                            f'<div style="font-weight: 700; font-size: 0.7rem; margin-bottom: 6px; min-height: 3.6em; color: {card_title};">{formatted_name}</div>'
+                            f'<div style="font-size: 0.6rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d["type"]} • PH: #{d["deploy_step"]}</div>'
+                            f'<div style="font-size: 0.7rem; color: {text_muted}; margin-bottom: 2px;">Capacity Value: <span style="color: {accent_color}; font-weight: 700; float: right;">${d["annual_savings"]:,.0f}</span></div>'
+                            f'<div style="border-top: 1px solid {card_border}; margin: 4px 0;"></div>'
+                            f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Net New Flights: <span style="font-weight: 600; color: {accent_color}; float: right;">{d["marginal_flights"]:.1f}/d</span></div>'
+                            f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Shared Flights: <span style="font-weight: 600; float: right; color:{card_title};">{d["shared_flights"]:.1f}/d</span></div>'
+                            f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Deflected: <span style="font-weight: 600; float: right; color:{card_title};">{d["marginal_deflected"]:.1f}/d</span></div>'
+                            f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Avg Resp Time: <span style="font-weight: 600; float: right; color:{card_title};">{d["avg_time_min"]:.1f} min</span></div>'
+                            f'<div style="border-top: 1px dashed {card_border}; padding-top: 4px; font-size: 0.65rem; color: {text_muted};">'
+                            f'CapEx: <strong style="float:right; color:{card_title};">${d["cost"]:,.0f}</strong><br>'
+                            f'ROI: <strong style="color: {accent_color}; float:right;">{d["be_text"]}</strong></div>'
+                            f'</div>'
+                        )
+                        
+                        with target_col:
+                            st.markdown(html_card, unsafe_allow_html=True)
+            else:
+                st.info("🚁 Deploy drones on the map to see individual unit economics.")
 
     # ==========================================
     # --- 3D DECK.GL SWARM SIMULATION ---
