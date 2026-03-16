@@ -16,6 +16,9 @@ import pulp
 import re
 import random
 import json
+import urllib.request
+import zipfile
+import io
 import streamlit.components.v1 as components
 
 # --- GLOBAL CONFIGURATION ---
@@ -158,6 +161,7 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['df_calls'] = None
     st.session_state['df_stations'] = None
 
+# --- SIDEBAR: MAP LIBRARY MANAGER (HIDDEN WHEN READY) ---
 if not st.session_state['csvs_ready']:
     with st.sidebar.expander("🗺️ Map Library Manager"):
         st.write("Upload shapefiles here to populate the 'jurisdiction_data' folder.")
@@ -170,26 +174,72 @@ if not st.session_state['csvs_ready']:
                 count += 1
             st.success(f"Saved {count} map files to library!")
 
+# --- CENSUS TIGER SHAPEFILE FETCHER ---
+@st.cache_data
+def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
+    url = f"https://www2.census.gov/geo/tiger/TIGER2023/PLACE/tl_2023_{state_fips}_place.zip"
+    try:
+        req = urllib.request.urlopen(url)
+        zip_file = zipfile.ZipFile(io.BytesIO(req.read()))
+        temp_dir = os.path.join(output_dir, f"temp_tiger_{state_fips}")
+        os.makedirs(temp_dir, exist_ok=True)
+        zip_file.extractall(temp_dir)
+        
+        shp_path = glob.glob(os.path.join(temp_dir, "*.shp"))[0]
+        gdf = gpd.read_file(shp_path)
+        city_gdf = gdf[gdf['NAME'].str.contains(city_name, case=False, na=False)]
+        
+        if not city_gdf.empty:
+            save_path = os.path.join(output_dir, f"{city_name.replace(' ', '_')}_{state_fips}.shp")
+            city_gdf.to_file(save_path)
+            return True
+    except Exception as e:
+        print(f"Failed to fetch TIGER shapefile: {e}")
+        return False
+    return False
+
 # --- MAIN UPLOAD & VALIDATION SECTION ---
 if not st.session_state['csvs_ready']:
+    
     st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
-    if st.button("🚀 Don't have data? Load Synthetic Demo Dataset"):
-        np.random.seed(42)
-        center_lat, center_lon = 38.8339, -104.8214 
-        c_lat = np.random.normal(center_lat, 0.025, 5000)
-        c_lon = np.random.normal(center_lon, 0.025, 5000)
-        st.session_state['df_calls'] = pd.DataFrame({'lat': c_lat, 'lon': c_lon, 'priority': np.random.choice(['High', 'Medium', 'Low'], 5000)})
+    
+    with st.expander("🚀 Load Synthetic Demo Dataset", expanded=True):
+        st.write("Generate a simulated 911 call history and fire station network for a major US City.")
         
-        s_lat = center_lat + np.array([0, 0.03, -0.03, 0.03, -0.03, 0.06, -0.06, 0, 0, 0.04, -0.04, 0.05, -0.05])
-        s_lon = center_lon + np.array([0, 0.03, -0.03, -0.03, 0.03, 0, 0, 0.06, -0.06, 0.04, -0.04, -0.02, 0.02])
-        st.session_state['df_stations'] = pd.DataFrame({
-            'name': [f'Station {i+1}' for i in range(13)],
-            'lat': s_lat, 'lon': s_lon,
-            'type': ['Police', 'Fire', 'EMS'] * 4 + ['Police']
-        })
-        st.session_state['csvs_ready'] = True
-        st.rerun()
+        demo_cities = {
+            "Colorado Springs, CO": {"lat": 38.8339, "lon": -104.8214, "state_fips": "08", "city_name": "Colorado Springs"},
+            "Austin, TX": {"lat": 30.2672, "lon": -97.7431, "state_fips": "48", "city_name": "Austin"},
+            "Nashville, TN": {"lat": 36.1627, "lon": -86.7816, "state_fips": "47", "city_name": "Nashville"},
+            "Charlotte, NC": {"lat": 35.2271, "lon": -80.8431, "state_fips": "37", "city_name": "Charlotte"},
+            "Raleigh, NC": {"lat": 35.7796, "lon": -78.6382, "state_fips": "37", "city_name": "Raleigh"}
+        }
+        
+        selected_city = st.selectbox("Select Demo City", list(demo_cities.keys()))
+        
+        if st.button(f"Simulate {selected_city}"):
+            with st.spinner(f"Fetching TIGER boundary data for {selected_city} from US Census Bureau..."):
+                city_data = demo_cities[selected_city]
+                fetch_tiger_city_shapefile(city_data["state_fips"], city_data["city_name"], SHAPEFILE_DIR)
+                
+            with st.spinner("Generating simulated flight geometry..."):
+                np.random.seed(42)
+                center_lat, center_lon = city_data["lat"], city_data["lon"]
+                
+                c_lat = np.random.normal(center_lat, 0.04, 5000)
+                c_lon = np.random.normal(center_lon, 0.04, 5000)
+                st.session_state['df_calls'] = pd.DataFrame({'lat': c_lat, 'lon': c_lon, 'priority': np.random.choice(['High', 'Medium', 'Low'], 5000)})
+                
+                s_lat = center_lat + np.array([0, 0.03, -0.03, 0.03, -0.03, 0.06, -0.06, 0, 0, 0.04, -0.04, 0.05, -0.05])
+                s_lon = center_lon + np.array([0, 0.03, -0.03, -0.03, 0.03, 0, 0, 0.06, -0.06, 0.04, -0.04, -0.02, 0.02])
+                st.session_state['df_stations'] = pd.DataFrame({
+                    'name': [f'Station {i+1}' for i in range(13)],
+                    'lat': s_lat, 'lon': s_lon,
+                    'type': ['Police', 'Fire', 'EMS'] * 4 + ['Police']
+                })
+                st.session_state['csvs_ready'] = True
+                st.rerun()
 
+    st.markdown("<br>", unsafe_allow_html=True)
     uploaded_files = st.file_uploader("Upload Mission Data", accept_multiple_files=True)
     call_file, station_file = None, None
     
@@ -818,7 +868,6 @@ if st.session_state['csvs_ready']:
     for idx in chrono_r:
         if idx in active_resp_idx: ordered_deployments_raw.append((idx, 'RESPONDER'))
 
-    # Catch any manually selected stations not in the optimization output
     for idx in active_resp_idx:
         if idx not in chrono_r: ordered_deployments_raw.append((idx, 'RESPONDER'))
     for idx in active_guard_idx:
@@ -827,8 +876,6 @@ if st.session_state['csvs_ready']:
     active_color_map = {}
     c_idx = 0
     for idx, d_type in ordered_deployments_raw:
-        # Key the color by both the station name AND the drone type
-        # This completely decouples Responder vs Guardian units at the same location
         key = f"{station_metadata[idx]['name']}_{d_type}"
         if key not in active_color_map:
             active_color_map[key] = STATION_COLORS[c_idx % len(STATION_COLORS)]
@@ -968,6 +1015,7 @@ if st.session_state['csvs_ready']:
                 avg_time_min = (avg_dist / speed_mph) * 60
 
                 d = {
+                    'idx': idx,
                     'name': station_metadata[idx]['name'],
                     'lat': station_metadata[idx]['lat'],
                     'lon': station_metadata[idx]['lon'],
@@ -1318,9 +1366,25 @@ if st.session_state['csvs_ready']:
                 
                 calls_coords = np.column_stack((calls_in_city['lon'], calls_in_city['lat']))
                 
+                # --- RESTRICTED NEAREST NEIGHBOR DISPATCH SIMULATION ---
+                # A call is assigned to the closest drone station that ACTUALLY covers it.
+                sim_assignments = {i: [] for i in range(len(active_drones))}
+                for c_idx, call_coord in enumerate(calls_coords):
+                    best_d_idx = -1
+                    min_dist = float('inf')
+                    for d_idx, d in enumerate(active_drones):
+                        # Only allow the drone to respond if the call is within its mathematical coverage ring
+                        if d['cov_array'][c_idx]:
+                            dist = (call_coord[0] - d['lon'])**2 + (call_coord[1] - d['lat'])**2
+                            if dist < min_dist:
+                                min_dist = dist
+                                best_d_idx = d_idx
+                    if best_d_idx != -1:
+                        sim_assignments[best_d_idx].append(c_idx)
+                
                 legend_html = ""
                 
-                for d in active_drones:
+                for d_idx, d in enumerate(active_drones):
                     short_name = f"{d['name'].split(',')[0]} ({d['type'][:3]})"
                     hex_c = d['color'].lstrip('#')
                     rgb = [int(hex_c[j:j+2], 16) for j in (0, 2, 4)]
@@ -1335,10 +1399,10 @@ if st.session_state['csvs_ready']:
                     
                     legend_html += f'<div style="margin-bottom:3px;"><span style="display:inline-block;width:10px;height:10px;background-color:{d["color"]};margin-right:8px;border-radius:50%;"></span>{short_name}</div>'
                     
-                    assigned_calls = d.get('assigned_indices', [])
+                    assigned_calls = sim_assignments[d_idx]
                     num_to_simulate = int(len(assigned_calls) * dfr_dispatch_rate)
                     if num_to_simulate > 0:
-                        assigned_calls = random.sample(list(assigned_calls), num_to_simulate)
+                        assigned_calls = random.sample(list(assigned_calls), min(num_to_simulate, len(assigned_calls)))
                     else:
                         assigned_calls = []
 
@@ -1390,7 +1454,7 @@ if st.session_state['csvs_ready']:
                     <div id="ui">
                         <h3 style="margin: 0 0 10px 0; color: #00D2FF;">DFR Swarm Sim</h3>
                         {warn_html}
-                        <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {len(flights_json)} net-new flights (approx {int(dfr_dispatch_rate*100)}% dispatch rate) over a 24-hour cycle.</div>
+                        <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {len(flights_json)} flights (approx {int(dfr_dispatch_rate*100)}% dispatch rate) over a 24-hour cycle.</div>
                         
                         <div style="margin-bottom: 15px;">
                             <label style="font-size: 12px; color: #ccc;">Time Speed Multiplier: <span id="speedLabel">1</span>x</label>
