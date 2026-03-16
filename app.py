@@ -33,6 +33,7 @@ CONFIG = {
     "GUARDIAN_SPEED": 60.0         
 }
 
+# Federal Information Processing Standard (FIPS) mapping for the US Census API
 STATE_FIPS = {
     "AL": "01", "AK": "02", "AZ": "04", "AR": "05", "CA": "06", "CO": "08", "CT": "09",
     "DE": "10", "FL": "12", "GA": "13", "HI": "15", "ID": "16", "IL": "17", "IN": "18",
@@ -226,49 +227,48 @@ def generate_random_points_in_polygon(polygon, num_points):
 # --- MAIN UPLOAD & VALIDATION SECTION ---
 if not st.session_state['csvs_ready']:
     
-    st.info("📁 Please upload 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
+    st.markdown("### 🚀 Load Synthetic Demo Dataset")
+    st.write("No data? No problem. Enter any major US city to instantly fetch its federal census boundaries and generate a simulated 911 call history and fire station network.")
     
-    with st.expander("🚀 Load Synthetic Demo Dataset", expanded=True):
-        st.write("Generate a simulated 911 call history and fire station network for any major US City.")
+    with st.form("demo_city_form"):
+        col1, col2 = st.columns([3, 1])
+        input_city = col1.text_input("Enter City Name (e.g., Dallas, Orlando, Seattle)", value="Orlando")
+        input_state = col2.selectbox("State", list(STATE_FIPS.keys()), index=8) # FL Default
+        submit_demo = st.form_submit_button("🚀 Simulate City")
         
-        with st.form("demo_city_form"):
-            col1, col2 = st.columns([3, 1])
-            input_city = col1.text_input("Enter City Name (e.g., Dallas, Orlando, Seattle)", value="Orlando")
-            input_state = col2.selectbox("State", list(STATE_FIPS.keys()), index=8) # FL Default
-            submit_demo = st.form_submit_button("🚀 Simulate City")
+    if submit_demo:
+        with st.spinner(f"Fetching TIGER boundary data for {input_city}, {input_state} from US Census Bureau..."):
+            success, active_city_gdf = fetch_tiger_city_shapefile(STATE_FIPS[input_state], input_city, SHAPEFILE_DIR)
             
-        if submit_demo:
-            with st.spinner(f"Fetching TIGER boundary data for {input_city}, {input_state} from US Census Bureau..."):
-                success, active_city_gdf = fetch_tiger_city_shapefile(STATE_FIPS[input_state], input_city, SHAPEFILE_DIR)
+        if not success:
+            st.error(f"Could not find a Census boundary for '{input_city}' in {input_state}. Try checking spelling or using a major city.")
+        else:
+            with st.spinner("Procedurally generating 100% coverage flight geometry..."):
+                np.random.seed(42)
+                city_poly = active_city_gdf.geometry.union_all()
                 
-            if not success:
-                st.error(f"Could not find a Census boundary for '{input_city}' in {input_state}. Try checking spelling or using a major city.")
-            else:
-                with st.spinner("Procedurally generating 100% coverage flight geometry..."):
-                    np.random.seed(42)
-                    city_poly = active_city_gdf.geometry.union_all()
-                    
-                    # Distribute 5000 calls uniformly strictly INSIDE the city limits
-                    call_points = generate_random_points_in_polygon(city_poly, 5000)
-                    st.session_state['df_calls'] = pd.DataFrame({
-                        'lat': [p[0] for p in call_points], 
-                        'lon': [p[1] for p in call_points], 
-                        'priority': np.random.choice(['High', 'Medium', 'Low'], 5000)
-                    })
-                    
-                    # Scatter 80 random stations across the city to allow the user to slide to 100%
-                    station_points = generate_random_points_in_polygon(city_poly, 80)
-                    types = ['Police', 'Fire', 'EMS'] * 30
-                    st.session_state['df_stations'] = pd.DataFrame({
-                        'name': [f'Station {i+1}' for i in range(len(station_points))],
-                        'lat': [p[0] for p in station_points], 
-                        'lon': [p[1] for p in station_points],
-                        'type': types[:len(station_points)]
-                    })
-                    st.session_state['csvs_ready'] = True
-                    st.rerun()
+                # Distribute 5000 calls uniformly strictly INSIDE the city limits
+                call_points = generate_random_points_in_polygon(city_poly, 5000)
+                st.session_state['df_calls'] = pd.DataFrame({
+                    'lat': [p[0] for p in call_points], 
+                    'lon': [p[1] for p in call_points], 
+                    'priority': np.random.choice(['High', 'Medium', 'Low'], 5000)
+                })
+                
+                # Scatter 80 random stations across the city to allow the user to slide to 100%
+                station_points = generate_random_points_in_polygon(city_poly, 80)
+                types = ['Police', 'Fire', 'EMS'] * 30
+                st.session_state['df_stations'] = pd.DataFrame({
+                    'name': [f'Station {i+1}' for i in range(len(station_points))],
+                    'lat': [p[0] for p in station_points], 
+                    'lon': [p[1] for p in station_points],
+                    'type': types[:len(station_points)]
+                })
+                st.session_state['csvs_ready'] = True
+                st.rerun()
 
-    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("---")
+    st.info("📁 Or upload your own 'calls.csv' and 'stations.csv' to begin. The map will auto-detect matching jurisdictions.")
     uploaded_files = st.file_uploader("Upload Mission Data", accept_multiple_files=True)
     call_file, station_file = None, None
     
