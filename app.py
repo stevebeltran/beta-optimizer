@@ -1059,7 +1059,7 @@ if st.session_state['csvs_ready']:
     # ==========================================
     active_drones = []
     fleet_capex = 0
-    dfr_dispatch_rate = 0.25 # Default 25% if sliders don't render yet
+    dfr_dispatch_rate = 0.25 
     
     with budget_placeholder:
         st.markdown("---")
@@ -1403,6 +1403,7 @@ if st.session_state['csvs_ready']:
             mapbox=mapbox_config,
             margin=dict(l=0, r=0, t=0, b=0), 
             height=800,
+            font=dict(size=18),
             showlegend=True,
             legend=dict(
                 title_text="", # Erases "undefined" legend bug
@@ -1531,7 +1532,6 @@ if st.session_state['csvs_ready']:
     if fleet_capex > 0:
         st.markdown("---")
         st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🚁 3D Swarm Simulation</h3>", unsafe_allow_html=True)
-        st.info(f"Watch the deployed drones respond to the assigned 911 calls. The historical volume has been procedurally distributed over a simulated 24-hour timeline. Drones fly true 3D arcs out to the incident.")
         
         show_sim = st.toggle("🎬 Enable 3D Swarm Simulation", value=False)
         
