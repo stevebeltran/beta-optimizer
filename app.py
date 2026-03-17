@@ -44,7 +44,6 @@ STATE_FIPS = {
     "WY": "56"
 }
 
-# Lookup dictionary for the most common demo cities to ensure exact accuracy. 
 KNOWN_POPULATIONS = {
     "New York": 8336817, "Los Angeles": 3822238, "Chicago": 2665039, "Houston": 1304379, 
     "Phoenix": 1644409, "Philadelphia": 1567258, "San Antonio": 2302878, "San Diego": 1472530, 
@@ -205,7 +204,6 @@ if not st.session_state['csvs_ready']:
 # --- CENSUS TIGER SHAPEFILE & API FETCHER ---
 @st.cache_data
 def fetch_census_population(state_fips, place_name):
-    """Queries the live US Census API for exact population using STRICT matching."""
     url = f"https://api.census.gov/data/2020/dec/pl?get=P1_001N,NAME&for=place:*&in=state:{state_fips}"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -225,7 +223,6 @@ def fetch_census_population(state_fips, place_name):
 
 @st.cache_data
 def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
-    """Downloads strict boundary shapefiles from the Census TIGER database."""
     url = f"https://www2.census.gov/geo/tiger/TIGER2023/PLACE/tl_2023_{state_fips}_place.zip"
     try:
         req = urllib.request.urlopen(url)
@@ -255,7 +252,6 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
     return False, None
 
 def generate_random_points_in_polygon(polygon, num_points):
-    """Fast procedural generator for random points strictly inside a complex geometry"""
     points = []
     minx, miny, maxx, maxy = polygon.bounds
     while len(points) < num_points:
@@ -269,7 +265,6 @@ def generate_random_points_in_polygon(polygon, num_points):
     return points
 
 def generate_clustered_calls(polygon, num_points):
-    """Generates 911 calls distributed inside a boundary, focusing on hotspots but blanketing the edges."""
     points = []
     minx, miny, maxx, maxy = polygon.bounds
     
@@ -347,7 +342,7 @@ if not st.session_state['csvs_ready']:
         with st.form("demo_city_form"):
             col1, col2 = st.columns([3, 1])
             input_city = col1.text_input("Enter City Name", value="Orlando")
-            input_state = col2.selectbox("State", list(STATE_FIPS.keys()), index=8) # FL Default
+            input_state = col2.selectbox("State", list(STATE_FIPS.keys()), index=8) 
             submit_demo = st.form_submit_button("🚀 Simulate City")
             
         if submit_demo:
@@ -674,7 +669,7 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         uncovered = np.ones(n_calls, dtype=bool)
         curve = [0.0]
         cov_count = 0
-        min_gain = max(1, n_calls * 0.001) # Stop if marginal gain is less than 0.1%
+        min_gain = max(1, n_calls * 0.001) 
         for _ in range(n_st):
             best_s, best_cov = -1, -1
             for s in range(n_st):
@@ -694,7 +689,7 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         current_union = Polygon()
         curve = [0.0]
         available = list(range(n_st))
-        min_gain = total_area * 0.001 # Stop if marginal gain is less than 0.1%
+        min_gain = total_area * 0.001 
         for _ in range(n_st):
             best_s, best_poly, best_area = -1, None, -1
             for s in available:
@@ -716,11 +711,10 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
     
     max_len = max(len(c_r), len(c_g), len(a_r), len(a_g))
     
-    # Fill with 'None' instead of repeating values, so Plotly naturally stops drawing the line
     def pad(c):
         res = list(c)
         while len(res) < max_len:
-            res.append(None)
+            res.append(np.nan)
         return res
     
     return pd.DataFrame({
@@ -1432,11 +1426,14 @@ if st.session_state['csvs_ready']:
             ]
             
             for col, color, dash in line_configs:
-                fig_curve.add_trace(go.Scatter(
-                    x=df_curve['Drones'], y=df_curve[col], 
-                    mode='lines+markers', name=col,
-                    line=dict(color=color, width=2, dash=dash), marker=dict(size=4)
-                ))
+                y_data = df_curve[col].dropna()
+                x_data = df_curve.loc[y_data.index, 'Drones']
+                if not y_data.empty:
+                    fig_curve.add_trace(go.Scatter(
+                        x=x_data, y=y_data, 
+                        mode='lines+markers', name=col,
+                        line=dict(color=color, width=2, dash=dash), marker=dict(size=4)
+                    ))
                 
             fig_curve.update_layout(
                 title_font=dict(size=12, color=text_muted),
@@ -1500,7 +1497,7 @@ if st.session_state['csvs_ready']:
         show_sim = st.toggle("🎬 Enable 3D Swarm Simulation", value=False)
         
         if show_sim:
-            def generate_deckgl_html(active_drones, calls_in_city, dfr_dispatch_rate, lat, lon, zoom):
+            def generate_deckgl_html(active_drones, calls_in_city, dfr_dispatch_rate, lat, lon, zoom, daily_calls):
                 stations_json = []
                 flights_json = []
                 
@@ -1521,6 +1518,7 @@ if st.session_state['csvs_ready']:
                         sim_assignments[best_d_idx].append(c_idx)
                 
                 legend_html = ""
+                total_sim_flights = 0
                 
                 for d_idx, d in enumerate(active_drones):
                     short_name = f"{d['name'].split(',')[0]} ({d['type'][:3]})"
@@ -1537,14 +1535,23 @@ if st.session_state['csvs_ready']:
                     
                     legend_html += f'<div style="margin-bottom:3px;"><span style="display:inline-block;width:10px;height:10px;background-color:{d["color"]};margin-right:8px;border-radius:50%;"></span>{short_name}</div>'
                     
-                    assigned_calls = sim_assignments[d_idx]
-                    num_to_simulate = int(len(assigned_calls) * dfr_dispatch_rate)
-                    if num_to_simulate > 0:
-                        assigned_calls = random.sample(list(assigned_calls), min(num_to_simulate, len(assigned_calls)))
+                    assigned_hist = sim_assignments[d_idx]
+                    
+                    # Calculate EXACT daily call load for this specific drone based on financial module parameters
+                    fraction = len(assigned_hist) / len(calls_coords) if len(calls_coords) > 0 else 0
+                    daily_calls_for_drone = int(fraction * daily_calls * dfr_dispatch_rate)
+                    
+                    if daily_calls_for_drone > 0 and len(assigned_hist) > 0:
+                        if daily_calls_for_drone > len(assigned_hist):
+                            sim_calls = random.choices(assigned_hist, k=daily_calls_for_drone)
+                        else:
+                            sim_calls = random.sample(assigned_hist, daily_calls_for_drone)
                     else:
-                        assigned_calls = []
+                        sim_calls = []
+                        
+                    total_sim_flights += len(sim_calls)
 
-                    for call_idx in assigned_calls:
+                    for call_idx in sim_calls:
                         lon1, lat1 = calls_coords[call_idx]
                         lon0, lat0 = d['lon'], d['lat']
                         
@@ -1566,10 +1573,10 @@ if st.session_state['csvs_ready']:
                         })
                 
                 warn_html = ""
-                total_flights = len(flights_json)
-                if total_flights > 2000:
+                # Cap the maximum rendering at 2,000 for browser stability
+                if len(flights_json) > 2000:
                     flights_json = random.sample(flights_json, 2000)
-                    warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 2,000 flights for performance (Total: {total_flights}).</div>'
+                    warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 2,000 flights for performance (Total Actual: {total_sim_flights:,}).</div>'
                 
                 drone_svg = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M18 6a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4zm12 12a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4z'/%3E%3Cpath stroke='white' stroke-width='2' stroke-linecap='round' d='M8.5 8.5l7 7m0-7l-7 7'/%3E%3Ccircle cx='12' cy='12' r='2' fill='white'/%3E%3C/svg%3E"
                 
@@ -1592,7 +1599,7 @@ if st.session_state['csvs_ready']:
                     <div id="ui">
                         <h3 style="margin: 0 0 10px 0; color: #00D2FF;">DFR Swarm Sim</h3>
                         {warn_html}
-                        <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {len(flights_json)} flights (approx {int(dfr_dispatch_rate*100)}% dispatch rate) over a 24-hour cycle.</div>
+                        <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {total_sim_flights:,} DFR flights ({int(dfr_dispatch_rate*100)}% dispatch rate of {daily_calls:,} daily calls) over a 24-hour cycle.</div>
                         
                         <div style="margin-bottom: 15px;">
                             <label style="font-size: 12px; color: #ccc;">Time Speed Multiplier: <span id="speedLabel">1</span>x</label>
@@ -1633,6 +1640,7 @@ if st.session_state['csvs_ready']:
 
                         let time = 0;
                         let timer = null;
+                        let lastTime = 0;
                         
                         function render() {{
                             const layers = [
@@ -1701,23 +1709,34 @@ if st.session_state['csvs_ready']:
                             document.getElementById('timeDisplay').innerText = `Sim Time: ${{hrs}}:${{mins}}`;
                         }}
 
+                        const animate = () => {{
+                            let now = performance.now();
+                            let dt = now - lastTime;
+                            lastTime = now;
+                            
+                            // Safety clamp if user switches browser tabs
+                            if (dt > 100) dt = 16.6; 
+                            
+                            // 86400 sim seconds per 30 real seconds = 2880x speed multiplier
+                            let timeIncrement = (dt / 1000) * 2880 * parseFloat(speedSlider.value);
+                            time += timeIncrement; 
+                            
+                            render();
+                            if (time < 86400) {{
+                                timer = requestAnimationFrame(animate);
+                            }} else {{
+                                document.getElementById('runBtn').disabled = false;
+                                document.getElementById('runBtn').innerText = "RESTART SWARM";
+                                time = 0;
+                            }}
+                        }};
+
                         document.getElementById('runBtn').onclick = () => {{
                             document.getElementById('runBtn').disabled = true;
                             document.getElementById('runBtn').innerText = "SIMULATING...";
                             time = 0;
+                            lastTime = performance.now();
                             if(timer) cancelAnimationFrame(timer);
-                            
-                            const animate = () => {{
-                                time += parseInt(speedSlider.value); 
-                                render();
-                                if (time < 86400) {{
-                                    timer = requestAnimationFrame(animate);
-                                }} else {{
-                                    document.getElementById('runBtn').disabled = false;
-                                    document.getElementById('runBtn').innerText = "RESTART SWARM";
-                                    time = 0;
-                                }}
-                            }};
                             animate();
                         }};
                         
@@ -1728,5 +1747,5 @@ if st.session_state['csvs_ready']:
                 """
                 return html
 
-            sim_html = generate_deckgl_html(active_drones, calls_in_city, dfr_dispatch_rate, center_lat, center_lon, dynamic_zoom)
+            sim_html = generate_deckgl_html(active_drones, calls_in_city, dfr_dispatch_rate, center_lat, center_lon, dynamic_zoom, calls_per_day)
             components.html(sim_html, height=700)
