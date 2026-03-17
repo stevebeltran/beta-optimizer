@@ -177,8 +177,6 @@ try:
 except FileNotFoundError:
     pass
 
-st.title("🛰️ BRINC COS Drone Optimizer")
-
 SHAPEFILE_DIR = "jurisdiction_data" 
 if not os.path.exists(SHAPEFILE_DIR):
     os.makedirs(SHAPEFILE_DIR)
@@ -188,18 +186,8 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['df_calls'] = None
     st.session_state['df_stations'] = None
 
-# --- SIDEBAR: MAP LIBRARY MANAGER (HIDDEN WHEN READY) ---
 if not st.session_state['csvs_ready']:
-    with st.sidebar.expander("🗺️ Map Library Manager"):
-        st.write("Upload shapefiles here to populate the 'jurisdiction_data' folder.")
-        map_files = st.file_uploader("Drop .shp, .shx, .dbf, .prj files", accept_multiple_files=True)
-        if map_files:
-            count = 0
-            for f in map_files:
-                with open(os.path.join(SHAPEFILE_DIR, f.name), "wb") as buffer:
-                    buffer.write(f.getbuffer())
-                count += 1
-            st.success(f"Saved {count} map files to library!")
+    st.title("🛰️ BRINC COS Drone Optimizer")
 
 # --- CENSUS TIGER SHAPEFILE & API FETCHER ---
 @st.cache_data
@@ -782,30 +770,36 @@ if st.session_state['csvs_ready']:
         st.error(f"Geometry Error: {e}")
         st.stop()
 
+    # --- SIDEBAR LAYOUT CONTAINERS ---
+    filter_container = st.sidebar.container()
+    opt_container = st.sidebar.container()
+    disp_container = st.sidebar.container()
+
     # --- DYNAMIC MISSION DATA FILTERS ---
-    st.sidebar.markdown("---")
-    st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>⚙️ Data Filters</h3>", unsafe_allow_html=True)
-    
-    if 'type' in df_stations_all.columns:
-        all_types = sorted(df_stations_all['type'].dropna().astype(str).unique().tolist())
-        if all_types:
-            st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Facility Type</div>", unsafe_allow_html=True)
-            selected_types = st.sidebar.multiselect("Facility Type", options=all_types, default=all_types, label_visibility="collapsed")
-            if not selected_types:
-                st.warning("Please select at least one Facility Type from the sidebar.")
-                st.stop()
-            df_stations_all = df_stations_all[df_stations_all['type'].astype(str).isin(selected_types)].copy().reset_index(drop=True)
-            df_stations_all['name'] = "[" + df_stations_all['type'].astype(str) + "] " + df_stations_all['name'].astype(str)
-            
-    if 'priority' in df_calls.columns:
-        all_priorities = sorted(df_calls['priority'].dropna().unique().tolist())
-        if all_priorities:
-            st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Incident Priority</div>", unsafe_allow_html=True)
-            selected_priorities = st.sidebar.multiselect("Incident Priority", options=all_priorities, default=all_priorities, label_visibility="collapsed")
-            if not selected_priorities:
-                st.warning("Please select at least one Incident Priority from the sidebar.")
-                st.stop()
-            df_calls = df_calls[df_calls['priority'].isin(selected_priorities)].copy().reset_index(drop=True)
+    with filter_container:
+        st.markdown("---")
+        st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>⚙️ Data Filters</h3>", unsafe_allow_html=True)
+        
+        if 'type' in df_stations_all.columns:
+            all_types = sorted(df_stations_all['type'].dropna().astype(str).unique().tolist())
+            if all_types:
+                st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Facility Type</div>", unsafe_allow_html=True)
+                selected_types = st.multiselect("Facility Type", options=all_types, default=all_types, label_visibility="collapsed")
+                if not selected_types:
+                    st.warning("Please select at least one Facility Type from the sidebar.")
+                    st.stop()
+                df_stations_all = df_stations_all[df_stations_all['type'].astype(str).isin(selected_types)].copy().reset_index(drop=True)
+                df_stations_all['name'] = "[" + df_stations_all['type'].astype(str) + "] " + df_stations_all['name'].astype(str)
+                
+        if 'priority' in df_calls.columns:
+            all_priorities = sorted(df_calls['priority'].dropna().unique().tolist())
+            if all_priorities:
+                st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Incident Priority</div>", unsafe_allow_html=True)
+                selected_priorities = st.multiselect("Incident Priority", options=all_priorities, default=all_priorities, label_visibility="collapsed")
+                if not selected_priorities:
+                    st.warning("Please select at least one Incident Priority from the sidebar.")
+                    st.stop()
+                df_calls = df_calls[df_calls['priority'].isin(selected_priorities)].copy().reset_index(drop=True)
 
     if len(df_stations_all) == 0:
         st.error("No stations match the selected filters.")
@@ -816,28 +810,66 @@ if st.session_state['csvs_ready']:
 
     n = len(df_stations_all)
 
-    # --- OPTIMIZER CONTROLS ---
-    st.sidebar.markdown("---")
-    st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
+    # --- OPTIMIZER RADII (Needed for Precompute) ---
+    with opt_container:
+        st.markdown("---")
+        st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
 
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
-    opt_strategy_raw = st.sidebar.radio("Goal", ("Call Coverage", "Land Coverage"), horizontal=True, label_visibility="collapsed")
-    opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
-    
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
-    
-    k_responder = st.sidebar.slider("🚁 Responder Count", 0, n, min(1, n))
-    resp_radius_mi = st.sidebar.slider("🚁 Responder Range (Miles)", 2.0, 3.0, 2.0, step=0.5)
-    
-    k_guardian = st.sidebar.slider("🦅 Guardian Count", 0, n, 0)
-    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
+        st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
+        opt_strategy_raw = st.radio("Goal", ("Call Coverage", "Land Coverage"), horizontal=True, label_visibility="collapsed")
+        opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
+        
+        st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
+        resp_radius_mi = st.slider("🚁 Responder Range (Miles)", 2.0, 3.0, 2.0, step=0.5)
+        guard_radius_mi = st.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
 
-    bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{len(df_stations_all)}_{resp_radius_mi}_{guard_radius_mi}"
+    bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}_{resp_radius_mi}_{guard_radius_mi}"
 
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
         calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls = precompute_spatial_data(
             df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, bounds_hash
         )
+        
+        df_curve = compute_all_elbow_curves(
+            total_calls, resp_matrix, guard_matrix, 
+            [s['clipped_2m'] for s in station_metadata], 
+            [s['clipped_guard'] for s in station_metadata], 
+            city_m.area if city_m else 1.0,
+            bounds_hash
+        )
+
+    # Dynamically cap slider maximums to hit 99-100% coverage
+    def get_max_drones(col_name):
+        series = df_curve[col_name].dropna()
+        if len(series) == 0: return 1
+        idx_99 = series[series >= 99.0].first_valid_index()
+        if idx_99 is not None:
+            return int(df_curve.loc[idx_99, 'Drones'])
+        else:
+            return int(df_curve.loc[series.last_valid_index(), 'Drones'])
+
+    max_r = min(max(1, get_max_drones('Responder (Calls)')), n)
+    max_g = min(max(1, get_max_drones('Guardian (Calls)')), n)
+
+    # --- OPTIMIZER DRONE COUNTS ---
+    with opt_container:
+        k_responder = st.slider("🚁 Responder Count", 0, max_r, min(1, max_r))
+        k_guardian = st.slider("🦅 Guardian Count", 0, max_g, 0)
+        
+        st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Deployment Strategy</div>", unsafe_allow_html=True)
+        incremental_build = st.toggle("Phased Rollout", value=True, help="When ON, builds the fleet one-by-one so existing stations never change.")
+        allow_redundancy = st.toggle("Multi-Tier (Allow Overlap)", value=True, help="When ON, drones won't move away just because their coverage rings overlap.")
+
+    # --- DISPLAY CONTROLS ---
+    with disp_container:
+        st.markdown("---")
+        st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-bottom:5px; text-transform:uppercase;'>Display Options</div>", unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        show_boundaries = col1.toggle("Boundaries", value=True)
+        show_heatmap = col2.toggle("Heatmap", value=False)
+        show_health = col1.toggle("Health Score", value=False)
+        show_satellite = col2.toggle("Satellite", value=False)
+        show_cards = st.toggle("Unit Economics Cards", value=True)
 
     max_dist = max([((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5 for s in station_metadata])
     if max_dist == 0: max_dist = 1.0
@@ -850,18 +882,6 @@ if st.session_state['csvs_ready']:
     tb_area_r = [s['clipped_2m'].area / max_area for s in station_metadata]
     tb_area_g = [s['clipped_guard'].area / max_area for s in station_metadata]
     tb_cent = [s['centrality'] for s in station_metadata]
-    
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Deployment Strategy</div>", unsafe_allow_html=True)
-    incremental_build = st.sidebar.toggle("Phased Rollout", value=True, help="When ON, builds the fleet one-by-one so existing stations never change.")
-    allow_redundancy = st.sidebar.toggle("Multi-Tier (Allow Overlap)", value=True, help="When ON, drones won't move away just because their coverage rings overlap.")
-    
-    st.sidebar.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Display Options</div>", unsafe_allow_html=True)
-    col1, col2 = st.sidebar.columns(2)
-    show_boundaries = col1.toggle("Boundaries", value=True)
-    show_heatmap = col2.toggle("Heatmap", value=False)
-    show_health = col1.toggle("Health Score", value=False)
-    show_satellite = col2.toggle("Satellite", value=False)
-    show_cards = st.sidebar.toggle("Unit Economics Cards", value=True)
     
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🚗 Ground Traffic Simulator</h3>", unsafe_allow_html=True)
@@ -1106,26 +1126,6 @@ if st.session_state['csvs_ready']:
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            
-            if actual_k_responder > 0:
-                st.markdown(f"""
-                <div style="background-color: {card_bg}; border: 1px solid {card_border}; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
-                    <h5 style="color: {text_main}; margin: 0 0 4px 0; font-size: 0.85rem;">RESPONDER <span style="color:{text_muted}; font-weight:normal;">(x{actual_k_responder})</span></h5>
-                    <div style="color: {text_muted}; font-size: 0.75rem;">COVERAGE: <span style="color:{text_main}; font-weight:600;">{resp_radius_mi} MI RADIUS</span></div>
-                    <div style="color: {text_muted}; font-size: 0.75rem;">UNIT CAPEX: <span style="color:{text_main}; font-weight:600;">${CONFIG["RESPONDER_COST"]:,.0f}</span></div>
-                    <div style="color: {text_muted}; font-size: 0.75rem; margin-top: 4px; border-top: 1px solid {card_border}; padding-top: 4px;">SUBTOTAL: <span style="color:{text_main}; font-weight:600;">${capex_responder_total:,.0f}</span></div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-            if actual_k_guardian > 0:
-                st.markdown(f"""
-                <div style="background-color: {card_bg}; border: 1px solid {card_border}; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
-                    <h5 style="color: {text_main}; margin: 0 0 4px 0; font-size: 0.85rem;">GUARDIAN <span style="color:{text_muted}; font-weight:normal;">(x{actual_k_guardian})</span></h5>
-                    <div style="color: {text_muted}; font-size: 0.75rem;">COVERAGE: <span style="color:{text_main}; font-weight:600;">{guard_radius_mi} MI RADIUS</span></div>
-                    <div style="color: {text_muted}; font-size: 0.75rem;">UNIT CAPEX: <span style="color:{text_main}; font-weight:600;">${CONFIG["GUARDIAN_COST"]:,.0f}</span></div>
-                    <div style="color: {text_muted}; font-size: 0.75rem; margin-top: 4px; border-top: 1px solid {card_border}; padding-top: 4px;">SUBTOTAL: <span style="color:{text_main}; font-weight:600;">${capex_guardian_total:,.0f}</span></div>
-                </div>
-                """, unsafe_allow_html=True)
 
             cumulative_mask = np.zeros(total_calls, dtype=bool) if total_calls > 0 else None
             
@@ -1388,6 +1388,7 @@ if st.session_state['csvs_ready']:
             font=dict(size=18),
             showlegend=True,
             legend=dict(
+                title=dict(text=""), # Removes the 'undefined' header
                 yanchor="top",
                 y=0.98,
                 xanchor="left",
@@ -1434,6 +1435,22 @@ if st.session_state['csvs_ready']:
                         mode='lines+markers', name=col,
                         line=dict(color=color, width=2, dash=dash), marker=dict(size=4)
                     ))
+                    
+                    # Add 90% Highlight Star for Call Metrics
+                    if 'Calls' in col:
+                        idx_90 = y_data[y_data >= 90.0].first_valid_index()
+                        if idx_90 is not None:
+                            drones_90 = int(x_data.loc[idx_90])
+                            val_90 = y_data.loc[idx_90]
+                            fig_curve.add_trace(go.Scatter(
+                                x=[drones_90], y=[val_90],
+                                mode='markers+text',
+                                marker=dict(color=color, size=10, symbol='star', line=dict(color='white', width=1)),
+                                text=[f"90% ({drones_90} Units)"],
+                                textposition="top left",
+                                showlegend=False,
+                                hoverinfo='skip'
+                            ))
                 
             fig_curve.update_layout(
                 title_font=dict(size=12, color=text_muted),
@@ -1442,6 +1459,7 @@ if st.session_state['csvs_ready']:
                 xaxis=dict(showgrid=True, gridcolor=card_border, tickfont=dict(color=text_muted)),
                 yaxis=dict(showgrid=True, gridcolor=card_border, tickfont=dict(color=text_muted)),
                 legend=dict(
+                    title=dict(text=""), # Fixes "undefined" legend bug
                     orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
                     font=dict(size=10, color=text_muted)
                 ),
@@ -1537,7 +1555,7 @@ if st.session_state['csvs_ready']:
                     
                     assigned_hist = sim_assignments[d_idx]
                     
-                    # Calculate EXACT daily call load for this specific drone based on financial module parameters
+                    # Calculate EXACT daily call load for this specific drone based on financial model
                     fraction = len(assigned_hist) / len(calls_coords) if len(calls_coords) > 0 else 0
                     daily_calls_for_drone = int(fraction * daily_calls * dfr_dispatch_rate)
                     
@@ -1573,7 +1591,7 @@ if st.session_state['csvs_ready']:
                         })
                 
                 warn_html = ""
-                # Cap the maximum rendering at 2,000 for browser stability
+                # Cap the maximum rendering at 2000 for browser stability
                 if len(flights_json) > 2000:
                     flights_json = random.sample(flights_json, 2000)
                     warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 2,000 flights for performance (Total Actual: {total_sim_flights:,}).</div>'
@@ -1714,10 +1732,8 @@ if st.session_state['csvs_ready']:
                             let dt = now - lastTime;
                             lastTime = now;
                             
-                            // Safety clamp if user switches browser tabs
                             if (dt > 100) dt = 16.6; 
                             
-                            // 86400 sim seconds per 30 real seconds = 2880x speed multiplier
                             let timeIncrement = (dt / 1000) * 2880 * parseFloat(speedSlider.value);
                             time += timeIncrement; 
                             
