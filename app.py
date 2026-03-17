@@ -97,6 +97,7 @@ if is_dark:
     .stApp, .main {{ background-color: {bg_main} !important; }}
     html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
+    [data-testid="stSidebar"] [data-testid="stImage"] img {{ filter: brightness(0) invert(1); }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
@@ -173,7 +174,7 @@ st.markdown(
 
 # --- LOGO ---
 try:
-    st.sidebar.image("logo.png", width='stretch')
+    st.sidebar.image("logo.png", use_container_width=True)
 except FileNotFoundError:
     pass
 
@@ -728,9 +729,7 @@ if st.session_state['csvs_ready']:
         lat_pad = (max_lat - min_lat) * 0.1
         poly = box(min_lon - lon_pad, min_lat - lat_pad, max_lon + lon_pad, max_lat + lat_pad)
         master_gdf = gpd.GeoDataFrame({'DISPLAY_NAME': ['Auto-Generated Boundary'], 'data_count': [len(df_calls)]}, geometry=[poly], crs="EPSG:4326")
-        st.toast("No shapefiles found. Generated an automatic boundary based on data extent.")
 
-    st.sidebar.success(f"**Found {len(master_gdf)} Significant Zones**")
     st.sidebar.markdown("---")
     st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>📍 Jurisdictions</h3>", unsafe_allow_html=True)
     
@@ -772,12 +771,12 @@ if st.session_state['csvs_ready']:
 
     # --- SIDEBAR LAYOUT CONTAINERS ---
     opt_container = st.sidebar.container()
-    filter_expander = st.sidebar.expander("⚙️ Data Filters", expanded=False)
     strat_expander = st.sidebar.expander("⚙️ Deployment Strategy", expanded=False)
     disp_expander = st.sidebar.expander("👁️ Display Options", expanded=False)
+    filter_expander = st.sidebar.expander("⚙️ Data Filters", expanded=False)
     sim_expander = st.sidebar.expander("🚗 Ground Traffic Simulator", expanded=False)
 
-    # --- 1. DYNAMIC MISSION DATA FILTERS (Visualized in Expander, Executed First) ---
+    # --- DYNAMIC MISSION DATA FILTERS ---
     with filter_expander:
         if 'type' in df_stations_all.columns:
             all_types = sorted(df_stations_all['type'].dropna().astype(str).unique().tolist())
@@ -809,7 +808,7 @@ if st.session_state['csvs_ready']:
 
     n = len(df_stations_all)
 
-    # --- 2. OPTIMIZER CONTROLS (Rendered above Data Filters) ---
+    # --- OPTIMIZER CONTROLS ---
     with opt_container:
         st.markdown("---")
         st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
@@ -837,7 +836,6 @@ if st.session_state['csvs_ready']:
             bounds_hash
         )
 
-    # --- TIE BREAKERS ---
     max_dist = max([((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5 for s in station_metadata]) if station_metadata else 1.0
     if max_dist == 0: max_dist = 1.0
     
@@ -862,12 +860,10 @@ if st.session_state['csvs_ready']:
     max_r = min(max(1, get_max_drones('Responder (Calls)')), n)
     max_g = min(max(1, get_max_drones('Guardian (Calls)')), n)
 
-    # Render Slider Counts in the Opt Container
     with opt_container:
         k_responder = st.slider("🚁 Responder Count", 0, max_r, min(1, max_r))
         k_guardian = st.slider("🦅 Guardian Count", 0, max_g, 0)
         
-    # --- 3. BUNDLED EXPANDERS ---
     with strat_expander:
         incremental_build = st.toggle("Phased Rollout", value=True, help="When ON, builds the fleet one-by-one so existing stations never change.")
         allow_redundancy = st.toggle("Multi-Tier (Allow Overlap)", value=True, help="When ON, drones won't move away just because their coverage rings overlap.")
@@ -1057,6 +1053,7 @@ if st.session_state['csvs_ready']:
     active_drones = []
     fleet_capex = 0
     dfr_dispatch_rate = 0.25 
+    calls_per_day = max(1, int(total_calls / 365))
     
     with budget_placeholder:
         st.markdown("---")
@@ -1403,7 +1400,7 @@ if st.session_state['csvs_ready']:
             font=dict(size=18),
             showlegend=True,
             legend=dict(
-                title_text="", # Erases "undefined" legend bug
+                title_text="",
                 yanchor="top",
                 y=0.98,
                 xanchor="left",
