@@ -697,20 +697,13 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
     a_r = greedy_area(_geos_r)
     a_g = greedy_area(_geos_g)
     
-    max_len = max(len(c_r), len(c_g), len(a_r), len(a_g))
-    
-    def pad(c):
-        res = list(c)
-        while len(res) < max_len:
-            res.append(np.nan)
-        return res
-    
+    # We NO LONGER pad with NaNs. We return ragged dicts and let Pandas handle it gracefully.
     return pd.DataFrame({
-        'Drones': range(max_len),
-        'Responder (Calls)': pad(c_r),
-        'Responder (Area)': pad(a_r),
-        'Guardian (Calls)': pad(c_g),
-        'Guardian (Area)': pad(a_g)
+        'Drones': range(max(len(c_r), len(c_g), len(a_r), len(a_g))),
+        'Responder (Calls)': pd.Series(c_r),
+        'Responder (Area)': pd.Series(a_r),
+        'Guardian (Calls)': pd.Series(c_g),
+        'Guardian (Area)': pd.Series(a_g)
     })
 
 # --- MAIN LOGIC ---
@@ -771,46 +764,15 @@ if st.session_state['csvs_ready']:
         st.stop()
 
     # --- SIDEBAR LAYOUT CONTAINERS ---
-    filter_container = st.sidebar.container()
     opt_container = st.sidebar.container()
+    strat_container = st.sidebar.container()
     disp_container = st.sidebar.container()
-
-    # --- DYNAMIC MISSION DATA FILTERS ---
-    with filter_container:
-        st.markdown("---")
-        st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>⚙️ Data Filters</h3>", unsafe_allow_html=True)
-        
-        if 'type' in df_stations_all.columns:
-            all_types = sorted(df_stations_all['type'].dropna().astype(str).unique().tolist())
-            if all_types:
-                st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Facility Type</div>", unsafe_allow_html=True)
-                selected_types = st.multiselect("Facility Type", options=all_types, default=all_types, label_visibility="collapsed")
-                if not selected_types:
-                    st.warning("Please select at least one Facility Type from the sidebar.")
-                    st.stop()
-                df_stations_all = df_stations_all[df_stations_all['type'].astype(str).isin(selected_types)].copy().reset_index(drop=True)
-                df_stations_all['name'] = "[" + df_stations_all['type'].astype(str) + "] " + df_stations_all['name'].astype(str)
-                
-        if 'priority' in df_calls.columns:
-            all_priorities = sorted(df_calls['priority'].dropna().unique().tolist())
-            if all_priorities:
-                st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Incident Priority</div>", unsafe_allow_html=True)
-                selected_priorities = st.multiselect("Incident Priority", options=all_priorities, default=all_priorities, label_visibility="collapsed")
-                if not selected_priorities:
-                    st.warning("Please select at least one Incident Priority from the sidebar.")
-                    st.stop()
-                df_calls = df_calls[df_calls['priority'].isin(selected_priorities)].copy().reset_index(drop=True)
-
-    if len(df_stations_all) == 0:
-        st.error("No stations match the selected filters.")
-        st.stop()
-    if len(df_calls) == 0:
-        st.error("No calls match the selected filters.")
-        st.stop()
+    filter_container = st.sidebar.container()
+    sim_container = st.sidebar.container()
 
     n = len(df_stations_all)
 
-    # --- OPTIMIZER RADII (Needed for Precompute) ---
+    # --- OPTIMIZER CONTROLS ---
     with opt_container:
         st.markdown("---")
         st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
@@ -850,16 +812,15 @@ if st.session_state['csvs_ready']:
     max_r = min(max(1, get_max_drones('Responder (Calls)')), n)
     max_g = min(max(1, get_max_drones('Guardian (Calls)')), n)
 
-    # --- OPTIMIZER DRONE COUNTS ---
     with opt_container:
         k_responder = st.slider("🚁 Responder Count", 0, max_r, min(1, max_r))
         k_guardian = st.slider("🦅 Guardian Count", 0, max_g, 0)
         
+    with strat_container:
         st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Deployment Strategy</div>", unsafe_allow_html=True)
         incremental_build = st.toggle("Phased Rollout", value=True, help="When ON, builds the fleet one-by-one so existing stations never change.")
         allow_redundancy = st.toggle("Multi-Tier (Allow Overlap)", value=True, help="When ON, drones won't move away just because their coverage rings overlap.")
 
-    # --- DISPLAY CONTROLS ---
     with disp_container:
         st.markdown("---")
         st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-bottom:5px; text-transform:uppercase;'>Display Options</div>", unsafe_allow_html=True)
@@ -870,25 +831,46 @@ if st.session_state['csvs_ready']:
         show_satellite = col2.toggle("Satellite", value=False)
         show_cards = st.toggle("Unit Economics Cards", value=True)
 
+    with filter_container:
+        st.markdown("---")
+        st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>⚙️ Data Filters</h3>", unsafe_allow_html=True)
+        
+        if 'type' in df_stations_all.columns:
+            all_types = sorted(df_stations_all['type'].dropna().astype(str).unique().tolist())
+            if all_types:
+                st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Facility Type</div>", unsafe_allow_html=True)
+                selected_types = st.multiselect("Facility Type", options=all_types, default=all_types, label_visibility="collapsed")
+                if not selected_types:
+                    st.warning("Please select at least one Facility Type from the sidebar.")
+                    st.stop()
+                df_stations_all = df_stations_all[df_stations_all['type'].astype(str).isin(selected_types)].copy().reset_index(drop=True)
+                df_stations_all['name'] = "[" + df_stations_all['type'].astype(str) + "] " + df_stations_all['name'].astype(str)
+                
+        if 'priority' in df_calls.columns:
+            all_priorities = sorted(df_calls['priority'].dropna().unique().tolist())
+            if all_priorities:
+                st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Incident Priority</div>", unsafe_allow_html=True)
+                selected_priorities = st.multiselect("Incident Priority", options=all_priorities, default=all_priorities, label_visibility="collapsed")
+                if not selected_priorities:
+                    st.warning("Please select at least one Incident Priority from the sidebar.")
+                    st.stop()
+                df_calls = df_calls[df_calls['priority'].isin(selected_priorities)].copy().reset_index(drop=True)
+
+    with sim_container:
+        st.markdown("---")
+        st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🚗 Ground Traffic Simulator</h3>", unsafe_allow_html=True)
+        simulate_traffic = st.toggle("Enable Traffic Sim", value=False)
+        if simulate_traffic:
+            traffic_level = st.slider("Traffic Intensity (%)", 0, 100, 40)
+        else:
+            traffic_level = 40
+
     max_dist = max([((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5 for s in station_metadata])
     if max_dist == 0: max_dist = 1.0
     
     for s in station_metadata:
         dist = ((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5
         s['centrality'] = 1.0 - (dist / max_dist)
-
-    max_area = city_m.area if (city_m and city_m.area > 0) else 1.0
-    tb_area_r = [s['clipped_2m'].area / max_area for s in station_metadata]
-    tb_area_g = [s['clipped_guard'].area / max_area for s in station_metadata]
-    tb_cent = [s['centrality'] for s in station_metadata]
-    
-    st.sidebar.markdown("---")
-    st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🚗 Ground Traffic Simulator</h3>", unsafe_allow_html=True)
-    simulate_traffic = st.sidebar.toggle("Enable Traffic Sim", value=False)
-    if simulate_traffic:
-        traffic_level = st.sidebar.slider("Traffic Intensity (%)", 0, 100, 40)
-    else:
-        traffic_level = 40
 
     budget_placeholder = st.sidebar.container()
 
@@ -1060,6 +1042,7 @@ if st.session_state['csvs_ready']:
     active_drones = []
     fleet_capex = 0
     dfr_dispatch_rate = 0.25 
+    calls_per_day = max(1, int(total_calls / 365))
     
     with budget_placeholder:
         st.markdown("---")
@@ -1446,8 +1429,8 @@ if st.session_state['csvs_ready']:
             
             for col, color, dash in line_configs:
                 y_data = df_curve[col].dropna()
-                x_data = df_curve.loc[y_data.index, 'Drones']
                 if not y_data.empty:
+                    x_data = df_curve.loc[y_data.index, 'Drones']
                     fig_curve.add_trace(go.Scatter(
                         x=x_data, y=y_data, 
                         mode='lines+markers', name=col,
@@ -1574,14 +1557,23 @@ if st.session_state['csvs_ready']:
                     
                     legend_html += f'<div style="margin-bottom:3px;"><span style="display:inline-block;width:10px;height:10px;background-color:{d["color"]};margin-right:8px;border-radius:50%;"></span>{short_name}</div>'
                     
-                    assigned_calls = sim_assignments[d_idx]
-                    num_to_simulate = int(len(assigned_calls) * dfr_dispatch_rate)
-                    if num_to_simulate > 0:
-                        assigned_calls = random.sample(list(assigned_calls), min(num_to_simulate, len(assigned_calls)))
+                    assigned_hist = sim_assignments[d_idx]
+                    
+                    # Calculate EXACT daily call load for this specific drone based on financial model
+                    fraction = len(assigned_hist) / len(calls_coords) if len(calls_coords) > 0 else 0
+                    daily_calls_for_drone = int(fraction * daily_calls * dfr_dispatch_rate)
+                    
+                    if daily_calls_for_drone > 0 and len(assigned_hist) > 0:
+                        if daily_calls_for_drone > len(assigned_hist):
+                            sim_calls = random.choices(assigned_hist, k=daily_calls_for_drone)
+                        else:
+                            sim_calls = random.sample(assigned_hist, daily_calls_for_drone)
                     else:
-                        assigned_calls = []
+                        sim_calls = []
+                        
+                    total_sim_flights += len(sim_calls)
 
-                    for call_idx in assigned_calls:
+                    for call_idx in sim_calls:
                         lon1, lat1 = calls_coords[call_idx]
                         lon0, lat0 = d['lon'], d['lat']
                         
@@ -1603,6 +1595,7 @@ if st.session_state['csvs_ready']:
                         })
                 
                 warn_html = ""
+                # Cap the maximum rendering at 2,000 for browser stability
                 if len(flights_json) > 2000:
                     flights_json = random.sample(flights_json, 2000)
                     warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 2,000 flights for performance (Total Actual: {total_sim_flights:,}).</div>'
@@ -1628,7 +1621,7 @@ if st.session_state['csvs_ready']:
                     <div id="ui">
                         <h3 style="margin: 0 0 10px 0; color: #00D2FF;">DFR Swarm Sim</h3>
                         {warn_html}
-                        <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {len(flights_json)} flights (approx {int(dfr_dispatch_rate*100)}% dispatch rate) over a 24-hour cycle.</div>
+                        <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {total_sim_flights:,} DFR flights ({int(dfr_dispatch_rate*100)}% dispatch rate of {daily_calls:,} daily calls) over a 24-hour cycle.</div>
                         
                         <div style="margin-bottom: 15px;">
                             <label style="font-size: 12px; color: #ccc;">Time Speed Multiplier: <span id="speedLabel">1</span>x</label>
@@ -1743,8 +1736,10 @@ if st.session_state['csvs_ready']:
                             let dt = now - lastTime;
                             lastTime = now;
                             
+                            // Safety clamp if user switches browser tabs
                             if (dt > 100) dt = 16.6; 
                             
+                            // 86400 sim seconds per 30 real seconds = 2880x speed multiplier
                             let timeIncrement = (dt / 1000) * 2880 * parseFloat(speedSlider.value);
                             time += timeIncrement; 
                             
