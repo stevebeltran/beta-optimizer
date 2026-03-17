@@ -65,7 +65,7 @@ st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide")
 
 # --- THEME TOGGLE ---
 st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
-theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed")
+theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
 is_dark = theme_choice == "Dark Mode"
 
 # --- DYNAMIC THEME VARIABLES ---
@@ -782,7 +782,7 @@ if st.session_state['csvs_ready']:
             all_types = sorted(df_stations_all['type'].dropna().astype(str).unique().tolist())
             if all_types:
                 st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Facility Type</div>", unsafe_allow_html=True)
-                selected_types = st.multiselect("Facility Type", options=all_types, default=all_types, label_visibility="collapsed")
+                selected_types = st.multiselect("Facility Type", options=all_types, default=all_types, label_visibility="collapsed", help="Filter the types of stations available for drone deployment.")
                 if not selected_types:
                     st.warning("Please select at least one Facility Type.")
                     st.stop()
@@ -793,7 +793,7 @@ if st.session_state['csvs_ready']:
             all_priorities = sorted(df_calls['priority'].dropna().unique().tolist())
             if all_priorities:
                 st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Incident Priority</div>", unsafe_allow_html=True)
-                selected_priorities = st.multiselect("Incident Priority", options=all_priorities, default=all_priorities, label_visibility="collapsed")
+                selected_priorities = st.multiselect("Incident Priority", options=all_priorities, default=all_priorities, label_visibility="collapsed", help="Filter the historical 911 calls by priority level.")
                 if not selected_priorities:
                     st.warning("Please select at least one Incident Priority.")
                     st.stop()
@@ -814,12 +814,19 @@ if st.session_state['csvs_ready']:
         st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>🎯 Optimizer Controls</h3>", unsafe_allow_html=True)
 
         st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Optimization Goal</div>", unsafe_allow_html=True)
-        opt_strategy_raw = st.radio("Goal", ("Call Coverage", "Land Coverage"), horizontal=True, label_visibility="collapsed")
+        opt_strategy_raw = st.radio("Goal", ("Call Coverage", "Land Coverage"), horizontal=True, label_visibility="collapsed", help="Choose whether the algorithm should prioritize covering the most 911 calls or the most physical land area.")
         opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
         
         st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
-        resp_radius_mi = st.slider("🚁 Responder Range (Miles)", 2.0, 3.0, 2.0, step=0.5)
-        guard_radius_mi = st.slider("🦅 Guardian Range (Miles)", 1, 8, 8)
+        
+        # Placeholders to order Counts ABOVE Ranges visually, while calculating logically
+        counts_placeholder = st.container()
+        ranges_placeholder = st.container()
+
+    # Collect Ranges FIRST (logically)
+    with ranges_placeholder:
+        resp_radius_mi = st.slider("🚁 Responder Range (Miles)", 2.0, 3.0, 2.0, step=0.5, help="The effective operational flight radius for short-range Responder drones.")
+        guard_radius_mi = st.slider("🦅 Guardian Range (Miles)", 1, 8, 8, help="The effective operational flight radius for long-range Guardian drones.")
 
     bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}_{resp_radius_mi}_{guard_radius_mi}"
 
@@ -836,6 +843,7 @@ if st.session_state['csvs_ready']:
             bounds_hash
         )
 
+    # Calculate Tie Breakers
     max_dist = max([((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5 for s in station_metadata]) if station_metadata else 1.0
     if max_dist == 0: max_dist = 1.0
     
@@ -860,26 +868,27 @@ if st.session_state['csvs_ready']:
     max_r = min(max(1, get_max_drones('Responder (Calls)')), n)
     max_g = min(max(1, get_max_drones('Guardian (Calls)')), n)
 
-    with opt_container:
-        k_responder = st.slider("🚁 Responder Count", 0, max_r, min(1, max_r))
-        k_guardian = st.slider("🦅 Guardian Count", 0, max_g, 0)
+    # Render Slider Counts in the Placeholder (visually ABOVE ranges)
+    with counts_placeholder:
+        k_responder = st.slider("🚁 Responder Count", 0, max_r, min(1, max_r), help="Number of short-range tactical drones to deploy.")
+        k_guardian = st.slider("🦅 Guardian Count", 0, max_g, 0, help="Number of long-range heavy-lift drones to deploy.")
         
     with strat_expander:
-        incremental_build = st.toggle("Phased Rollout", value=True, help="When ON, builds the fleet one-by-one so existing stations never change.")
-        allow_redundancy = st.toggle("Multi-Tier (Allow Overlap)", value=True, help="When ON, drones won't move away just because their coverage rings overlap.")
+        incremental_build = st.toggle("Phased Rollout", value=True, help="Builds the fleet one-by-one. Existing stations are locked in place as new drones are added.")
+        allow_redundancy = st.toggle("Multi-Tier (Allow Overlap)", value=True, help="Allows drone coverage rings to overlap if call volume justifies it. If disabled, forces drones apart.")
 
     with disp_expander:
         col1, col2 = st.columns(2)
-        show_boundaries = col1.toggle("Boundaries", value=True)
-        show_heatmap = col2.toggle("Heatmap", value=False)
-        show_health = col1.toggle("Health Score", value=False)
-        show_satellite = col2.toggle("Satellite", value=False)
-        show_cards = st.toggle("Unit Economics Cards", value=True)
+        show_boundaries = col1.toggle("Boundaries", value=True, help="Show or hide jurisdiction borders.")
+        show_heatmap = col2.toggle("Heatmap", value=False, help="Overlay a thermal density map of historical 911 calls.")
+        show_health = col1.toggle("Health Score", value=False, help="Display the department's overall drone coverage health score.")
+        show_satellite = col2.toggle("Satellite", value=False, help="Switch the map background to high-resolution satellite imagery.")
+        show_cards = st.toggle("Unit Economics Cards", value=True, help="Show or hide the financial breakdown cards for each deployed drone.")
 
     with sim_expander:
-        simulate_traffic = st.toggle("Enable Traffic Sim", value=False)
+        simulate_traffic = st.toggle("Enable Traffic Sim", value=False, help="Compare drone flight times against ground vehicle drive times.")
         if simulate_traffic:
-            traffic_level = st.slider("Traffic Intensity (%)", 0, 100, 40)
+            traffic_level = st.slider("Traffic Intensity (%)", 0, 100, 40, help="Adjust the simulated ground traffic congestion.")
         else:
             traffic_level = 40
 
@@ -1448,7 +1457,6 @@ if st.session_state['csvs_ready']:
                         line=dict(color=color, width=2, dash=dash), marker=dict(size=4)
                     ))
                     
-                    # Highlight the exact dot where it crosses 90% (No floating text)
                     if 'Calls' in col:
                         idx_90 = y_data[y_data >= 90.0].first_valid_index()
                         if idx_90 is not None:
