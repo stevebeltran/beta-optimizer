@@ -838,7 +838,6 @@ if st.session_state['csvs_ready']:
             bounds_hash
         )
 
-    # Dynamically cap slider maximums to hit 99-100% coverage
     def get_max_drones(col_name):
         series = df_curve[col_name].dropna()
         if len(series) == 0: return 1
@@ -1066,7 +1065,6 @@ if st.session_state['csvs_ready']:
         st.markdown("---")
         st.markdown(f"<h3 style='color:{text_main};'>💰 Budget Impact</h3>", unsafe_allow_html=True)
         
-        # Load the dynamic daily calls from the demo generator if it exists
         inferred_daily_calls = st.session_state.get('inferred_daily_calls_override', max(1, int(total_calls / 365)))
         max_slider_val = max(100, inferred_daily_calls * 3) 
         
@@ -1126,6 +1124,26 @@ if st.session_state['csvs_ready']:
                 </div>
             </div>
             """, unsafe_allow_html=True)
+            
+            if actual_k_responder > 0:
+                st.markdown(f"""
+                <div style="background-color: {card_bg}; border: 1px solid {card_border}; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
+                    <h5 style="color: {text_main}; margin: 0 0 4px 0; font-size: 0.85rem;">RESPONDER <span style="color:{text_muted}; font-weight:normal;">(x{actual_k_responder})</span></h5>
+                    <div style="color: {text_muted}; font-size: 0.75rem;">COVERAGE: <span style="color:{text_main}; font-weight:600;">{resp_radius_mi} MI RADIUS</span></div>
+                    <div style="color: {text_muted}; font-size: 0.75rem;">UNIT CAPEX: <span style="color:{text_main}; font-weight:600;">${CONFIG["RESPONDER_COST"]:,.0f}</span></div>
+                    <div style="color: {text_muted}; font-size: 0.75rem; margin-top: 4px; border-top: 1px solid {card_border}; padding-top: 4px;">SUBTOTAL: <span style="color:{text_main}; font-weight:600;">${capex_responder_total:,.0f}</span></div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            if actual_k_guardian > 0:
+                st.markdown(f"""
+                <div style="background-color: {card_bg}; border: 1px solid {card_border}; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
+                    <h5 style="color: {text_main}; margin: 0 0 4px 0; font-size: 0.85rem;">GUARDIAN <span style="color:{text_muted}; font-weight:normal;">(x{actual_k_guardian})</span></h5>
+                    <div style="color: {text_muted}; font-size: 0.75rem;">COVERAGE: <span style="color:{text_main}; font-weight:600;">{guard_radius_mi} MI RADIUS</span></div>
+                    <div style="color: {text_muted}; font-size: 0.75rem;">UNIT CAPEX: <span style="color:{text_main}; font-weight:600;">${CONFIG["GUARDIAN_COST"]:,.0f}</span></div>
+                    <div style="color: {text_muted}; font-size: 0.75rem; margin-top: 4px; border-top: 1px solid {card_border}; padding-top: 4px;">SUBTOTAL: <span style="color:{text_main}; font-weight:600;">${capex_guardian_total:,.0f}</span></div>
+                </div>
+                """, unsafe_allow_html=True)
 
             cumulative_mask = np.zeros(total_calls, dtype=bool) if total_calls > 0 else None
             
@@ -1385,10 +1403,9 @@ if st.session_state['csvs_ready']:
             mapbox=mapbox_config,
             margin=dict(l=0, r=0, t=0, b=0), 
             height=800,
-            font=dict(size=18),
             showlegend=True,
             legend=dict(
-                title=dict(text=""), # Removes the 'undefined' header
+                title_text="", # Erases "undefined" legend bug
                 yanchor="top",
                 y=0.98,
                 xanchor="left",
@@ -1436,7 +1453,7 @@ if st.session_state['csvs_ready']:
                         line=dict(color=color, width=2, dash=dash), marker=dict(size=4)
                     ))
                     
-                    # Add 90% Highlight Star for Call Metrics
+                    # Highlight the exact dot where it crosses 90% (No floating text)
                     if 'Calls' in col:
                         idx_90 = y_data[y_data >= 90.0].first_valid_index()
                         if idx_90 is not None:
@@ -1444,22 +1461,26 @@ if st.session_state['csvs_ready']:
                             val_90 = y_data.loc[idx_90]
                             fig_curve.add_trace(go.Scatter(
                                 x=[drones_90], y=[val_90],
-                                mode='markers+text',
-                                marker=dict(color=color, size=10, symbol='star', line=dict(color='white', width=1)),
-                                text=[f"90% ({drones_90} Units)"],
-                                textposition="top left",
+                                mode='markers',
+                                marker=dict(color=color, size=12, symbol='star', line=dict(color='white', width=1)),
                                 showlegend=False,
                                 hoverinfo='skip'
                             ))
                 
             fig_curve.update_layout(
-                title_font=dict(size=12, color=text_muted),
                 xaxis_title="Drones", 
                 yaxis_title="Coverage %",
                 xaxis=dict(showgrid=True, gridcolor=card_border, tickfont=dict(color=text_muted)),
-                yaxis=dict(showgrid=True, gridcolor=card_border, tickfont=dict(color=text_muted)),
+                yaxis=dict(
+                    showgrid=True, 
+                    gridcolor=card_border, 
+                    tickfont=dict(color=text_muted),
+                    tickvals=[0, 20, 40, 60, 80, 90, 100],
+                    ticktext=['0', '20', '40', '60', '80', f'<b style="color:{accent_color}; font-size:14px;">90</b>', '100'],
+                    range=[0, 105]
+                ),
                 legend=dict(
-                    title=dict(text=""), # Fixes "undefined" legend bug
+                    title_text="", 
                     orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
                     font=dict(size=10, color=text_muted)
                 ),
@@ -1553,23 +1574,14 @@ if st.session_state['csvs_ready']:
                     
                     legend_html += f'<div style="margin-bottom:3px;"><span style="display:inline-block;width:10px;height:10px;background-color:{d["color"]};margin-right:8px;border-radius:50%;"></span>{short_name}</div>'
                     
-                    assigned_hist = sim_assignments[d_idx]
-                    
-                    # Calculate EXACT daily call load for this specific drone based on financial model
-                    fraction = len(assigned_hist) / len(calls_coords) if len(calls_coords) > 0 else 0
-                    daily_calls_for_drone = int(fraction * daily_calls * dfr_dispatch_rate)
-                    
-                    if daily_calls_for_drone > 0 and len(assigned_hist) > 0:
-                        if daily_calls_for_drone > len(assigned_hist):
-                            sim_calls = random.choices(assigned_hist, k=daily_calls_for_drone)
-                        else:
-                            sim_calls = random.sample(assigned_hist, daily_calls_for_drone)
+                    assigned_calls = sim_assignments[d_idx]
+                    num_to_simulate = int(len(assigned_calls) * dfr_dispatch_rate)
+                    if num_to_simulate > 0:
+                        assigned_calls = random.sample(list(assigned_calls), min(num_to_simulate, len(assigned_calls)))
                     else:
-                        sim_calls = []
-                        
-                    total_sim_flights += len(sim_calls)
+                        assigned_calls = []
 
-                    for call_idx in sim_calls:
+                    for call_idx in assigned_calls:
                         lon1, lat1 = calls_coords[call_idx]
                         lon0, lat0 = d['lon'], d['lat']
                         
@@ -1591,7 +1603,6 @@ if st.session_state['csvs_ready']:
                         })
                 
                 warn_html = ""
-                # Cap the maximum rendering at 2000 for browser stability
                 if len(flights_json) > 2000:
                     flights_json = random.sample(flights_json, 2000)
                     warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 2,000 flights for performance (Total Actual: {total_sim_flights:,}).</div>'
@@ -1617,7 +1628,7 @@ if st.session_state['csvs_ready']:
                     <div id="ui">
                         <h3 style="margin: 0 0 10px 0; color: #00D2FF;">DFR Swarm Sim</h3>
                         {warn_html}
-                        <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {total_sim_flights:,} DFR flights ({int(dfr_dispatch_rate*100)}% dispatch rate of {daily_calls:,} daily calls) over a 24-hour cycle.</div>
+                        <div style="font-size: 13px; color: #aaa; margin-bottom: 15px;">Simulating {len(flights_json)} flights (approx {int(dfr_dispatch_rate*100)}% dispatch rate) over a 24-hour cycle.</div>
                         
                         <div style="margin-bottom: 15px;">
                             <label style="font-size: 12px; color: #ccc;">Time Speed Multiplier: <span id="speedLabel">1</span>x</label>
