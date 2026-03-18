@@ -46,7 +46,7 @@ STATE_FIPS = {
     "WY": "56"
 }
 
-# --- REVERSE LOOKUP DICTIONARY ---
+# --- ADDED: REVERSE LOOKUP DICTIONARY ---
 US_STATES_ABBR = {
     "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR", "California": "CA",
     "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE", "Florida": "FL", "Georgia": "GA",
@@ -94,55 +94,52 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['r_guard'] = 8.0
     st.session_state['dfr_rate'] = 25
     st.session_state['deflect_rate'] = 30
-    st.session_state['theme'] = "Dark Mode"
     st.session_state['total_original_calls'] = 0
 
-# --- SCENARIO LOADER (HIDDEN WHEN MAP LOADED) ---
-if not st.session_state['csvs_ready']:
-    with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
-        uploaded_scenario = st.file_uploader("Load .brinc Scenario File", type=['brinc', 'json'], label_visibility="collapsed")
-        
-        if uploaded_scenario is not None and st.session_state.get('last_loaded_scenario') != uploaded_scenario.file_id:
-            try:
-                file_content = uploaded_scenario.getvalue().decode("utf-8")
-                scenario_data = json.loads(file_content)
+# --- SCENARIO LOADER ---
+with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
+    uploaded_scenario = st.file_uploader("Load .brinc Scenario File", type=['brinc', 'json'], label_visibility="collapsed")
+    
+    if uploaded_scenario is not None and st.session_state.get('last_loaded_scenario') != uploaded_scenario.file_id:
+        try:
+            file_content = uploaded_scenario.getvalue().decode("utf-8")
+            scenario_data = json.loads(file_content)
+            
+            st.session_state['active_city'] = scenario_data.get('city', 'Orlando')
+            st.session_state['active_state'] = scenario_data.get('state', 'FL')
+            st.session_state['k_resp'] = scenario_data.get('k_resp', 0)
+            st.session_state['k_guard'] = scenario_data.get('k_guard', 0)
+            st.session_state['r_resp'] = scenario_data.get('r_resp', 2.0)
+            st.session_state['r_guard'] = scenario_data.get('r_guard', 8.0)
+            st.session_state['dfr_rate'] = scenario_data.get('dfr_rate', 25)
+            st.session_state['deflect_rate'] = scenario_data.get('deflect_rate', 30)
+            
+            calls_data = scenario_data.get('calls_data')
+            stations_data = scenario_data.get('stations_data')
+            
+            st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
+            
+            if calls_data and stations_data:
+                st.session_state['df_calls'] = pd.DataFrame(calls_data)
+                st.session_state['df_stations'] = pd.DataFrame(stations_data)
+                # Count true uploaded subset if real data
+                st.session_state['total_original_calls'] = len(calls_data)
+                st.session_state['csvs_ready'] = True
+                st.toast(f"✅ Loaded custom scenario for {st.session_state['active_city']}!")
+                st.rerun()
+            else:
+                st.session_state['trigger_sim'] = True
+                st.toast(f"✅ Loaded synthetic scenario for {st.session_state['active_city']}!")
+                st.rerun()
                 
-                st.session_state['active_city'] = scenario_data.get('city', 'Orlando')
-                st.session_state['active_state'] = scenario_data.get('state', 'FL')
-                st.session_state['k_resp'] = scenario_data.get('k_resp', 0)
-                st.session_state['k_guard'] = scenario_data.get('k_guard', 0)
-                st.session_state['r_resp'] = scenario_data.get('r_resp', 2.0)
-                st.session_state['r_guard'] = scenario_data.get('r_guard', 8.0)
-                st.session_state['dfr_rate'] = scenario_data.get('dfr_rate', 25)
-                st.session_state['deflect_rate'] = scenario_data.get('deflect_rate', 30)
-                
-                calls_data = scenario_data.get('calls_data')
-                stations_data = scenario_data.get('stations_data')
-                
-                st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
-                
-                if calls_data and stations_data:
-                    st.session_state['df_calls'] = pd.DataFrame(calls_data)
-                    st.session_state['df_stations'] = pd.DataFrame(stations_data)
-                    st.session_state['total_original_calls'] = len(calls_data)
-                    st.session_state['csvs_ready'] = True
-                    st.toast(f"✅ Loaded custom scenario for {st.session_state['active_city']}!")
-                    st.rerun()
-                else:
-                    st.session_state['trigger_sim'] = True
-                    st.toast(f"✅ Loaded synthetic scenario for {st.session_state['active_city']}!")
-                    st.rerun()
-                    
-            except Exception as e:
-                st.error(f"Failed to load file. It may be corrupted or incorrectly formatted.")
-                st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
+        except Exception as e:
+            st.error(f"Failed to load file. It may be corrupted or incorrectly formatted.")
+            st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
 
-# --- THEME TOGGLE (HIDDEN WHEN MAP LOADED) ---
-if not st.session_state['csvs_ready']:
-    st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
-    st.session_state['theme'] = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
-
-is_dark = st.session_state.get('theme', 'Dark Mode') == "Dark Mode"
+# --- THEME TOGGLE ---
+st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
+theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
+is_dark = theme_choice == "Dark Mode"
 
 # --- DYNAMIC THEME VARIABLES ---
 if is_dark:
@@ -326,37 +323,6 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         return False, None
     return False, None
 
-@st.cache_data
-def fetch_osm_stations(minx, miny, maxx, maxy):
-    query = f"""
-    [out:json];
-    (
-      node["amenity"="police"]({miny},{minx},{maxy},{maxx});
-      node["amenity"="fire_station"]({miny},{minx},{maxy},{maxx});
-      way["amenity"="police"]({miny},{minx},{maxy},{maxx});
-      way["amenity"="fire_station"]({miny},{minx},{maxy},{maxx});
-    );
-    out center;
-    """
-    url = "https://overpass-api.de/api/interpreter"
-    data = urllib.parse.urlencode({'data': query}).encode('utf-8')
-    req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
-    try:
-        with urllib.request.urlopen(req) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            stations = []
-            for idx, element in enumerate(result['elements']):
-                lat = element.get('lat') or element.get('center', {}).get('lat')
-                lon = element.get('lon') or element.get('center', {}).get('lon')
-                tags = element.get('tags', {})
-                name = tags.get('name', f"Station {idx+1}")
-                stype = "Police" if tags.get('amenity') == 'police' else "Fire"
-                if lat and lon:
-                    stations.append({'name': name, 'lat': lat, 'lon': lon, 'type': stype})
-            return pd.DataFrame(stations)
-    except Exception as e:
-        return pd.DataFrame()
-
 def generate_random_points_in_polygon(polygon, num_points):
     points = []
     minx, miny, maxx, maxy = polygon.bounds
@@ -520,8 +486,11 @@ if not st.session_state['csvs_ready']:
                     st.session_state['active_state'] = input_state
                         
                     annual_cfs = int(estimated_pop * 0.6) 
+                    
+                    # Store true annual volume before capping for map rendering
+                    st.session_state['total_original_calls'] = annual_cfs
+                    
                     simulated_points_count = min(int(annual_cfs / 12), 25000)
-                    st.session_state['total_original_calls'] = simulated_points_count
                     
                 with st.spinner("Procedurally mapping true-to-life 911 call clusters..."):
                     np.random.seed(42)
@@ -1900,10 +1869,14 @@ if st.session_state['csvs_ready']:
                     
                     assigned_hist = sim_assignments[d_idx]
                     
-                    # Force a dense visual simulation using entire subset
-                    num_to_simulate = int(len(assigned_hist) * dfr_dispatch_rate)
-                    if num_to_simulate > 0:
-                        sim_calls = random.sample(assigned_hist, min(num_to_simulate, len(assigned_hist)))
+                    fraction = len(assigned_hist) / len(calls_coords) if len(calls_coords) > 0 else 0
+                    daily_calls_for_drone = int(fraction * daily_calls * dfr_dispatch_rate)
+                    
+                    if daily_calls_for_drone > 0 and len(assigned_hist) > 0:
+                        if daily_calls_for_drone > len(assigned_hist):
+                            sim_calls = random.choices(assigned_hist, k=daily_calls_for_drone)
+                        else:
+                            sim_calls = random.sample(assigned_hist, daily_calls_for_drone)
                     else:
                         sim_calls = []
                         
@@ -1915,10 +1888,10 @@ if st.session_state['csvs_ready']:
                         
                         dist_mi = ((lon1 - lon0)**2 + (lat1 - lat0)**2)**0.5 * 69.172
                         
-                        # Guarantee visible flights in compressed time
-                        vis_time = random.randint(3000, 5000) 
+                        flight_time_sec = (dist_mi / d['speed_mph']) * 3600
+                        vis_time = max(flight_time_sec * 3, 120) 
                         
-                        launch = random.randint(0, 86400 - vis_time)
+                        launch = random.randint(0, 86400)
                         
                         mid_lon = (lon0 + lon1) / 2
                         mid_lat = (lat0 + lat1) / 2
@@ -1931,9 +1904,9 @@ if st.session_state['csvs_ready']:
                         })
                 
                 warn_html = ""
-                if len(flights_json) > 3000:
-                    flights_json = random.sample(flights_json, 3000)
-                    warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 3,000 flights for performance (Total Actual: {total_sim_flights:,}).</div>'
+                if len(flights_json) > 2000:
+                    flights_json = random.sample(flights_json, 2000)
+                    warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 2,000 flights for performance (Total Actual: {total_sim_flights:,}).</div>'
                 
                 drone_svg = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M18 6a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4zm12 12a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4z'/%3E%3Cpath stroke='white' stroke-width='2' stroke-linecap='round' d='M8.5 8.5l7 7m0-7l-7 7'/%3E%3Ccircle cx='12' cy='12' r='2' fill='white'/%3E%3C/svg%3E"
                 
