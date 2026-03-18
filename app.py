@@ -65,7 +65,7 @@ st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide")
 
 # --- THEME TOGGLE ---
 st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
-theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
+theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed")
 is_dark = theme_choice == "Dark Mode"
 
 # --- DYNAMIC THEME VARIABLES ---
@@ -97,7 +97,6 @@ if is_dark:
     .stApp, .main {{ background-color: {bg_main} !important; }}
     html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
-    [data-testid="stSidebar"] [data-testid="stImage"] img {{ filter: brightness(0) invert(1); }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
@@ -174,7 +173,7 @@ st.markdown(
 
 # --- LOGO ---
 try:
-    st.sidebar.image("logo.png", use_container_width=True)
+    st.sidebar.image("logo.png", width='stretch')
 except FileNotFoundError:
     pass
 
@@ -523,6 +522,9 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_
     resp_matrix = np.zeros((n, total_calls), dtype=bool)
     guard_matrix = np.zeros((n, total_calls), dtype=bool)
     
+    dist_matrix_r = np.zeros((n, total_calls))
+    dist_matrix_g = np.zeros((n, total_calls))
+    
     display_calls = calls_in_city.sample(min(5000, total_calls), random_state=42).to_crs(epsg=4326) if not calls_in_city.empty else gpd.GeoDataFrame()
     
     if not calls_in_city.empty:
@@ -536,6 +538,9 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_
             mask_g = dists <= radius_guard_m
             resp_matrix[idx_pos, :] = mask_r
             guard_matrix[idx_pos, :] = mask_g
+            
+            dist_matrix_r[idx_pos, :] = dists_mi
+            dist_matrix_g[idx_pos, :] = dists_mi
 
             full_buf_2m = s_pt_m.buffer(radius_resp_m)
             try: clipped_2m = full_buf_2m.intersection(_city_m)
@@ -554,9 +559,9 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_
                 'avg_dist_r': avg_dist_r, 'avg_dist_g': avg_dist_g
             })
             
-    return calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls
+    return calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls
 
-def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy, tb_area_r, tb_area_g, tb_cent, incremental=True):
+def solve_mclp(resp_matrix, guard_matrix, dist_r, dist_g, num_resp, num_guard, allow_redundancy, incremental=True):
     n_stations, n_calls = resp_matrix.shape
     if n_calls == 0 or (num_resp == 0 and num_guard == 0):
         return [], [], [], []
@@ -571,6 +576,10 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
     
     u_resp = resp_matrix[:, unique_idx]
     u_guard = guard_matrix[:, unique_idx]
+    
+    u_dist_r = dist_r[:, unique_idx]
+    u_dist_g = dist_g[:, unique_idx]
+    
     n_u = len(weights)
 
     def run_lp(target_r, target_g, locked_r, locked_g):
@@ -587,45 +596,31 @@ def solve_mclp(resp_matrix, guard_matrix, num_resp, num_guard, allow_redundancy,
         if not allow_redundancy:
             for s in range(n_stations): model += x_r[s] + x_g[s] <= 1
 
-        if allow_redundancy:
-            y_r = pulp.LpVariable.dicts("cl_r", range(n_u), 0, 1, pulp.LpBinary)
-            y_g = pulp.LpVariable.dicts("cl_g", range(n_u), 0, 1, pulp.LpBinary)
-            
-            primary_obj = pulp.lpSum(y_r[i] * weights[i] + y_g[i] * weights[i] for i in range(n_u))
-            
-            for i in range(n_u):
-                cover_r = [x_r[s] for s in range(n_stations) if u_resp[s, i]]
-                cover_g = [x_g[s] for s in range(n_stations) if u_guard[s, i]]
-                
-                if cover_r: model += y_r[i] <= pulp.lpSum(cover_r)
-                else: model += y_r[i] == 0
-                if cover_g: model += y_g[i] <= pulp.lpSum(cover_g)
-                else: model += y_g[i] == 0
-        else:
-            y = pulp.LpVariable.dicts("cl", range(n_u), 0, 1, pulp.LpBinary)
-            primary_obj = pulp.lpSum(y[i] * weights[i] for i in range(n_u))
-
-            for i in range(n_u):
-                cover = []
-                for s in range(n_stations):
-                    if u_resp[s, i]: cover.append(x_r[s])
-                    if u_guard[s, i]: cover.append(x_g[s])
-                
-                if cover: model += y[i] <= pulp.lpSum(cover)
-                else: model += y[i] == 0
-
-        n_drones_step = target_r + target_g
-        if n_drones_step == 0: n_drones_step = 1
-        area_weight = 0.4 / n_drones_step
-        cent_weight = 0.05 / n_drones_step
+        y = pulp.LpVariable.dicts("cl", range(n_u), 0, 1, pulp.LpBinary)
         
-        tie_breaker_obj = pulp.lpSum(
-            x_r[s] * (tb_area_r[s] * area_weight + tb_cent[s] * cent_weight) +
-            x_g[s] * (tb_area_g[s] * area_weight + tb_cent[s] * cent_weight)
+        # Primary Objective: Maximize covered calls
+        primary_obj = pulp.lpSum(y[i] * weights[i] for i in range(n_u))
+
+        # Secondary Objective: Penalize long flight distances. 
+        # For every station chosen, subtract a tiny fraction of its total required flight distance.
+        penalty_factor = 0.00001
+        distance_penalty = pulp.lpSum(
+            x_r[s] * np.sum(u_dist_r[s, :]) * penalty_factor +
+            x_g[s] * np.sum(u_dist_g[s, :]) * penalty_factor
             for s in range(n_stations)
         )
 
-        model += primary_obj + tie_breaker_obj
+        model += primary_obj - distance_penalty
+
+        for i in range(n_u):
+            cover = []
+            for s in range(n_stations):
+                if u_resp[s, i]: cover.append(x_r[s])
+                if u_guard[s, i]: cover.append(x_g[s])
+            
+            if cover: model += y[i] <= pulp.lpSum(cover)
+            else: model += y[i] == 0
+
         model.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=10, gapRel=0.0))
 
         res_r = [i for i in range(n_stations) if pulp.value(x_r[i]) == 1]
@@ -819,11 +814,9 @@ if st.session_state['csvs_ready']:
         
         st.markdown(f"<div style='font-size:0.75rem; color:{text_muted}; font-weight:800; margin-top:15px; margin-bottom:5px; text-transform:uppercase;'>Fleet Configuration</div>", unsafe_allow_html=True)
         
-        # Placeholders to order Counts ABOVE Ranges visually, while calculating logically
         counts_placeholder = st.container()
         ranges_placeholder = st.container()
 
-    # Collect Ranges FIRST (logically)
     with ranges_placeholder:
         resp_radius_mi = st.slider("🚁 Responder Range (Miles)", 2.0, 3.0, 2.0, step=0.5, help="The effective operational flight radius for short-range Responder drones.")
         guard_radius_mi = st.slider("🦅 Guardian Range (Miles)", 1, 8, 8, help="The effective operational flight radius for long-range Guardian drones.")
@@ -831,7 +824,7 @@ if st.session_state['csvs_ready']:
     bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}_{resp_radius_mi}_{guard_radius_mi}"
 
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
-        calls_in_city, display_calls, resp_matrix, guard_matrix, station_metadata, total_calls = precompute_spatial_data(
+        calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls = precompute_spatial_data(
             df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, bounds_hash
         )
         
@@ -842,19 +835,6 @@ if st.session_state['csvs_ready']:
             city_m.area if city_m else 1.0,
             bounds_hash
         )
-
-    # Calculate Tie Breakers
-    max_dist = max([((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5 for s in station_metadata]) if station_metadata else 1.0
-    if max_dist == 0: max_dist = 1.0
-    
-    for s in station_metadata:
-        dist = ((s['lon'] - center_lon)**2 + (s['lat'] - center_lat)**2)**0.5
-        s['centrality'] = 1.0 - (dist / max_dist)
-
-    max_area = city_m.area if (city_m and city_m.area > 0) else 1.0
-    tb_area_r = [s['clipped_2m'].area / max_area for s in station_metadata]
-    tb_area_g = [s['clipped_guard'].area / max_area for s in station_metadata]
-    tb_cent = [s['centrality'] for s in station_metadata]
 
     def get_max_drones(col_name):
         series = df_curve[col_name].dropna()
@@ -868,7 +848,6 @@ if st.session_state['csvs_ready']:
     max_r = min(max(1, get_max_drones('Responder (Calls)')), n)
     max_g = min(max(1, get_max_drones('Guardian (Calls)')), n)
 
-    # Render Slider Counts in the Placeholder (visually ABOVE ranges)
     with counts_placeholder:
         k_responder = st.slider("🚁 Responder Count", 0, max_r, min(1, max_r), help="Number of short-range tactical drones to deploy.")
         k_guardian = st.slider("🦅 Guardian Count", 0, max_g, 0, help="Number of long-range heavy-lift drones to deploy.")
@@ -906,7 +885,7 @@ if st.session_state['csvs_ready']:
         
         if opt_strategy == "Maximize Call Coverage":
             with st.spinner("🧠 Running exact MCLP Optimizer (PuLP)..."):
-                r_best, g_best, chrono_r, chrono_g = solve_mclp(resp_matrix, guard_matrix, k_responder, k_guardian, allow_redundancy, tb_area_r, tb_area_g, tb_cent, incremental=incremental_build)
+                r_best, g_best, chrono_r, chrono_g = solve_mclp(resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, k_responder, k_guardian, allow_redundancy, incremental=incremental_build)
                 best_combo = (tuple(r_best), tuple(g_best))
         else:
             station_indices = list(range(n))
@@ -1061,8 +1040,6 @@ if st.session_state['csvs_ready']:
     # ==========================================
     active_drones = []
     fleet_capex = 0
-    dfr_dispatch_rate = 0.25 
-    calls_per_day = max(1, int(total_calls / 365))
     
     with budget_placeholder:
         st.markdown("---")
@@ -1409,7 +1386,7 @@ if st.session_state['csvs_ready']:
             font=dict(size=18),
             showlegend=True,
             legend=dict(
-                title_text="",
+                title=dict(text=""),
                 yanchor="top",
                 y=0.98,
                 xanchor="left",
@@ -1449,14 +1426,15 @@ if st.session_state['csvs_ready']:
             
             for col, color, dash in line_configs:
                 y_data = df_curve[col].dropna()
+                x_data = df_curve.loc[y_data.index, 'Drones']
                 if not y_data.empty:
-                    x_data = df_curve.loc[y_data.index, 'Drones']
                     fig_curve.add_trace(go.Scatter(
                         x=x_data, y=y_data, 
                         mode='lines+markers', name=col,
                         line=dict(color=color, width=2, dash=dash), marker=dict(size=4)
                     ))
                     
+                    # Highlight the exact dot where it crosses 90% (No floating text)
                     if 'Calls' in col:
                         idx_90 = y_data[y_data >= 90.0].first_valid_index()
                         if idx_90 is not None:
@@ -1483,7 +1461,7 @@ if st.session_state['csvs_ready']:
                     range=[0, 105]
                 ),
                 legend=dict(
-                    title_text="", 
+                    title=dict(text=""),
                     orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
                     font=dict(size=10, color=text_muted)
                 ),
@@ -1576,23 +1554,14 @@ if st.session_state['csvs_ready']:
                     
                     legend_html += f'<div style="margin-bottom:3px;"><span style="display:inline-block;width:10px;height:10px;background-color:{d["color"]};margin-right:8px;border-radius:50%;"></span>{short_name}</div>'
                     
-                    assigned_hist = sim_assignments[d_idx]
-                    
-                    # Calculate EXACT daily call load for this specific drone based on financial model
-                    fraction = len(assigned_hist) / len(calls_coords) if len(calls_coords) > 0 else 0
-                    daily_calls_for_drone = int(fraction * daily_calls * dfr_dispatch_rate)
-                    
-                    if daily_calls_for_drone > 0 and len(assigned_hist) > 0:
-                        if daily_calls_for_drone > len(assigned_hist):
-                            sim_calls = random.choices(assigned_hist, k=daily_calls_for_drone)
-                        else:
-                            sim_calls = random.sample(assigned_hist, daily_calls_for_drone)
+                    assigned_calls = sim_assignments[d_idx]
+                    num_to_simulate = int(len(assigned_calls) * dfr_dispatch_rate)
+                    if num_to_simulate > 0:
+                        assigned_calls = random.sample(list(assigned_calls), min(num_to_simulate, len(assigned_calls)))
                     else:
-                        sim_calls = []
-                        
-                    total_sim_flights += len(sim_calls)
+                        assigned_calls = []
 
-                    for call_idx in sim_calls:
+                    for call_idx in assigned_calls:
                         lon1, lat1 = calls_coords[call_idx]
                         lon0, lat0 = d['lon'], d['lat']
                         
@@ -1614,7 +1583,6 @@ if st.session_state['csvs_ready']:
                         })
                 
                 warn_html = ""
-                # Cap the maximum rendering at 2000 for browser stability
                 if len(flights_json) > 2000:
                     flights_json = random.sample(flights_json, 2000)
                     warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 2,000 flights for performance (Total Actual: {total_sim_flights:,}).</div>'
@@ -1755,10 +1723,8 @@ if st.session_state['csvs_ready']:
                             let dt = now - lastTime;
                             lastTime = now;
                             
-                            // Safety clamp if user switches browser tabs
                             if (dt > 100) dt = 16.6; 
                             
-                            // 86400 sim seconds per 30 real seconds = 2880x speed multiplier
                             let timeIncrement = (dt / 1000) * 2880 * parseFloat(speedSlider.value);
                             time += timeIncrement; 
                             
