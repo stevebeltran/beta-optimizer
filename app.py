@@ -17,7 +17,6 @@ import re
 import random
 import json
 import urllib.request
-import urllib.parse
 import zipfile
 import io
 import streamlit.components.v1 as components
@@ -411,13 +410,12 @@ if not st.session_state['csvs_ready']:
                         df_osm = fetch_osm_stations(minx, miny, maxx, maxy)
                         
                     if not df_osm.empty:
-                        # Filter out stations that might have been caught in bounding box but fall outside the exact polygon
                         points = gpd.GeoDataFrame(df_osm, geometry=gpd.points_from_xy(df_osm.lon, df_osm.lat), crs="EPSG:4326")
                         valid_points = points[points.within(city_poly)]
                         if not valid_points.empty:
                             st.session_state['df_stations'] = valid_points.drop(columns=['geometry'])
                         else:
-                            df_osm = pd.DataFrame() # Fallback if all points failed polygon check
+                            df_osm = pd.DataFrame() 
                             
                     if df_osm.empty:
                         station_points = generate_random_points_in_polygon(city_poly, 80)
@@ -819,7 +817,6 @@ if st.session_state['csvs_ready']:
     opt_container = st.sidebar.container()
     strat_expander = st.sidebar.expander("⚙️ Deployment Strategy", expanded=False)
     
-    # Put the map toggle directly under the drone counts
     with opt_container:
         st.session_state['use_osm'] = st.toggle("Include Live Station Map Data (OSM API)", value=st.session_state.get('use_osm', True), help="If active when generating a city, plots actual municipal infrastructure.")
 
@@ -1161,17 +1158,6 @@ if st.session_state['csvs_ready']:
             </div>
             """, unsafe_allow_html=True)
             
-            st.markdown("#### 🏛️ Federal Grant Opportunities")
-            st.markdown(f"""
-            <div style="font-size: 0.8rem; color: {text_muted}; line-height: 1.4; margin-bottom: 15px;">
-                <a href="https://bja.ojp.gov/program/jag/overview" target="_blank" style="color: {accent_color}; text-decoration: none; font-weight: bold;">DOJ Byrne JAG Program</a><br>
-                The leading source of federal justice funding to state and local jurisdictions. Fully eligible for UAS/drone technology procurement.
-                <br><br>
-                <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank" style="color: {accent_color}; text-decoration: none; font-weight: bold;">FEMA HSGP</a><br>
-                Homeland Security Grant Program. Can offset hardware CAPEX for disaster response and tactical deployments.
-            </div>
-            """, unsafe_allow_html=True)
-
             if actual_k_responder > 0:
                 st.markdown(f"""
                 <div style="background-color: {card_bg}; border: 1px solid {card_border}; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
@@ -1319,7 +1305,7 @@ if st.session_state['csvs_ready']:
         m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
         m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
 
-    # --- KML EXPORT ---
+    # --- KML EXPORT & GRANTS ---
     kml_data = generate_kml(
         active_gdf, 
         active_drones, 
@@ -1327,6 +1313,17 @@ if st.session_state['csvs_ready']:
     )
     
     st.sidebar.markdown("---")
+    st.sidebar.markdown(f"<h4 style='margin-bottom:5px; color:{text_main};'>🏛️ Federal Grant Opportunities</h4>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"""
+    <div style="font-size: 0.75rem; color: {text_muted}; line-height: 1.4; margin-bottom: 15px;">
+        <a href="https://bja.ojp.gov/program/jag/overview" target="_blank" style="color: {accent_color}; text-decoration: none; font-weight: bold;">DOJ Byrne JAG Program</a><br>
+        The leading source of federal justice funding to state and local jurisdictions. Fully eligible for UAS/drone technology procurement.
+        <br><br>
+        <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank" style="color: {accent_color}; text-decoration: none; font-weight: bold;">FEMA HSGP</a><br>
+        Homeland Security Grant Program. Can offset hardware CAPEX for disaster response and tactical deployments.
+    </div>
+    """, unsafe_allow_html=True)
+    
     st.sidebar.download_button(
         label="🌏 Download for Google Earth",
         data=kml_data,
