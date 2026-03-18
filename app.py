@@ -79,51 +79,53 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['r_guard'] = 8.0
     st.session_state['dfr_rate'] = 25
     st.session_state['deflect_rate'] = 30
+    st.session_state['theme'] = "Dark Mode"
 
-# --- SCENARIO LOADER ---
-with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
-    uploaded_scenario = st.file_uploader("Load .brinc Scenario File", type=['brinc', 'json'], label_visibility="collapsed")
-    
-    # Use file_id to prevent the Streamlit infinite rerun loop bug
-    if uploaded_scenario is not None and st.session_state.get('last_loaded_scenario') != uploaded_scenario.file_id:
-        try:
-            # Safely decode the bytes to a string before parsing JSON
-            file_content = uploaded_scenario.getvalue().decode("utf-8")
-            scenario_data = json.loads(file_content)
-            
-            st.session_state['active_city'] = scenario_data.get('city', 'Orlando')
-            st.session_state['active_state'] = scenario_data.get('state', 'FL')
-            st.session_state['k_resp'] = scenario_data.get('k_resp', 0)
-            st.session_state['k_guard'] = scenario_data.get('k_guard', 0)
-            st.session_state['r_resp'] = scenario_data.get('r_resp', 2.0)
-            st.session_state['r_guard'] = scenario_data.get('r_guard', 8.0)
-            st.session_state['dfr_rate'] = scenario_data.get('dfr_rate', 25)
-            st.session_state['deflect_rate'] = scenario_data.get('deflect_rate', 30)
-            
-            calls_data = scenario_data.get('calls_data')
-            stations_data = scenario_data.get('stations_data')
-            
-            st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
-            
-            if calls_data and stations_data:
-                st.session_state['df_calls'] = pd.DataFrame(calls_data)
-                st.session_state['df_stations'] = pd.DataFrame(stations_data)
-                st.session_state['csvs_ready'] = True
-                st.toast(f"✅ Loaded custom scenario for {st.session_state['active_city']}!")
-                st.rerun()
-            else:
-                st.session_state['trigger_sim'] = True
-                st.toast(f"✅ Loaded synthetic scenario for {st.session_state['active_city']}!")
-                st.rerun()
+# --- SCENARIO LOADER (HIDDEN AFTER MAP LOADS) ---
+if not st.session_state['csvs_ready']:
+    with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
+        uploaded_scenario = st.file_uploader("Load .brinc Scenario File", type=['brinc', 'json'], label_visibility="collapsed")
+        
+        if uploaded_scenario is not None and st.session_state.get('last_loaded_scenario') != uploaded_scenario.file_id:
+            try:
+                file_content = uploaded_scenario.getvalue().decode("utf-8")
+                scenario_data = json.loads(file_content)
                 
-        except Exception as e:
-            st.error(f"Failed to load file. It may be corrupted or incorrectly formatted.")
-            st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
+                st.session_state['active_city'] = scenario_data.get('city', 'Orlando')
+                st.session_state['active_state'] = scenario_data.get('state', 'FL')
+                st.session_state['k_resp'] = scenario_data.get('k_resp', 0)
+                st.session_state['k_guard'] = scenario_data.get('k_guard', 0)
+                st.session_state['r_resp'] = scenario_data.get('r_resp', 2.0)
+                st.session_state['r_guard'] = scenario_data.get('r_guard', 8.0)
+                st.session_state['dfr_rate'] = scenario_data.get('dfr_rate', 25)
+                st.session_state['deflect_rate'] = scenario_data.get('deflect_rate', 30)
+                
+                calls_data = scenario_data.get('calls_data')
+                stations_data = scenario_data.get('stations_data')
+                
+                st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
+                
+                if calls_data and stations_data:
+                    st.session_state['df_calls'] = pd.DataFrame(calls_data)
+                    st.session_state['df_stations'] = pd.DataFrame(stations_data)
+                    st.session_state['csvs_ready'] = True
+                    st.toast(f"✅ Loaded custom scenario for {st.session_state['active_city']}!")
+                    st.rerun()
+                else:
+                    st.session_state['trigger_sim'] = True
+                    st.toast(f"✅ Loaded synthetic scenario for {st.session_state['active_city']}!")
+                    st.rerun()
+                    
+            except Exception as e:
+                st.error(f"Failed to load file. It may be corrupted or incorrectly formatted.")
+                st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
 
-# --- THEME TOGGLE ---
-st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
-theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
-is_dark = theme_choice == "Dark Mode"
+# --- THEME TOGGLE (HIDDEN AFTER MAP LOADS) ---
+if not st.session_state['csvs_ready']:
+    st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
+    st.session_state['theme'] = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
+
+is_dark = st.session_state['theme'] == "Dark Mode"
 
 # --- DYNAMIC THEME VARIABLES ---
 if is_dark:
@@ -361,11 +363,16 @@ if not st.session_state['csvs_ready']:
             if 'lat' not in df_c.columns or 'lon' not in df_c.columns:
                 st.error(f"❌ **Validation Error:** Your calls.csv must contain 'lat' and 'lon' columns. Found: {', '.join(df_c.columns)}")
                 st.stop()
-                
-            orig_len = len(df_c)
-            df_c = df_c.dropna(subset=['lat', 'lon']).reset_index(drop=True)
-            if len(df_c) < orig_len:
-                st.warning(f"⚠️ Dropped {orig_len - len(df_c)} rows from calls data due to missing or invalid GPS coordinates.")
+            
+            # MEMORY OPTIMIZATION: Drop unnecessary columns
+            keep_cols_c = ['lat', 'lon']
+            if 'priority' in df_c.columns: keep_cols_c.append('priority')
+            df_c = df_c[keep_cols_c].dropna(subset=['lat', 'lon']).reset_index(drop=True)
+            
+            # MEMORY OPTIMIZATION: Cap at 25k calls to prevent Streamlit Cloud crashes
+            if len(df_c) > 25000:
+                df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
+                st.toast("⚠️ Large dataset detected. Sampled 25,000 calls to ensure fast cloud performance.")
                 
             st.session_state['df_calls'] = df_c
             
@@ -377,7 +384,19 @@ if not st.session_state['csvs_ready']:
                 st.error(f"❌ **Validation Error:** Your stations.csv must contain 'lat' and 'lon' columns. Found: {', '.join(df_s.columns)}")
                 st.stop()
                 
-            st.session_state['df_stations'] = df_s.dropna(subset=['lat', 'lon']).reset_index(drop=True)
+            # MEMORY OPTIMIZATION: Drop unnecessary columns
+            keep_cols_s = ['lat', 'lon']
+            if 'name' in df_s.columns: keep_cols_s.append('name')
+            if 'type' in df_s.columns: keep_cols_s.append('type')
+            df_s = df_s[keep_cols_s].dropna(subset=['lat', 'lon']).reset_index(drop=True)
+            
+            if 'name' not in df_s.columns:
+                df_s['name'] = [f"Station {i+1}" for i in range(len(df_s))]
+                
+            if len(df_s) > 100:
+                df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
+                
+            st.session_state['df_stations'] = df_s
             st.session_state['csvs_ready'] = True
             st.rerun()
 
@@ -576,7 +595,7 @@ def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
     return master_gdf
 
 @st.cache_resource
-def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, bounds_hash):
+def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash):
     gdf_calls = gpd.GeoDataFrame(df_calls, geometry=gpd.points_from_xy(df_calls.lon, df_calls.lat), crs="EPSG:4326")
     gdf_calls_utm = gdf_calls.to_crs(epsg=epsg_code)
     
@@ -597,6 +616,12 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_
     
     display_calls = calls_in_city.sample(min(5000, total_calls), random_state=42).to_crs(epsg=4326) if not calls_in_city.empty else gpd.GeoDataFrame()
     
+    max_dist = 0
+    for _, row in df_stations_all.iterrows():
+        d = ((row['lon'] - center_lon)**2 + (row['lat'] - center_lat)**2)**0.5
+        if d > max_dist: max_dist = d
+    if max_dist == 0: max_dist = 1.0
+
     if not calls_in_city.empty:
         calls_array = np.array(list(zip(calls_in_city.geometry.x, calls_in_city.geometry.y)))
         for idx_pos, (i, row) in enumerate(df_stations_all.iterrows()):
@@ -622,11 +647,15 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_
             
             avg_dist_r = dists_mi[mask_r].mean() if mask_r.any() else (resp_radius_mi * (2/3))
             avg_dist_g = dists_mi[mask_g].mean() if mask_g.any() else (guard_radius_mi * (2/3))
-                
+            
+            dist_c = ((row['lon'] - center_lon)**2 + (row['lat'] - center_lat)**2)**0.5
+            centrality = 1.0 - (dist_c / max_dist)
+            
             station_metadata.append({
                 'name': row['name'], 'lat': row['lat'], 'lon': row['lon'],
                 'clipped_2m': clipped_2m, 'clipped_guard': clipped_guard,
-                'avg_dist_r': avg_dist_r, 'avg_dist_g': avg_dist_g
+                'avg_dist_r': avg_dist_r, 'avg_dist_g': avg_dist_g,
+                'centrality': centrality
             })
             
     return calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls
@@ -776,6 +805,9 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         'Guardian (Area)': pad(a_g)
     })
 
+# --- PRE-RENDER EXPORT PLACEHOLDER ---
+export_placeholder = st.sidebar.container()
+
 # --- MAIN LOGIC ---
 if st.session_state['csvs_ready']:
     df_calls = st.session_state['df_calls'].copy()
@@ -898,7 +930,7 @@ if st.session_state['csvs_ready']:
 
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
         calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls = precompute_spatial_data(
-            df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, bounds_hash
+            df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash
         )
         
         df_curve = compute_all_elbow_curves(
@@ -922,7 +954,7 @@ if st.session_state['csvs_ready']:
     max_g = min(max(1, get_max_drones('Guardian (Calls)')), n)
 
     with counts_placeholder:
-        safe_resp_val = min(st.session_state.get('k_resp', 1), max_r)
+        safe_resp_val = min(st.session_state.get('k_resp', 0), max_r)
         k_responder = st.slider("🚁 Responder Count", 0, max_r, safe_resp_val, help="Number of short-range tactical drones to deploy.")
         
         safe_guard_val = min(st.session_state.get('k_guard', 0), max_g)
@@ -1334,33 +1366,35 @@ if st.session_state['csvs_ready']:
         m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
         m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
 
-    # --- SAVE SCENARIO FILE EXPORT ---
-    st.sidebar.markdown("---")
-    st.sidebar.markdown(f"<h4 style='margin-bottom:5px; color:{text_main};'>📤 Export Scenario</h4>", unsafe_allow_html=True)
-    st.sidebar.markdown(f"<div style='font-size: 0.75rem; color: {text_muted}; margin-bottom: 10px;'>Save your current configurations and drone counts to share with a customer.</div>", unsafe_allow_html=True)
-    
-    current_date = datetime.datetime.now().strftime("%Y-%m-%d")
-    safe_city_name = st.session_state.get('active_city', 'City').replace(" ", "_").replace("/", "_")
-    
-    export_dict = {
-        "city": st.session_state.get('active_city', 'Orlando'),
-        "state": st.session_state.get('active_state', 'FL'),
-        "k_resp": k_responder,
-        "k_guard": k_guardian,
-        "r_resp": resp_radius_mi,
-        "r_guard": guard_radius_mi,
-        "dfr_rate": int(dfr_dispatch_rate * 100),
-        "deflect_rate": int(deflection_rate * 100),
-        "calls_data": json.loads(st.session_state['df_calls'].replace({np.nan: None}).to_json(orient='records')) if st.session_state.get('df_calls') is not None else None,
-        "stations_data": json.loads(st.session_state['df_stations'].replace({np.nan: None}).to_json(orient='records')) if st.session_state.get('df_stations') is not None else None
-    }
-    
-    st.sidebar.download_button(
-        label="💾 Download .brinc File",
-        data=json.dumps(export_dict),
-        file_name=f"Brinc_{safe_city_name}_{current_date}.brinc",
-        mime="application/json"
-    )
+    # --- EXPORT & PROPOSALS PLACEHOLDER FILL ---
+    with export_placeholder:
+        st.markdown("---")
+        st.markdown(f"<h4 style='margin-bottom:5px; color:{text_main};'>📤 Export & Proposals</h4>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size: 0.75rem; color: {text_muted}; margin-bottom: 10px;'>Save your configuration or download a printable PDF proposal.</div>", unsafe_allow_html=True)
+        
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        safe_city_name = st.session_state.get('active_city', 'City').replace(" ", "_").replace("/", "_")
+        
+        export_dict = {
+            "city": st.session_state.get('active_city', 'Orlando'),
+            "state": st.session_state.get('active_state', 'FL'),
+            "k_resp": k_responder,
+            "k_guard": k_guardian,
+            "r_resp": resp_radius_mi,
+            "r_guard": guard_radius_mi,
+            "dfr_rate": int(dfr_dispatch_rate * 100),
+            "deflect_rate": int(deflection_rate * 100),
+            "calls_data": st.session_state['df_calls'].where(pd.notnull(st.session_state['df_calls']), None).to_dict(orient='records') if st.session_state.get('df_calls') is not None else None,
+            "stations_data": st.session_state['df_stations'].where(pd.notnull(st.session_state['df_stations']), None).to_dict(orient='records') if st.session_state.get('df_stations') is not None else None
+        }
+        
+        st.download_button(
+            label="💾 Download .brinc Scenario",
+            data=json.dumps(export_dict),
+            file_name=f"Brinc_{safe_city_name}_{current_time}.brinc",
+            mime="application/json",
+            use_container_width=True
+        )
 
     # --- KML EXPORT & GRANTS ---
     st.sidebar.markdown("---")
@@ -1387,7 +1421,8 @@ if st.session_state['csvs_ready']:
         label="🌏 Download for Google Earth",
         data=generate_kml(active_gdf, active_drones, calls_in_city),
         file_name="drone_deployment.kml",
-        mime="application/vnd.google-earth.kml+xml"
+        mime="application/vnd.google-earth.kml+xml",
+        use_container_width=True
     )
 
     # ==========================================
@@ -1633,14 +1668,15 @@ if st.session_state['csvs_ready']:
             </body>
             </html>
             """
-            st.download_button(
-                label="📄 Download Executive Summary",
-                data=export_html,
-                file_name=f"Brinc_{safe_city_name}_Proposal_{current_date}.html",
-                mime="text/html",
-                use_container_width=True
-            )
-            st.markdown("<br>", unsafe_allow_html=True)
+            
+            with export_placeholder:
+                st.download_button(
+                    label="📄 Download Executive Summary",
+                    data=export_html,
+                    file_name=f"Brinc_{safe_city_name}_Proposal_{current_time}.html",
+                    mime="text/html",
+                    use_container_width=True
+                )
             
         # --- Coverage Elbow Curve ---
         st.markdown(f"<h4 style='margin-top:0px; border-bottom: 1px solid {card_border}; padding-bottom: 8px; color: {text_main};'>Coverage Optimization</h4>", unsafe_allow_html=True)
