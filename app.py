@@ -94,6 +94,7 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['r_guard'] = 8.0
     st.session_state['dfr_rate'] = 25
     st.session_state['deflect_rate'] = 30
+    st.session_state['total_original_calls'] = 0
 
 # --- SCENARIO LOADER ---
 with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
@@ -121,6 +122,7 @@ with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
             if calls_data and stations_data:
                 st.session_state['df_calls'] = pd.DataFrame(calls_data)
                 st.session_state['df_stations'] = pd.DataFrame(stations_data)
+                st.session_state['total_original_calls'] = len(calls_data)
                 st.session_state['csvs_ready'] = True
                 st.toast(f"✅ Loaded custom scenario for {st.session_state['active_city']}!")
                 st.rerun()
@@ -255,21 +257,6 @@ if not os.path.exists(SHAPEFILE_DIR):
 if not st.session_state['csvs_ready']:
     st.title("🛰️ BRINC COS Drone Optimizer")
 
-# --- ADDED: REVERSE GEOCODING FUNCTION ---
-@st.cache_data
-def reverse_geocode_state(lat, lon):
-    url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&addressdetails=1"
-    try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
-        with urllib.request.urlopen(req) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            address = data.get('address', {})
-            state = address.get('state', '')
-            city = address.get('city', address.get('town', address.get('village', address.get('county', 'Unknown City'))))
-            return state, city
-    except Exception:
-        return None, None
-
 # --- CENSUS TIGER SHAPEFILE & API FETCHER ---
 @st.cache_data
 def fetch_census_population(state_fips, place_name):
@@ -394,6 +381,9 @@ if not st.session_state['csvs_ready']:
             if 'priority' in df_c.columns: keep_cols_c.append('priority')
             df_c = df_c[keep_cols_c].dropna(subset=['lat', 'lon']).reset_index(drop=True)
             
+            # --- Save the exact true total count before any sampling occurs ---
+            st.session_state['total_original_calls'] = len(df_c)
+            
             if len(df_c) > 25000:
                 df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
                 st.toast("⚠️ Large dataset detected. Sampled 25,000 calls to ensure fast cloud performance.")
@@ -420,18 +410,6 @@ if not st.session_state['csvs_ready']:
                 df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
                 
             st.session_state['df_stations'] = df_s
-            
-            # --- ADDED: Auto-State Detection via Nominatim ---
-            with st.spinner("🌍 Auto-detecting state from GPS coordinates..."):
-                sample_lat, sample_lon = df_c['lat'].iloc[0], df_c['lon'].iloc[0]
-                detected_state_full, detected_city = reverse_geocode_state(sample_lat, sample_lon)
-                
-                if detected_state_full and detected_state_full in US_STATES_ABBR:
-                    st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
-                    if detected_city and detected_city != 'Unknown City':
-                        st.session_state['active_city'] = detected_city
-                    st.toast(f"📍 Auto-detected jurisdiction: {st.session_state['active_city']}, {st.session_state['active_state']}")
-
             st.session_state['csvs_ready'] = True
             st.rerun()
 
@@ -453,11 +431,6 @@ if not st.session_state['csvs_ready']:
         if submit_demo or st.session_state.get('trigger_sim', False):
             if st.session_state.get('trigger_sim', False):
                 st.session_state['trigger_sim'] = False
-                
-            # --- ADDED: Explicitly set state to fix Florida bug ---
-            if submit_demo:
-                st.session_state['active_state'] = input_state
-                st.session_state['active_city'] = input_city
                 
             with st.spinner(f"Fetching exact TIGER boundary data for {input_city}, {input_state} from US Census Bureau..."):
                 success, active_city_gdf = fetch_tiger_city_shapefile(STATE_FIPS[input_state], input_city, SHAPEFILE_DIR)
@@ -484,6 +457,7 @@ if not st.session_state['csvs_ready']:
                         
                     annual_cfs = int(estimated_pop * 0.6) 
                     simulated_points_count = min(int(annual_cfs / 12), 25000)
+                    st.session_state['total_original_calls'] = simulated_points_count
                     
                 with st.spinner("Procedurally mapping true-to-life 911 call clusters..."):
                     np.random.seed(42)
@@ -523,12 +497,12 @@ def format_3_lines(name_str):
         if ',' in rest:
             parts = rest.split(',', 1)
             return f"{line1}<br>{parts[0].strip()},<br>{parts[1].strip()}"
-        return f"{line1}<br>{rest}<br> "
+        return f"{line1}<br>{rest}<br> "
     if ',' in name_str:
         parts = name_str.split(',')
         if len(parts) >= 3:
             return f"{parts[0].strip()},<br>{parts[1].strip()},<br>{','.join(parts[2:]).strip()}"
-    return f"{name_str}<br> <br> "
+    return f"{name_str}<br> <br> "
 
 def to_kml_color(hex_str):
     h = hex_str.lstrip('#')
@@ -1394,14 +1368,16 @@ if st.session_state['csvs_ready']:
         else:
             gain_val = "Stalled"
             
-        m1.metric("Total Incident Points", f"{total_calls:,}")
+        m1.metric("Total Historical Incidents", f"{st.session_state.get('total_original_calls', total_calls):,}")
+        st.markdown(f"<div style='font-size: 0.65rem; color: gray; margin-top: -15px; margin-bottom: 15px;'>(Optimized via {total_calls:,} representative sample)</div>", unsafe_allow_html=True)
         m2.metric("Response Capacity %", f"{calls_covered_perc:.1f}%")
         m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
         m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
         m5.metric(gain_label, gain_val)
     else:
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Incident Points", f"{total_calls:,}")
+        m1.metric("Total Historical Incidents", f"{st.session_state.get('total_original_calls', total_calls):,}")
+        st.markdown(f"<div style='font-size: 0.65rem; color: gray; margin-top: -15px; margin-bottom: 15px;'>(Optimized via {total_calls:,} representative sample)</div>", unsafe_allow_html=True)
         m2.metric("Response Capacity %", f"{calls_covered_perc:.1f}%")
         m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
         m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
@@ -1928,8 +1904,8 @@ if st.session_state['csvs_ready'] and fleet_capex > 0:
         "r_guard": guard_radius_mi,
         "dfr_rate": int(dfr_dispatch_rate * 100),
         "deflect_rate": int(deflection_rate * 100),
-        "calls_data": st.session_state['df_calls'].where(pd.notnull(st.session_state['df_calls']), None).to_dict(orient='records') if st.session_state.get('df_calls') is not None else None,
-        "stations_data": st.session_state['df_stations'].where(pd.notnull(st.session_state['df_stations']), None).to_dict(orient='records') if st.session_state.get('df_stations') is not None else None
+        "calls_data": json.loads(st.session_state['df_calls'].replace({np.nan: None}).to_json(orient='records')) if st.session_state.get('df_calls') is not None else None,
+        "stations_data": json.loads(st.session_state['df_stations'].replace({np.nan: None}).to_json(orient='records')) if st.session_state.get('df_stations') is not None else None
     }
     
     st.sidebar.download_button(
