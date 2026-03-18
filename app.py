@@ -83,9 +83,14 @@ if 'csvs_ready' not in st.session_state:
 # --- SCENARIO LOADER ---
 with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
     uploaded_scenario = st.file_uploader("Load .brinc Scenario File", type=['brinc', 'json'], label_visibility="collapsed")
-    if uploaded_scenario is not None:
+    
+    # Use file_id to prevent the Streamlit infinite rerun loop bug
+    if uploaded_scenario is not None and st.session_state.get('last_loaded_scenario') != uploaded_scenario.file_id:
         try:
-            scenario_data = json.load(uploaded_scenario)
+            # Safely decode the bytes to a string before parsing JSON
+            file_content = uploaded_scenario.getvalue().decode("utf-8")
+            scenario_data = json.loads(file_content)
+            
             st.session_state['active_city'] = scenario_data.get('city', 'Orlando')
             st.session_state['active_state'] = scenario_data.get('state', 'FL')
             st.session_state['k_resp'] = scenario_data.get('k_resp', 0)
@@ -98,17 +103,22 @@ with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
             calls_data = scenario_data.get('calls_data')
             stations_data = scenario_data.get('stations_data')
             
+            st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
+            
             if calls_data and stations_data:
                 st.session_state['df_calls'] = pd.DataFrame(calls_data)
                 st.session_state['df_stations'] = pd.DataFrame(stations_data)
                 st.session_state['csvs_ready'] = True
-                st.success(f"Loaded custom scenario for {st.session_state['active_city']}!")
+                st.toast(f"✅ Loaded custom scenario for {st.session_state['active_city']}!")
                 st.rerun()
             else:
                 st.session_state['trigger_sim'] = True
-                st.success(f"Loaded synthetic scenario for {st.session_state['active_city']}!")
+                st.toast(f"✅ Loaded synthetic scenario for {st.session_state['active_city']}!")
+                st.rerun()
+                
         except Exception as e:
-            st.error("Invalid scenario file.")
+            st.error(f"Failed to load file. It may be corrupted or incorrectly formatted.")
+            st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
 
 # --- THEME TOGGLE ---
 st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
@@ -566,7 +576,7 @@ def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
     return master_gdf
 
 @st.cache_resource
-def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash):
+def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, bounds_hash):
     gdf_calls = gpd.GeoDataFrame(df_calls, geometry=gpd.points_from_xy(df_calls.lon, df_calls.lat), crs="EPSG:4326")
     gdf_calls_utm = gdf_calls.to_crs(epsg=epsg_code)
     
@@ -587,12 +597,6 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_
     
     display_calls = calls_in_city.sample(min(5000, total_calls), random_state=42).to_crs(epsg=4326) if not calls_in_city.empty else gpd.GeoDataFrame()
     
-    max_dist = 0
-    for _, row in df_stations_all.iterrows():
-        d = ((row['lon'] - center_lon)**2 + (row['lat'] - center_lat)**2)**0.5
-        if d > max_dist: max_dist = d
-    if max_dist == 0: max_dist = 1.0
-
     if not calls_in_city.empty:
         calls_array = np.array(list(zip(calls_in_city.geometry.x, calls_in_city.geometry.y)))
         for idx_pos, (i, row) in enumerate(df_stations_all.iterrows()):
@@ -618,15 +622,11 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_
             
             avg_dist_r = dists_mi[mask_r].mean() if mask_r.any() else (resp_radius_mi * (2/3))
             avg_dist_g = dists_mi[mask_g].mean() if mask_g.any() else (guard_radius_mi * (2/3))
-            
-            dist_c = ((row['lon'] - center_lon)**2 + (row['lat'] - center_lat)**2)**0.5
-            centrality = 1.0 - (dist_c / max_dist)
-            
+                
             station_metadata.append({
                 'name': row['name'], 'lat': row['lat'], 'lon': row['lon'],
                 'clipped_2m': clipped_2m, 'clipped_guard': clipped_guard,
-                'avg_dist_r': avg_dist_r, 'avg_dist_g': avg_dist_g,
-                'centrality': centrality
+                'avg_dist_r': avg_dist_r, 'avg_dist_g': avg_dist_g
             })
             
     return calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls
@@ -898,7 +898,7 @@ if st.session_state['csvs_ready']:
 
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
         calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls = precompute_spatial_data(
-            df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash
+            df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, bounds_hash
         )
         
         df_curve = compute_all_elbow_curves(
@@ -1351,8 +1351,8 @@ if st.session_state['csvs_ready']:
         "r_guard": guard_radius_mi,
         "dfr_rate": int(dfr_dispatch_rate * 100),
         "deflect_rate": int(deflection_rate * 100),
-        "calls_data": st.session_state['df_calls'].to_dict(orient='records') if st.session_state.get('df_calls') is not None else None,
-        "stations_data": st.session_state['df_stations'].to_dict(orient='records') if st.session_state.get('df_stations') is not None else None
+        "calls_data": json.loads(st.session_state['df_calls'].replace({np.nan: None}).to_json(orient='records')) if st.session_state.get('df_calls') is not None else None,
+        "stations_data": json.loads(st.session_state['df_stations'].replace({np.nan: None}).to_json(orient='records')) if st.session_state.get('df_stations') is not None else None
     }
     
     st.sidebar.download_button(
