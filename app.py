@@ -79,53 +79,49 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['r_guard'] = 8.0
     st.session_state['dfr_rate'] = 25
     st.session_state['deflect_rate'] = 30
-    st.session_state['theme'] = "Dark Mode"
 
-# --- SCENARIO LOADER (HIDDEN AFTER MAP LOADS) ---
-if not st.session_state['csvs_ready']:
-    with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
-        uploaded_scenario = st.file_uploader("Load .brinc Scenario File", type=['brinc', 'json'], label_visibility="collapsed")
-        
-        if uploaded_scenario is not None and st.session_state.get('last_loaded_scenario') != uploaded_scenario.file_id:
-            try:
-                file_content = uploaded_scenario.getvalue().decode("utf-8")
-                scenario_data = json.loads(file_content)
+# --- SCENARIO LOADER ---
+with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
+    uploaded_scenario = st.file_uploader("Load .brinc Scenario File", type=['brinc', 'json'], label_visibility="collapsed")
+    
+    if uploaded_scenario is not None and st.session_state.get('last_loaded_scenario') != uploaded_scenario.file_id:
+        try:
+            file_content = uploaded_scenario.getvalue().decode("utf-8")
+            scenario_data = json.loads(file_content)
+            
+            st.session_state['active_city'] = scenario_data.get('city', 'Orlando')
+            st.session_state['active_state'] = scenario_data.get('state', 'FL')
+            st.session_state['k_resp'] = scenario_data.get('k_resp', 0)
+            st.session_state['k_guard'] = scenario_data.get('k_guard', 0)
+            st.session_state['r_resp'] = scenario_data.get('r_resp', 2.0)
+            st.session_state['r_guard'] = scenario_data.get('r_guard', 8.0)
+            st.session_state['dfr_rate'] = scenario_data.get('dfr_rate', 25)
+            st.session_state['deflect_rate'] = scenario_data.get('deflect_rate', 30)
+            
+            calls_data = scenario_data.get('calls_data')
+            stations_data = scenario_data.get('stations_data')
+            
+            st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
+            
+            if calls_data and stations_data:
+                st.session_state['df_calls'] = pd.DataFrame(calls_data)
+                st.session_state['df_stations'] = pd.DataFrame(stations_data)
+                st.session_state['csvs_ready'] = True
+                st.toast(f"✅ Loaded custom scenario for {st.session_state['active_city']}!")
+                st.rerun()
+            else:
+                st.session_state['trigger_sim'] = True
+                st.toast(f"✅ Loaded synthetic scenario for {st.session_state['active_city']}!")
+                st.rerun()
                 
-                st.session_state['active_city'] = scenario_data.get('city', 'Orlando')
-                st.session_state['active_state'] = scenario_data.get('state', 'FL')
-                st.session_state['k_resp'] = scenario_data.get('k_resp', 0)
-                st.session_state['k_guard'] = scenario_data.get('k_guard', 0)
-                st.session_state['r_resp'] = scenario_data.get('r_resp', 2.0)
-                st.session_state['r_guard'] = scenario_data.get('r_guard', 8.0)
-                st.session_state['dfr_rate'] = scenario_data.get('dfr_rate', 25)
-                st.session_state['deflect_rate'] = scenario_data.get('deflect_rate', 30)
-                
-                calls_data = scenario_data.get('calls_data')
-                stations_data = scenario_data.get('stations_data')
-                
-                st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
-                
-                if calls_data and stations_data:
-                    st.session_state['df_calls'] = pd.DataFrame(calls_data)
-                    st.session_state['df_stations'] = pd.DataFrame(stations_data)
-                    st.session_state['csvs_ready'] = True
-                    st.toast(f"✅ Loaded custom scenario for {st.session_state['active_city']}!")
-                    st.rerun()
-                else:
-                    st.session_state['trigger_sim'] = True
-                    st.toast(f"✅ Loaded synthetic scenario for {st.session_state['active_city']}!")
-                    st.rerun()
-                    
-            except Exception as e:
-                st.error(f"Failed to load file. It may be corrupted or incorrectly formatted.")
-                st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
+        except Exception as e:
+            st.error(f"Failed to load file. It may be corrupted or incorrectly formatted.")
+            st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
 
-# --- THEME TOGGLE (HIDDEN AFTER MAP LOADS) ---
-if not st.session_state['csvs_ready']:
-    st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
-    st.session_state['theme'] = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
-
-is_dark = st.session_state['theme'] == "Dark Mode"
+# --- THEME TOGGLE ---
+st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
+theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
+is_dark = theme_choice == "Dark Mode"
 
 # --- DYNAMIC THEME VARIABLES ---
 if is_dark:
@@ -364,12 +360,10 @@ if not st.session_state['csvs_ready']:
                 st.error(f"❌ **Validation Error:** Your calls.csv must contain 'lat' and 'lon' columns. Found: {', '.join(df_c.columns)}")
                 st.stop()
             
-            # MEMORY OPTIMIZATION: Drop unnecessary columns
             keep_cols_c = ['lat', 'lon']
             if 'priority' in df_c.columns: keep_cols_c.append('priority')
             df_c = df_c[keep_cols_c].dropna(subset=['lat', 'lon']).reset_index(drop=True)
             
-            # MEMORY OPTIMIZATION: Cap at 25k calls to prevent Streamlit Cloud crashes
             if len(df_c) > 25000:
                 df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
                 st.toast("⚠️ Large dataset detected. Sampled 25,000 calls to ensure fast cloud performance.")
@@ -384,7 +378,6 @@ if not st.session_state['csvs_ready']:
                 st.error(f"❌ **Validation Error:** Your stations.csv must contain 'lat' and 'lon' columns. Found: {', '.join(df_s.columns)}")
                 st.stop()
                 
-            # MEMORY OPTIMIZATION: Drop unnecessary columns
             keep_cols_s = ['lat', 'lon']
             if 'name' in df_s.columns: keep_cols_s.append('name')
             if 'type' in df_s.columns: keep_cols_s.append('type')
@@ -840,7 +833,8 @@ if st.session_state['csvs_ready']:
     selected_names = [options_map[l] for l in selected_labels]
     active_gdf = master_gdf[master_gdf['DISPLAY_NAME'].isin(selected_names)]
     
-    if selected_names and not st.session_state.get('trigger_sim', False):
+    # Bypassing the Florida bug: Allow users to edit this name explicitly in the Export section later
+    if selected_names and not st.session_state.get('trigger_sim', False) and st.session_state.get('active_city') == "Orlando":
         st.session_state['active_city'] = selected_names[0]
 
     minx, miny, maxx, maxy = active_gdf.to_crs(epsg=4326).total_bounds
@@ -1366,65 +1360,6 @@ if st.session_state['csvs_ready']:
         m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
         m4.metric("Redundancy (Overlap)", f"{overlap_perc:.1f}%")
 
-    # --- EXPORT & PROPOSALS PLACEHOLDER FILL ---
-    with export_placeholder:
-        st.markdown("---")
-        st.markdown(f"<h4 style='margin-bottom:5px; color:{text_main};'>📤 Export & Proposals</h4>", unsafe_allow_html=True)
-        st.markdown(f"<div style='font-size: 0.75rem; color: {text_muted}; margin-bottom: 10px;'>Save your configuration or download a printable PDF proposal.</div>", unsafe_allow_html=True)
-        
-        current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        safe_city_name = st.session_state.get('active_city', 'City').replace(" ", "_").replace("/", "_")
-        
-        export_dict = {
-            "city": st.session_state.get('active_city', 'Orlando'),
-            "state": st.session_state.get('active_state', 'FL'),
-            "k_resp": k_responder,
-            "k_guard": k_guardian,
-            "r_resp": resp_radius_mi,
-            "r_guard": guard_radius_mi,
-            "dfr_rate": int(dfr_dispatch_rate * 100),
-            "deflect_rate": int(deflection_rate * 100),
-            "calls_data": st.session_state['df_calls'].where(pd.notnull(st.session_state['df_calls']), None).to_dict(orient='records') if st.session_state.get('df_calls') is not None else None,
-            "stations_data": st.session_state['df_stations'].where(pd.notnull(st.session_state['df_stations']), None).to_dict(orient='records') if st.session_state.get('df_stations') is not None else None
-        }
-        
-        st.download_button(
-            label="💾 Download .brinc Scenario",
-            data=json.dumps(export_dict),
-            file_name=f"Brinc_{safe_city_name}_{current_time}.brinc",
-            mime="application/json",
-            use_container_width=True
-        )
-
-    # --- KML EXPORT & GRANTS ---
-    st.sidebar.markdown("---")
-    
-    pop_metric = st.session_state.get('estimated_pop', 250000)
-    grant_bracket = estimate_grants(pop_metric)
-    
-    st.sidebar.markdown(f"<h4 style='margin-bottom:5px; color:{text_main};'>🏛️ Federal Grant Opportunities</h4>", unsafe_allow_html=True)
-    st.sidebar.markdown(f"""
-    <div style="background-color: {card_bg}; border: 1px solid {budget_box_border}; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
-        <div style="font-size: 0.7rem; color: {text_muted}; font-weight: bold; text-transform: uppercase;">Estimated Eligibility</div>
-        <div style="font-size: 1.2rem; color: {budget_box_border}; font-weight: bold; font-family: monospace;">{grant_bracket}</div>
-    </div>
-    <div style="font-size: 0.75rem; color: {text_muted}; line-height: 1.4; margin-bottom: 15px;">
-        <a href="https://bja.ojp.gov/program/jag/overview" target="_blank" style="color: {accent_color}; text-decoration: none; font-weight: bold;">DOJ Byrne JAG Program</a><br>
-        The leading source of federal justice funding to state and local jurisdictions. Fully eligible for UAS/drone technology procurement.
-        <br><br>
-        <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank" style="color: {accent_color}; text-decoration: none; font-weight: bold;">FEMA HSGP</a><br>
-        Homeland Security Grant Program. Can offset hardware CAPEX for disaster response and tactical deployments.
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.sidebar.download_button(
-        label="🌏 Download for Google Earth",
-        data=generate_kml(active_gdf, active_drones, calls_in_city),
-        file_name="drone_deployment.kml",
-        mime="application/vnd.google-earth.kml+xml",
-        use_container_width=True
-    )
-
     # ==========================================
     # --- MAIN UI SPLIT: MAP (LEFT) & STATS (RIGHT) ---
     # ==========================================
@@ -1561,123 +1496,6 @@ if st.session_state['csvs_ready']:
         
     with stats_col:
         
-        # --- HTML EXECUTIVE SUMMARY EXPORT ---
-        if fleet_capex > 0:
-            map_html = fig.to_html(full_html=False, include_plotlyjs='cdn', default_height='500px', default_width='100%')
-            
-            station_rows = ""
-            for d in active_drones:
-                station_rows += f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>${d['cost']:,}</td></tr>"
-                
-            export_html = f"""
-            <html>
-            <head>
-                <title>BRINC DFR Proposal - {st.session_state.get('active_city', 'City')}</title>
-                <style>
-                    body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; margin: 40px; }}
-                    h1 {{ color: #000; border-bottom: 2px solid #00D2FF; padding-bottom: 10px; }}
-                    h2 {{ color: #444; margin-top: 30px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }}
-                    .metric-box {{ background: #f8f9fa; border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
-                    .metric-title {{ font-size: 12px; font-weight: bold; color: #888; text-transform: uppercase; }}
-                    .metric-value {{ font-size: 24px; font-weight: bold; color: #00D2FF; margin-top: 5px; }}
-                    .grid {{ display: flex; flex-wrap: wrap; gap: 20px; }}
-                    .grid-item {{ flex: 1; min-width: 200px; }}
-                    table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; }}
-                    th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
-                    th {{ background-color: #f1f1f1; }}
-                    .map-container {{ border: 1px solid #ddd; border-radius: 8px; overflow: hidden; margin-top: 20px; }}
-                </style>
-            </head>
-            <body>
-                <h1>Drone as a First Responder (DFR) Proposal</h1>
-                <p><strong>Prepared for:</strong> {st.session_state.get('active_city', 'City')}, {st.session_state.get('active_state', 'US')}</p>
-                <p><strong>Estimated Population:</strong> {st.session_state.get('estimated_pop', 0):,}</p>
-                
-                <h2>Executive Summary</h2>
-                <div class="grid">
-                    <div class="metric-box grid-item">
-                        <div class="metric-title">Total Fleet Capex</div>
-                        <div class="metric-value">${fleet_capex:,.0f}</div>
-                    </div>
-                    <div class="metric-box grid-item">
-                        <div class="metric-title">Annual Savings Capacity</div>
-                        <div class="metric-value">${annual_savings:,.0f}</div>
-                    </div>
-                    <div class="metric-box grid-item">
-                        <div class="metric-title">Est. ROI / Break-Even</div>
-                        <div class="metric-value">{break_even_text}</div>
-                    </div>
-                </div>
-
-                <h2>Coverage & Operational Impact</h2>
-                <div class="grid">
-                    <div class="metric-box grid-item">
-                        <div class="metric-title">911 Call Coverage</div>
-                        <div class="metric-value">{calls_covered_perc:.1f}%</div>
-                    </div>
-                    <div class="metric-box grid-item">
-                        <div class="metric-title">Geographic Coverage</div>
-                        <div class="metric-value">{area_covered_perc:.1f}%</div>
-                    </div>
-                    <div class="metric-box grid-item">
-                        <div class="metric-title">Daily DFR Flights</div>
-                        <div class="metric-value">{daily_dfr_responses:.1f}</div>
-                    </div>
-                </div>
-                
-                <h2>Proposed Fleet Configuration</h2>
-                <table>
-                    <tr>
-                        <th>Drone Type</th>
-                        <th>Quantity</th>
-                        <th>Range</th>
-                        <th>Unit Cost</th>
-                    </tr>
-                    <tr>
-                        <td>BRINC Responder</td>
-                        <td>{actual_k_responder}</td>
-                        <td>{resp_radius_mi} miles</td>
-                        <td>${CONFIG['RESPONDER_COST']:,}</td>
-                    </tr>
-                    <tr>
-                        <td>BRINC Guardian</td>
-                        <td>{actual_k_guardian}</td>
-                        <td>{guard_radius_mi} miles</td>
-                        <td>${CONFIG['GUARDIAN_COST']:,}</td>
-                    </tr>
-                </table>
-                
-                <h2>Interactive Coverage Map</h2>
-                <p style="font-size: 13px; color: #666;">The interactive map below illustrates the optimized placement for the proposed DFR fleet.</p>
-                <div class="map-container">
-                    {map_html}
-                </div>
-                
-                <h2>Selected Deployment Locations</h2>
-                <table>
-                    <tr>
-                        <th>Station Name</th>
-                        <th>Drone Type</th>
-                        <th>Avg Response Time</th>
-                        <th>Hardware Capex</th>
-                    </tr>
-                    {station_rows}
-                </table>
-
-                <p style="margin-top:40px; font-size:12px; color:#888;">Generated dynamically by the BRINC COS Drone Optimizer.</p>
-            </body>
-            </html>
-            """
-            
-            with export_placeholder:
-                st.download_button(
-                    label="📄 Download Executive Summary",
-                    data=export_html,
-                    file_name=f"Brinc_{safe_city_name}_Proposal_{current_time}.html",
-                    mime="text/html",
-                    use_container_width=True
-                )
-            
         # --- Coverage Elbow Curve ---
         st.markdown(f"<h4 style='margin-top:0px; border-bottom: 1px solid {card_border}; padding-bottom: 8px; color: {text_main};'>Coverage Optimization</h4>", unsafe_allow_html=True)
         
@@ -2037,3 +1855,198 @@ if st.session_state['csvs_ready']:
 
             sim_html = generate_deckgl_html(active_drones, calls_in_city, dfr_dispatch_rate, center_lat, center_lon, dynamic_zoom, calls_per_day)
             components.html(sim_html, height=700)
+
+# --- SIDEBAR PROPOSALS & EXPORTS (MOVED TO BOTTOM FOR VARIABLE ACCESS) ---
+if st.session_state['csvs_ready'] and fleet_capex > 0:
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>📤 Proposals & Exports</h3>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"<div style='font-size: 0.75rem; color: {text_muted}; margin-bottom: 10px;'>Finalize the client's information to download or email the proposal documents.</div>", unsafe_allow_html=True)
+    
+    col_c, col_s = st.sidebar.columns([2, 1])
+    prop_city = col_c.text_input("Client City", value=st.session_state.get('active_city', 'City'))
+    prop_state = col_s.text_input("State", value=st.session_state.get('active_state', 'FL'))
+    
+    st.session_state['active_city'] = prop_city
+    st.session_state['active_state'] = prop_state
+    
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    safe_city_name = prop_city.replace(" ", "_").replace("/", "_")
+    
+    # 1. SCENARIO EXPORT
+    export_dict = {
+        "city": prop_city,
+        "state": prop_state,
+        "k_resp": k_responder,
+        "k_guard": k_guardian,
+        "r_resp": resp_radius_mi,
+        "r_guard": guard_radius_mi,
+        "dfr_rate": int(dfr_dispatch_rate * 100),
+        "deflect_rate": int(deflection_rate * 100),
+        "calls_data": st.session_state['df_calls'].where(pd.notnull(st.session_state['df_calls']), None).to_dict(orient='records') if st.session_state.get('df_calls') is not None else None,
+        "stations_data": st.session_state['df_stations'].where(pd.notnull(st.session_state['df_stations']), None).to_dict(orient='records') if st.session_state.get('df_stations') is not None else None
+    }
+    
+    st.sidebar.download_button(
+        label="💾 Download .brinc Scenario",
+        data=json.dumps(export_dict),
+        file_name=f"Brinc_{safe_city_name}_{current_time}.brinc",
+        mime="application/json",
+        use_container_width=True
+    )
+    
+    # 2. HTML PROPOSAL EXPORT
+    map_html = fig.to_html(full_html=False, include_plotlyjs='cdn', default_height='500px', default_width='100%')
+    station_rows = ""
+    for d in active_drones:
+        station_rows += f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>${d['cost']:,}</td></tr>"
+        
+    avg_resp_time = sum(d['avg_time_min'] for d in active_drones) / len(active_drones) if active_drones else 0.0
+    avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - (traffic_level / 100))
+    avg_time_saved = (sum((d['radius_m']/1609.34 * 1.4 / avg_ground_speed)*60 for d in active_drones) / len(active_drones)) - avg_resp_time if active_drones and avg_ground_speed > 0 else 0.0
+
+    export_html = f"""
+    <html>
+    <head>
+        <title>BRINC DFR Proposal - {prop_city}</title>
+        <style>
+            body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; margin: 40px; }}
+            h1 {{ color: #000; border-bottom: 2px solid #00D2FF; padding-bottom: 10px; }}
+            h2 {{ color: #444; margin-top: 30px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }}
+            .metric-box {{ background: #f8f9fa; border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
+            .metric-title {{ font-size: 12px; font-weight: bold; color: #888; text-transform: uppercase; }}
+            .metric-value {{ font-size: 24px; font-weight: bold; color: #00D2FF; margin-top: 5px; }}
+            .grid {{ display: flex; flex-wrap: wrap; gap: 20px; }}
+            .grid-item {{ flex: 1; min-width: 200px; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; }}
+            th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
+            th {{ background-color: #f1f1f1; }}
+            .map-container {{ border: 1px solid #ddd; border-radius: 8px; overflow: hidden; margin-top: 20px; }}
+        </style>
+    </head>
+    <body>
+        <h1>Drone as a First Responder (DFR) Proposal</h1>
+        <p><strong>Prepared for:</strong> {prop_city}, {prop_state}</p>
+        <p><strong>Estimated Population:</strong> {pop_metric:,}</p>
+        
+        <h2>Executive Summary</h2>
+        <div class="grid">
+            <div class="metric-box grid-item">
+                <div class="metric-title">Total Fleet Capex</div>
+                <div class="metric-value">${fleet_capex:,.0f}</div>
+            </div>
+            <div class="metric-box grid-item">
+                <div class="metric-title">Annual Savings Capacity</div>
+                <div class="metric-value">${annual_savings:,.0f}</div>
+            </div>
+            <div class="metric-box grid-item">
+                <div class="metric-title">Est. ROI / Break-Even</div>
+                <div class="metric-value">{break_even_text}</div>
+            </div>
+        </div>
+
+        <h2>Coverage & Operational Impact</h2>
+        <div class="grid">
+            <div class="metric-box grid-item">
+                <div class="metric-title">911 Call Coverage</div>
+                <div class="metric-value">{calls_covered_perc:.1f}%</div>
+            </div>
+            <div class="metric-box grid-item">
+                <div class="metric-title">Avg Response Time</div>
+                <div class="metric-value">{avg_resp_time:.1f} min</div>
+            </div>
+            <div class="metric-box grid-item">
+                <div class="metric-title">Est. Time Saved vs Patrol</div>
+                <div class="metric-value">{avg_time_saved:.1f} min</div>
+            </div>
+        </div>
+        
+        <h2>Funding & Grant Eligibility</h2>
+        <p>Based on a population of {pop_metric:,}, {prop_city} is eligible for an estimated <strong>{grant_bracket}</strong> in federal funding.</p>
+        <ul>
+            <li><strong>DOJ Byrne JAG:</strong> Formula-based technology grants for law enforcement.</li>
+            <li><strong>FEMA HSGP:</strong> Homeland security grants for disaster and tactical response.</li>
+        </ul>
+        
+        <h2>Proposed Fleet Configuration</h2>
+        <table>
+            <tr>
+                <th>Drone Type</th>
+                <th>Quantity</th>
+                <th>Range</th>
+                <th>Unit Cost</th>
+            </tr>
+            <tr>
+                <td>BRINC Responder</td>
+                <td>{actual_k_responder}</td>
+                <td>{resp_radius_mi} miles</td>
+                <td>${CONFIG['RESPONDER_COST']:,}</td>
+            </tr>
+            <tr>
+                <td>BRINC Guardian</td>
+                <td>{actual_k_guardian}</td>
+                <td>{guard_radius_mi} miles</td>
+                <td>${CONFIG['GUARDIAN_COST']:,}</td>
+            </tr>
+        </table>
+        
+        <h2>Interactive Coverage Map</h2>
+        <p style="font-size: 13px; color: #666;">The interactive map below illustrates the optimized placement for the proposed DFR fleet.</p>
+        <div class="map-container">
+            {map_html}
+        </div>
+        
+        <h2>Selected Deployment Locations</h2>
+        <table>
+            <tr>
+                <th>Station Name</th>
+                <th>Drone Type</th>
+                <th>Avg Response Time</th>
+                <th>Hardware Capex</th>
+            </tr>
+            {station_rows}
+        </table>
+
+        <p style="margin-top:40px; font-size:12px; color:#888;">Generated dynamically by the BRINC COS Drone Optimizer.</p>
+    </body>
+    </html>
+    """
+    st.sidebar.download_button(
+        label="📄 Download Executive Summary",
+        data=export_html,
+        file_name=f"Brinc_{safe_city_name}_Proposal_{current_time}.html",
+        mime="text/html",
+        use_container_width=True
+    )
+    
+    # 3. MAILTO DRAFT BUTTON
+    email_subject = urllib.parse.quote(f"BRINC Proposal - {prop_city}")
+    email_body = urllib.parse.quote(f"Hello,\n\nPlease find the attached BRINC Drone as a First Responder (DFR) custom proposal and coverage analysis for {prop_city}.\n\nLet me know when you have time to review the ROI and deployment metrics.\n\nBest,\n[Your Name]")
+    mailto_url = f"mailto:?subject={email_subject}&body={email_body}"
+    
+    st.sidebar.markdown(f'<a href="{mailto_url}" target="_blank" style="display: block; text-align: center; background-color: {card_bg}; color: {text_main}; padding: 8px; border-radius: 4px; text-decoration: none; font-weight: 600; margin-top: 5px; border: 1px solid {card_border};">✉️ Draft Email to Prospect</a>', unsafe_allow_html=True)
+    st.sidebar.markdown("<div style='font-size: 0.65rem; color: gray; text-align: center; margin-top: 4px;'>*Remember to manually attach the downloaded .html file*</div>", unsafe_allow_html=True)
+
+    # 4. KML EXPORT & GRANTS CALLOUT
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"<h4 style='margin-bottom:5px; color:{text_main};'>🏛️ Federal Grant Opportunities</h4>", unsafe_allow_html=True)
+    st.sidebar.markdown(f"""
+    <div style="background-color: {card_bg}; border: 1px solid {budget_box_border}; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
+        <div style="font-size: 0.7rem; color: {text_muted}; font-weight: bold; text-transform: uppercase;">Estimated Eligibility</div>
+        <div style="font-size: 1.2rem; color: {budget_box_border}; font-weight: bold; font-family: monospace;">{grant_bracket}</div>
+    </div>
+    <div style="font-size: 0.75rem; color: {text_muted}; line-height: 1.4; margin-bottom: 15px;">
+        <a href="https://bja.ojp.gov/program/jag/overview" target="_blank" style="color: {accent_color}; text-decoration: none; font-weight: bold;">DOJ Byrne JAG Program</a><br>
+        The leading source of federal justice funding to state and local jurisdictions. Fully eligible for UAS/drone technology procurement.
+        <br><br>
+        <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank" style="color: {accent_color}; text-decoration: none; font-weight: bold;">FEMA HSGP</a><br>
+        Homeland Security Grant Program. Can offset hardware CAPEX for disaster response and tactical deployments.
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.sidebar.download_button(
+        label="🌏 Download for Google Earth",
+        data=generate_kml(active_gdf, active_drones, calls_in_city),
+        file_name="drone_deployment.kml",
+        mime="application/vnd.google-earth.kml+xml",
+        use_container_width=True
+    )
