@@ -17,6 +17,7 @@ import re
 import random
 import json
 import urllib.request
+import urllib.parse
 import zipfile
 import io
 import streamlit.components.v1 as components
@@ -65,7 +66,7 @@ st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide")
 
 # --- THEME TOGGLE ---
 st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
-theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed")
+theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
 is_dark = theme_choice == "Dark Mode"
 
 # --- DYNAMIC THEME VARIABLES ---
@@ -97,6 +98,7 @@ if is_dark:
     .stApp, .main {{ background-color: {bg_main} !important; }}
     html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
     [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
+    [data-testid="stSidebar"] img {{ filter: invert(1) brightness(2); }}
     [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
     div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
     div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
@@ -173,7 +175,7 @@ st.markdown(
 
 # --- LOGO ---
 try:
-    st.sidebar.image("logo.png", width='stretch')
+    st.sidebar.image("logo.png", use_container_width=True)
 except FileNotFoundError:
     pass
 
@@ -185,11 +187,12 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['csvs_ready'] = False
     st.session_state['df_calls'] = None
     st.session_state['df_stations'] = None
+    st.session_state['use_osm'] = True # Default state for OSM toggle
 
 if not st.session_state['csvs_ready']:
     st.title("🛰️ BRINC COS Drone Optimizer")
 
-# --- CENSUS TIGER SHAPEFILE & API FETCHER ---
+# --- EXTERNAL API FETCHERS ---
 @st.cache_data
 def fetch_census_population(state_fips, place_name):
     url = f"https://api.census.gov/data/2020/dec/pl?get=P1_001N,NAME&for=place:*&in=state:{state_fips}"
@@ -238,6 +241,39 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         print(f"Failed to fetch TIGER shapefile: {e}")
         return False, None
     return False, None
+
+@st.cache_data
+def fetch_osm_stations(minx, miny, maxx, maxy):
+    """Uses OpenStreetMap Overpass API to find real Police & Fire stations in the bounding box"""
+    query = f"""
+    [out:json];
+    (
+      node["amenity"="police"]({miny},{minx},{maxy},{maxx});
+      node["amenity"="fire_station"]({miny},{minx},{maxy},{maxx});
+      way["amenity"="police"]({miny},{minx},{maxy},{maxx});
+      way["amenity"="fire_station"]({miny},{minx},{maxy},{maxx});
+    );
+    out center;
+    """
+    url = "https://overpass-api.de/api/interpreter"
+    data = urllib.parse.urlencode({'data': query}).encode('utf-8')
+    req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
+    try:
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            stations = []
+            for idx, element in enumerate(result['elements']):
+                lat = element.get('lat') or element.get('center', {}).get('lat')
+                lon = element.get('lon') or element.get('center', {}).get('lon')
+                tags = element.get('tags', {})
+                name = tags.get('name', f"Station {idx+1}")
+                stype = "Police" if tags.get('amenity') == 'police' else "Fire"
+                if lat and lon:
+                    stations.append({'name': name, 'lat': lat, 'lon': lon, 'type': stype})
+            return pd.DataFrame(stations)
+    except Exception as e:
+        print(f"OSM Error: {e}")
+        return pd.DataFrame()
 
 def generate_random_points_in_polygon(polygon, num_points):
     points = []
@@ -331,6 +367,8 @@ if not st.session_state['csvs_ready']:
             col1, col2 = st.columns([3, 1])
             input_city = col1.text_input("Enter City Name", value="Orlando")
             input_state = col2.selectbox("State", list(STATE_FIPS.keys()), index=8) 
+            
+            st.session_state['use_osm'] = st.toggle("Pull Real Station Locations (OpenStreetMap API)", value=True, help="Automatically searches for real-world Police and Fire stations inside the city limits.")
             submit_demo = st.form_submit_button("🚀 Simulate City")
             
         if submit_demo:
@@ -366,14 +404,30 @@ if not st.session_state['csvs_ready']:
                     })
                     
                 with st.spinner("Distributing municipal infrastructure grid..."):
-                    station_points = generate_random_points_in_polygon(city_poly, 100)
-                    types = ['Police', 'Fire', 'EMS'] * 34
-                    st.session_state['df_stations'] = pd.DataFrame({
-                        'name': [f'Station {i+1}' for i in range(len(station_points))],
-                        'lat': [p[0] for p in station_points], 
-                        'lon': [p[1] for p in station_points],
-                        'type': types[:len(station_points)]
-                    })
+                    minx, miny, maxx, maxy = city_poly.bounds
+                    df_osm = pd.DataFrame()
+                    
+                    if st.session_state['use_osm']:
+                        df_osm = fetch_osm_stations(minx, miny, maxx, maxy)
+                        
+                    if not df_osm.empty:
+                        # Filter out stations that might have been caught in bounding box but fall outside the exact polygon
+                        points = gpd.GeoDataFrame(df_osm, geometry=gpd.points_from_xy(df_osm.lon, df_osm.lat), crs="EPSG:4326")
+                        valid_points = points[points.within(city_poly)]
+                        if not valid_points.empty:
+                            st.session_state['df_stations'] = valid_points.drop(columns=['geometry'])
+                        else:
+                            df_osm = pd.DataFrame() # Fallback if all points failed polygon check
+                            
+                    if df_osm.empty:
+                        station_points = generate_random_points_in_polygon(city_poly, 80)
+                        types = ['Police', 'Fire', 'EMS'] * 30
+                        st.session_state['df_stations'] = pd.DataFrame({
+                            'name': [f'Station {i+1}' for i in range(len(station_points))],
+                            'lat': [p[0] for p in station_points], 
+                            'lon': [p[1] for p in station_points],
+                            'type': types[:len(station_points)]
+                        })
                     
                     st.session_state['inferred_daily_calls_override'] = int(annual_cfs / 365)
                     st.session_state['csvs_ready'] = True
@@ -598,11 +652,8 @@ def solve_mclp(resp_matrix, guard_matrix, dist_r, dist_g, num_resp, num_guard, a
 
         y = pulp.LpVariable.dicts("cl", range(n_u), 0, 1, pulp.LpBinary)
         
-        # Primary Objective: Maximize covered calls
         primary_obj = pulp.lpSum(y[i] * weights[i] for i in range(n_u))
 
-        # Secondary Objective: Penalize long flight distances. 
-        # For every station chosen, subtract a tiny fraction of its total required flight distance.
         penalty_factor = 0.00001
         distance_penalty = pulp.lpSum(
             x_r[s] * np.sum(u_dist_r[s, :]) * penalty_factor +
@@ -767,6 +818,11 @@ if st.session_state['csvs_ready']:
     # --- SIDEBAR LAYOUT CONTAINERS ---
     opt_container = st.sidebar.container()
     strat_expander = st.sidebar.expander("⚙️ Deployment Strategy", expanded=False)
+    
+    # Put the map toggle directly under the drone counts
+    with opt_container:
+        st.session_state['use_osm'] = st.toggle("Include Live Station Map Data (OSM API)", value=st.session_state.get('use_osm', True), help="If active when generating a city, plots actual municipal infrastructure.")
+
     disp_expander = st.sidebar.expander("👁️ Display Options", expanded=False)
     filter_expander = st.sidebar.expander("⚙️ Data Filters", expanded=False)
     sim_expander = st.sidebar.expander("🚗 Ground Traffic Simulator", expanded=False)
@@ -1105,6 +1161,17 @@ if st.session_state['csvs_ready']:
             </div>
             """, unsafe_allow_html=True)
             
+            st.markdown("#### 🏛️ Federal Grant Opportunities")
+            st.markdown(f"""
+            <div style="font-size: 0.8rem; color: {text_muted}; line-height: 1.4; margin-bottom: 15px;">
+                <a href="https://bja.ojp.gov/program/jag/overview" target="_blank" style="color: {accent_color}; text-decoration: none; font-weight: bold;">DOJ Byrne JAG Program</a><br>
+                The leading source of federal justice funding to state and local jurisdictions. Fully eligible for UAS/drone technology procurement.
+                <br><br>
+                <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank" style="color: {accent_color}; text-decoration: none; font-weight: bold;">FEMA HSGP</a><br>
+                Homeland Security Grant Program. Can offset hardware CAPEX for disaster response and tactical deployments.
+            </div>
+            """, unsafe_allow_html=True)
+
             if actual_k_responder > 0:
                 st.markdown(f"""
                 <div style="background-color: {card_bg}; border: 1px solid {card_border}; padding: 10px; border-radius: 4px; margin-bottom: 8px;">
@@ -1434,7 +1501,6 @@ if st.session_state['csvs_ready']:
                         line=dict(color=color, width=2, dash=dash), marker=dict(size=4)
                     ))
                     
-                    # Highlight the exact dot where it crosses 90% (No floating text)
                     if 'Calls' in col:
                         idx_90 = y_data[y_data >= 90.0].first_valid_index()
                         if idx_90 is not None:
@@ -1522,7 +1588,6 @@ if st.session_state['csvs_ready']:
                 
                 calls_coords = np.column_stack((calls_in_city['lon'], calls_in_city['lat']))
                 
-                # --- RESTRICTED NEAREST NEIGHBOR DISPATCH SIMULATION ---
                 sim_assignments = {i: [] for i in range(len(active_drones))}
                 for c_idx, call_coord in enumerate(calls_coords):
                     best_d_idx = -1
@@ -1554,14 +1619,22 @@ if st.session_state['csvs_ready']:
                     
                     legend_html += f'<div style="margin-bottom:3px;"><span style="display:inline-block;width:10px;height:10px;background-color:{d["color"]};margin-right:8px;border-radius:50%;"></span>{short_name}</div>'
                     
-                    assigned_calls = sim_assignments[d_idx]
-                    num_to_simulate = int(len(assigned_calls) * dfr_dispatch_rate)
-                    if num_to_simulate > 0:
-                        assigned_calls = random.sample(list(assigned_calls), min(num_to_simulate, len(assigned_calls)))
+                    assigned_hist = sim_assignments[d_idx]
+                    
+                    fraction = len(assigned_hist) / len(calls_coords) if len(calls_coords) > 0 else 0
+                    daily_calls_for_drone = int(fraction * daily_calls * dfr_dispatch_rate)
+                    
+                    if daily_calls_for_drone > 0 and len(assigned_hist) > 0:
+                        if daily_calls_for_drone > len(assigned_hist):
+                            sim_calls = random.choices(assigned_hist, k=daily_calls_for_drone)
+                        else:
+                            sim_calls = random.sample(assigned_hist, daily_calls_for_drone)
                     else:
-                        assigned_calls = []
+                        sim_calls = []
+                        
+                    total_sim_flights += len(sim_calls)
 
-                    for call_idx in assigned_calls:
+                    for call_idx in sim_calls:
                         lon1, lat1 = calls_coords[call_idx]
                         lon0, lat0 = d['lon'], d['lat']
                         
