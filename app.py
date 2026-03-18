@@ -3,7 +3,7 @@ import pandas as pd
 import geopandas as gpd
 import numpy as np
 import plotly.graph_objects as go
-from shapely.geometry import Point, Polygon, MultiPolygon, box
+from shapely.geometry import Point, Polygon, MultiPolygon, box, shape
 import shapely.wkt
 from shapely.ops import unary_union
 import os
@@ -327,18 +327,16 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         return False, None
     return False, None
 
-# --- GENERATE MOCK FAA GRID ---
 def generate_mock_faa_grid(minx, miny, maxx, maxy):
     """Fallback generator for LAANC grids if FAA API times out."""
     features = []
-    # Create roughly 1-mile grid squares over the central area
     x_steps = np.linspace(minx, maxx, 10)
     y_steps = np.linspace(miny, maxy, 10)
     ceilings = [0, 50, 100, 200, 300, 400]
     
     for i in range(len(x_steps)-1):
         for j in range(len(y_steps)-1):
-            if random.random() > 0.4: # Only populate some grids
+            if random.random() > 0.4: 
                 poly = [
                     [x_steps[i], y_steps[j]],
                     [x_steps[i+1], y_steps[j]],
@@ -355,9 +353,6 @@ def generate_mock_faa_grid(minx, miny, maxx, maxy):
 
 @st.cache_data
 def fetch_faa_airspace_grids(minx, miny, maxx, maxy):
-    """Fetches FAA UAS Facility Maps (LAANC grids) for the bounding box."""
-    # Note: The FAA ArcGIS REST API frequently blocks or limits unauthenticated cloud scrapers.
-    # If it fails, we fall back to a procedural visualization grid.
     url = f"https://services6.arcgis.com/ssFJjBXIUyZDrSYZ/arcgis/rest/services/UAS_Facility_Map_Data_V2/FeatureServer/0/query?f=geojson&where=1=1&geometry={minx},{miny},{maxx},{maxy}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&outFields=CEILING"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -367,9 +362,22 @@ def fetch_faa_airspace_grids(minx, miny, maxx, maxy):
                 return data
     except Exception:
         pass
-    
-    # Return realistic fallback grid if API is down
     return generate_mock_faa_grid(minx, miny, maxx, maxy)
+
+def get_station_faa_ceiling(lat, lon, faa_geojson):
+    if not faa_geojson or 'features' not in faa_geojson:
+        return "400 ft (Class G)"
+    pt = Point(lon, lat)
+    for feature in faa_geojson['features']:
+        if 'geometry' in feature and feature['geometry']:
+            try:
+                s = shape(feature['geometry'])
+                if s.contains(pt):
+                    val = feature['properties'].get('CEILING', 0)
+                    return f"{val} ft (Controlled)"
+            except:
+                pass
+    return "400 ft (Class G)"
 
 def generate_random_points_in_polygon(polygon, num_points):
     points = []
@@ -960,12 +968,17 @@ if st.session_state['csvs_ready']:
         st.error(f"Geometry Error: {e}")
         st.stop()
 
+    bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{len(df_stations_all)}_{st.session_state.get('r_resp', 2.0)}_{st.session_state.get('r_guard', 8.0)}"
+
+    # Fetch FAA Data once for both map UI and card details
+    with st.spinner("Checking FAA Airspace Data..."):
+        faa_geojson = fetch_faa_airspace_grids(minx, miny, maxx, maxy)
+
     # --- SIDEBAR LAYOUT CONTAINERS ---
     opt_container = st.sidebar.container()
     strat_expander = st.sidebar.expander("⚙️ Deployment Strategy", expanded=False)
     disp_expander = st.sidebar.expander("👁️ Display Options", expanded=False)
     filter_expander = st.sidebar.expander("⚙️ Data Filters", expanded=False)
-    sim_expander = st.sidebar.expander("🚗 Ground Traffic Simulator", expanded=False)
 
     # --- DYNAMIC MISSION DATA FILTERS ---
     with filter_expander:
@@ -1020,8 +1033,6 @@ if st.session_state['csvs_ready']:
         st.session_state['r_resp'] = resp_radius_mi
         st.session_state['r_guard'] = guard_radius_mi
 
-    bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}_{resp_radius_mi}_{guard_radius_mi}"
-
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
         calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls = precompute_spatial_data(
             df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash
@@ -1065,13 +1076,12 @@ if st.session_state['csvs_ready']:
         col1, col2 = st.columns(2)
         show_boundaries = col1.toggle("Boundaries", value=True, help="Show or hide jurisdiction borders.")
         show_heatmap = col2.toggle("Heatmap", value=False, help="Overlay a thermal density map of historical 911 calls.")
-        show_ai_heatmap = col1.toggle("🔮 AI Predictive Heatmap", value=False, help="Generate an AI-simulated 7-day predictive incident forecast.")
-        show_health = col2.toggle("Health Score", value=False, help="Display the department's overall drone coverage health score.")
-        show_satellite = col1.toggle("Satellite", value=False, help="Switch the map background to high-resolution satellite imagery.")
-        show_cards = col2.toggle("Unit Economics Cards", value=True, help="Show or hide the financial breakdown cards for each deployed drone.")
-        show_faa = st.toggle("FAA Airspace Grids", value=False, help="Overlay official FAA LAANC facility grids (will procedurally generate if FAA servers time out).")
-
-    with sim_expander:
+        show_health = col1.toggle("Health Score", value=False, help="Display the department's overall drone coverage health score.")
+        show_satellite = col2.toggle("Satellite", value=False, help="Switch the map background to high-resolution satellite imagery.")
+        show_cards = col1.toggle("Unit Economics Cards", value=True, help="Show or hide the financial breakdown cards for each deployed drone.")
+        show_faa = col2.toggle("FAA Airspace Grids", value=False, help="Overlay official FAA LAANC facility grids with altitude limits.")
+        
+        st.markdown("---")
         simulate_traffic = st.toggle("Enable Traffic Sim", value=False, help="Compare drone flight times against ground vehicle drive times.")
         if simulate_traffic:
             traffic_level = st.slider("Traffic Intensity (%)", 0, 100, 40, help="Adjust the simulated ground traffic congestion.")
@@ -1368,12 +1378,16 @@ if st.session_state['csvs_ready']:
                     
                 map_color = active_color_map[f"{station_metadata[idx]['name']}_{d_type}"]
                 avg_time_min = (avg_dist / speed_mph) * 60
+                
+                d_lat = station_metadata[idx]['lat']
+                d_lon = station_metadata[idx]['lon']
+                faa_ceiling_text = get_station_faa_ceiling(d_lat, d_lon, faa_geojson)
 
                 d = {
                     'idx': idx,
                     'name': station_metadata[idx]['name'],
-                    'lat': station_metadata[idx]['lat'],
-                    'lon': station_metadata[idx]['lon'],
+                    'lat': d_lat,
+                    'lon': d_lon,
                     'type': d_type,
                     'cost': cost,
                     'cov_array': cov_array,
@@ -1381,7 +1395,8 @@ if st.session_state['csvs_ready']:
                     'deploy_step': step if (idx in chrono_r or idx in chrono_g) else "MANUAL",
                     'avg_time_min': avg_time_min,
                     'speed_mph': speed_mph,
-                    'radius_m': radius_m
+                    'radius_m': radius_m,
+                    'faa_ceiling': faa_ceiling_text
                 }
                 
                 if total_calls > 0:
@@ -1495,11 +1510,6 @@ if st.session_state['csvs_ready']:
                     for poly in city_boundary_geom.geoms:
                         bx, by = poly.exterior.coords.xy
                         fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color=map_boundary_color, width=2), name="Jurisdiction Boundary", hoverinfo='skip', showlegend=False))
-
-        # --- FAA LAANC AIRSPACE OVERLAY ---
-        if show_faa:
-            with st.spinner("Fetching FAA LAANC grids..."):
-                faa_geojson = fetch_faa_airspace_grids(minx, miny, maxx, maxy)
                 
         if show_heatmap and not display_calls.empty:
             fig.add_trace(go.Densitymapbox(
@@ -1511,22 +1521,6 @@ if st.session_state['csvs_ready']:
                 opacity=0.6,
                 showscale=False,
                 name="Heatmap",
-                hoverinfo='skip'
-            ))
-            
-        # --- AI PREDICTIVE HEATMAP ---
-        if show_ai_heatmap and not display_calls.empty:
-            shifted_lat = display_calls.geometry.y + np.random.normal(0, 0.005, len(display_calls))
-            shifted_lon = display_calls.geometry.x + np.random.normal(0, 0.005, len(display_calls))
-            fig.add_trace(go.Densitymapbox(
-                lat=shifted_lat,
-                lon=shifted_lon,
-                z=np.ones(len(display_calls)),
-                radius=15,
-                colorscale='Purples',
-                opacity=0.7,
-                showscale=False,
-                name="AI Prediction",
                 hoverinfo='skip'
             ))
 
@@ -1590,6 +1584,33 @@ if st.session_state['csvs_ready']:
                         name=f"Ground Reach ({t_label})",
                         hoverinfo='skip'
                     ))
+
+        # --- FAA LAANC AIRSPACE TEXT OVERLAY ---
+        if show_faa and faa_geojson and 'features' in faa_geojson:
+            faa_lats = []
+            faa_lons = []
+            faa_texts = []
+            for f in faa_geojson['features']:
+                try:
+                    s = shape(f['geometry'])
+                    centroid = s.centroid
+                    faa_lons.append(centroid.x)
+                    faa_lats.append(centroid.y)
+                    ceil = f['properties'].get('CEILING', 0)
+                    faa_texts.append(f"{ceil} ft")
+                except:
+                    pass
+            if faa_lats:
+                fig.add_trace(go.Scattermapbox(
+                    lat=faa_lats,
+                    lon=faa_lons,
+                    mode='text',
+                    text=faa_texts,
+                    textfont=dict(size=14, color='#ffffff' if is_dark else '#000000'),
+                    name='FAA Airspace Limits',
+                    hoverinfo='skip',
+                    showlegend=False
+                ))
 
         mapbox_config = dict(
             center=dict(lat=center_lat, lon=center_lon),
@@ -1658,7 +1679,7 @@ if st.session_state['csvs_ready']:
             
             station_rows = ""
             for d in active_drones:
-                station_rows += f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>${d['cost']:,}</td></tr>"
+                station_rows += f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>{d['faa_ceiling']}</td><td>${d['cost']:,}</td></tr>"
                 
             pop_metric = st.session_state.get('estimated_pop', 250000)
             grant_bracket = estimate_grants(pop_metric)
@@ -1764,6 +1785,7 @@ if st.session_state['csvs_ready']:
                         <th>Station Name</th>
                         <th>Drone Type</th>
                         <th>Avg Response Time</th>
+                        <th>FAA LAANC Limit</th>
                         <th>Hardware Capex</th>
                     </tr>
                     {station_rows}
@@ -1828,7 +1850,7 @@ if st.session_state['csvs_ready']:
                             time.sleep(0.04)
 
                     st.write_stream(llm_stream)
-
+            
         # --- Coverage Elbow Curve ---
         st.markdown(f"<h4 style='margin-top:0px; border-bottom: 1px solid {card_border}; padding-bottom: 8px; color: {text_main};'>Coverage Optimization</h4>", unsafe_allow_html=True)
         
@@ -1920,6 +1942,7 @@ if st.session_state['csvs_ready']:
                             f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 2px;">Shared Flights: <span style="font-weight: 600; float: right; color:{card_title};">{d["shared_flights"]:.1f}/d</span></div>'
                             f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Deflected: <span style="font-weight: 600; float: right; color:{card_title};">{d["marginal_deflected"]:.1f}/d</span></div>'
                             f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">Avg Resp Time: <span style="font-weight: 600; float: right; color:{card_title};">{d["avg_time_min"]:.1f} min</span></div>'
+                            f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 6px;">FAA Limit: <span style="font-weight: 600; float: right; color:{card_title};">{d["faa_ceiling"]}</span></div>'
                             f'<div style="border-top: 1px dashed {card_border}; padding-top: 4px; font-size: 0.65rem; color: {text_muted};">'
                             f'CapEx: <strong style="float:right; color:{card_title};">${d["cost"]:,.0f}</strong><br>'
                             f'ROI: <strong style="color: {accent_color}; float:right;">{d["be_text"]}</strong></div>'
@@ -2015,9 +2038,9 @@ if st.session_state['csvs_ready']:
                         })
                 
                 warn_html = ""
-                if len(flights_json) > 2000:
-                    flights_json = random.sample(flights_json, 2000)
-                    warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 2,000 flights for performance (Total Actual: {total_sim_flights:,}).</div>'
+                if len(flights_json) > 3000:
+                    flights_json = random.sample(flights_json, 3000)
+                    warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 3,000 flights for performance (Total Actual: {total_sim_flights:,}).</div>'
                 
                 drone_svg = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M18 6a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4zm12 12a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4z'/%3E%3Cpath stroke='white' stroke-width='2' stroke-linecap='round' d='M8.5 8.5l7 7m0-7l-7 7'/%3E%3Ccircle cx='12' cy='12' r='2' fill='white'/%3E%3C/svg%3E"
                 
