@@ -46,7 +46,7 @@ STATE_FIPS = {
     "WY": "56"
 }
 
-# --- ADDED: REVERSE LOOKUP DICTIONARY ---
+# --- REVERSE LOOKUP DICTIONARY ---
 US_STATES_ABBR = {
     "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR", "California": "CA",
     "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE", "Florida": "FL", "Georgia": "GA",
@@ -94,52 +94,55 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['r_guard'] = 8.0
     st.session_state['dfr_rate'] = 25
     st.session_state['deflect_rate'] = 30
+    st.session_state['theme'] = "Dark Mode"
     st.session_state['total_original_calls'] = 0
 
-# --- SCENARIO LOADER ---
-with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
-    uploaded_scenario = st.file_uploader("Load .brinc Scenario File", type=['brinc', 'json'], label_visibility="collapsed")
-    
-    if uploaded_scenario is not None and st.session_state.get('last_loaded_scenario') != uploaded_scenario.file_id:
-        try:
-            file_content = uploaded_scenario.getvalue().decode("utf-8")
-            scenario_data = json.loads(file_content)
-            
-            st.session_state['active_city'] = scenario_data.get('city', 'Orlando')
-            st.session_state['active_state'] = scenario_data.get('state', 'FL')
-            st.session_state['k_resp'] = scenario_data.get('k_resp', 0)
-            st.session_state['k_guard'] = scenario_data.get('k_guard', 0)
-            st.session_state['r_resp'] = scenario_data.get('r_resp', 2.0)
-            st.session_state['r_guard'] = scenario_data.get('r_guard', 8.0)
-            st.session_state['dfr_rate'] = scenario_data.get('dfr_rate', 25)
-            st.session_state['deflect_rate'] = scenario_data.get('deflect_rate', 30)
-            
-            calls_data = scenario_data.get('calls_data')
-            stations_data = scenario_data.get('stations_data')
-            
-            st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
-            
-            if calls_data and stations_data:
-                st.session_state['df_calls'] = pd.DataFrame(calls_data)
-                st.session_state['df_stations'] = pd.DataFrame(stations_data)
-                # Count true uploaded subset if real data
-                st.session_state['total_original_calls'] = len(calls_data)
-                st.session_state['csvs_ready'] = True
-                st.toast(f"✅ Loaded custom scenario for {st.session_state['active_city']}!")
-                st.rerun()
-            else:
-                st.session_state['trigger_sim'] = True
-                st.toast(f"✅ Loaded synthetic scenario for {st.session_state['active_city']}!")
-                st.rerun()
+# --- SCENARIO LOADER (HIDDEN WHEN MAP LOADED) ---
+if not st.session_state['csvs_ready']:
+    with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
+        uploaded_scenario = st.file_uploader("Load .brinc Scenario File", type=['brinc', 'json'], label_visibility="collapsed")
+        
+        if uploaded_scenario is not None and st.session_state.get('last_loaded_scenario') != uploaded_scenario.file_id:
+            try:
+                file_content = uploaded_scenario.getvalue().decode("utf-8")
+                scenario_data = json.loads(file_content)
                 
-        except Exception as e:
-            st.error(f"Failed to load file. It may be corrupted or incorrectly formatted.")
-            st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
+                st.session_state['active_city'] = scenario_data.get('city', 'Orlando')
+                st.session_state['active_state'] = scenario_data.get('state', 'FL')
+                st.session_state['k_resp'] = scenario_data.get('k_resp', 0)
+                st.session_state['k_guard'] = scenario_data.get('k_guard', 0)
+                st.session_state['r_resp'] = scenario_data.get('r_resp', 2.0)
+                st.session_state['r_guard'] = scenario_data.get('r_guard', 8.0)
+                st.session_state['dfr_rate'] = scenario_data.get('dfr_rate', 25)
+                st.session_state['deflect_rate'] = scenario_data.get('deflect_rate', 30)
+                
+                calls_data = scenario_data.get('calls_data')
+                stations_data = scenario_data.get('stations_data')
+                
+                st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
+                
+                if calls_data and stations_data:
+                    st.session_state['df_calls'] = pd.DataFrame(calls_data)
+                    st.session_state['df_stations'] = pd.DataFrame(stations_data)
+                    st.session_state['total_original_calls'] = len(calls_data)
+                    st.session_state['csvs_ready'] = True
+                    st.toast(f"✅ Loaded custom scenario for {st.session_state['active_city']}!")
+                    st.rerun()
+                else:
+                    st.session_state['trigger_sim'] = True
+                    st.toast(f"✅ Loaded synthetic scenario for {st.session_state['active_city']}!")
+                    st.rerun()
+                    
+            except Exception as e:
+                st.error(f"Failed to load file. It may be corrupted or incorrectly formatted.")
+                st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
 
-# --- THEME TOGGLE ---
-st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
-theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
-is_dark = theme_choice == "Dark Mode"
+# --- THEME TOGGLE (HIDDEN WHEN MAP LOADED) ---
+if not st.session_state['csvs_ready']:
+    st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
+    st.session_state['theme'] = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
+
+is_dark = st.session_state.get('theme', 'Dark Mode') == "Dark Mode"
 
 # --- DYNAMIC THEME VARIABLES ---
 if is_dark:
@@ -323,6 +326,18 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         return False, None
     return False, None
 
+@st.cache_data
+def fetch_faa_airspace_grids(minx, miny, maxx, maxy):
+    """Fetches FAA UAS Facility Maps (LAANC grids) for the bounding box."""
+    # Querying the standard FAA open data FeatureServer
+    url = f"https://services6.arcgis.com/ssFJjBXIUyZDrSYZ/arcgis/rest/services/UAS_Facility_Map_Data_V2/FeatureServer/0/query?f=geojson&where=1=1&geometry={minx},{miny},{maxx},{maxy}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&outFields=CEILING"
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            return json.loads(response.read().decode('utf-8'))
+    except Exception as e:
+        return None
+
 def generate_random_points_in_polygon(polygon, num_points):
     points = []
     minx, miny, maxx, maxy = polygon.bounds
@@ -487,7 +502,6 @@ if not st.session_state['csvs_ready']:
                         
                     annual_cfs = int(estimated_pop * 0.6) 
                     
-                    # Store true annual volume before capping for map rendering
                     st.session_state['total_original_calls'] = annual_cfs
                     
                     simulated_points_count = min(int(annual_cfs / 12), 25000)
@@ -1022,6 +1036,7 @@ if st.session_state['csvs_ready']:
         show_health = col1.toggle("Health Score", value=False, help="Display the department's overall drone coverage health score.")
         show_satellite = col2.toggle("Satellite", value=False, help="Switch the map background to high-resolution satellite imagery.")
         show_cards = st.toggle("Unit Economics Cards", value=True, help="Show or hide the financial breakdown cards for each deployed drone.")
+        show_faa = st.toggle("FAA Airspace Grids", value=False, help="Overlay official FAA LAANC facility grids (may take a moment to load from FAA servers).")
 
     with sim_expander:
         simulate_traffic = st.toggle("Enable Traffic Sim", value=False, help="Compare drone flight times against ground vehicle drive times.")
@@ -1434,6 +1449,11 @@ if st.session_state['csvs_ready']:
                         bx, by = poly.exterior.coords.xy
                         fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by), line=dict(color=map_boundary_color, width=2), name="Jurisdiction Boundary", hoverinfo='skip', showlegend=False))
 
+        # --- ADDED: FAA LAANC AIRSPACE OVERLAY ---
+        if show_faa:
+            with st.spinner("Fetching FAA LAANC grids..."):
+                faa_geojson = fetch_faa_airspace_grids(minx, miny, maxx, maxy)
+                
         if show_heatmap and not display_calls.empty:
             fig.add_trace(go.Densitymapbox(
                 lat=display_calls.geometry.y,
@@ -1526,6 +1546,23 @@ if st.session_state['csvs_ready']:
                     ]
                 }
             ]
+            
+        # --- APPLY FAA LAYER TO MAPBOX CONFIG ---
+        if show_faa and faa_geojson and 'features' in faa_geojson:
+            if "layers" not in mapbox_config:
+                mapbox_config["layers"] = []
+                
+            mapbox_config["layers"].append({
+                "source": faa_geojson,
+                "type": "fill",
+                "color": "rgba(255, 0, 0, 0.15)",
+            })
+            mapbox_config["layers"].append({
+                "source": faa_geojson,
+                "type": "line",
+                "color": "rgba(255, 0, 0, 0.8)",
+                "line": {"width": 1}
+            })
 
         fig.update_layout(
             uirevision="LOCKED_MAP",
@@ -1710,13 +1747,6 @@ if st.session_state['csvs_ready']:
                     mime="text/html",
                     use_container_width=True
                 )
-                
-                email_subject = urllib.parse.quote(f"BRINC Proposal - {st.session_state.get('active_city', 'City')}")
-                email_body = urllib.parse.quote(f"Hello,\n\nPlease find the attached BRINC Drone as a First Responder (DFR) custom proposal and coverage analysis for {st.session_state.get('active_city', 'City')}.\n\nLet me know when you have time to review the ROI and deployment metrics.\n\nBest,\n[Your Name]")
-                mailto_url = f"mailto:?subject={email_subject}&body={email_body}"
-                
-                st.markdown(f'<a href="{mailto_url}" target="_blank" style="display: block; text-align: center; background-color: {card_bg}; color: {text_main}; padding: 8px; border-radius: 4px; text-decoration: none; font-weight: 600; margin-top: 5px; border: 1px solid {card_border};">✉️ Draft Email to Prospect</a>', unsafe_allow_html=True)
-                st.markdown("<div style='font-size: 0.65rem; color: gray; text-align: center; margin-top: 4px;'>*Remember to manually attach the downloaded .html file*</div>", unsafe_allow_html=True)
             
         # --- Coverage Elbow Curve ---
         st.markdown(f"<h4 style='margin-top:0px; border-bottom: 1px solid {card_border}; padding-bottom: 8px; color: {text_main};'>Coverage Optimization</h4>", unsafe_allow_html=True)
@@ -1904,9 +1934,9 @@ if st.session_state['csvs_ready']:
                         })
                 
                 warn_html = ""
-                if len(flights_json) > 2000:
-                    flights_json = random.sample(flights_json, 2000)
-                    warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 2,000 flights for performance (Total Actual: {total_sim_flights:,}).</div>'
+                if len(flights_json) > 3000:
+                    flights_json = random.sample(flights_json, 3000)
+                    warn_html = f'<div style="background: #440000; border: 1px solid #ff4b4b; color: #ffbbbb; padding: 5px; font-size: 10px; border-radius: 4px; margin-bottom: 10px;">⚠️ Visuals capped at 3,000 flights for performance (Total Actual: {total_sim_flights:,}).</div>'
                 
                 drone_svg = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M18 6a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4zm12 12a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4z'/%3E%3Cpath stroke='white' stroke-width='2' stroke-linecap='round' d='M8.5 8.5l7 7m0-7l-7 7'/%3E%3Ccircle cx='12' cy='12' r='2' fill='white'/%3E%3C/svg%3E"
                 
