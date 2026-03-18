@@ -353,16 +353,17 @@ def generate_mock_faa_grid(minx, miny, maxx, maxy):
 
 @st.cache_data
 def fetch_faa_airspace_grids(minx, miny, maxx, maxy):
-    url = f"https://services6.arcgis.com/ssFJjBXIUyZDrSYZ/arcgis/rest/services/UAS_Facility_Map_Data_V2/FeatureServer/0/query?f=geojson&where=1=1&geometry={minx},{miny},{maxx},{maxy}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&outFields=CEILING"
+    pad = 0.15 
+    url = f"https://services6.arcgis.com/ssFJjBXIUyZDrSYZ/arcgis/rest/services/UAS_Facility_Map_Data_V2/FeatureServer/0/query?f=geojson&where=1=1&geometry={minx-pad},{miny-pad},{maxx+pad},{maxy+pad}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&outFields=CEILING"
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as response:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read().decode('utf-8'))
             if data and 'features' in data and len(data['features']) > 0:
                 return data
     except Exception:
         pass
-    return generate_mock_faa_grid(minx, miny, maxx, maxy)
+    return None
 
 def get_station_faa_ceiling(lat, lon, faa_geojson):
     if not faa_geojson or 'features' not in faa_geojson:
@@ -2036,3 +2037,207 @@ if st.session_state['csvs_ready']:
 
             sim_html = generate_deckgl_html(active_drones, calls_in_city, dfr_dispatch_rate, center_lat, center_lon, dynamic_zoom, calls_per_day)
             components.html(sim_html, height=700)
+
+    # ==========================================
+    # --- SIDEBAR PROPOSALS & EXPORTS ---
+    # ==========================================
+    if st.session_state['csvs_ready'] and fleet_capex > 0:
+        with export_placeholder:
+            st.markdown("---")
+            st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>📤 Proposals & Exports</h3>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-size: 0.75rem; color: {text_muted}; margin-bottom: 10px;'>Finalize the client's information to download the proposal documents.</div>", unsafe_allow_html=True)
+            
+            col_c, col_s = st.columns([2, 1])
+            prop_city = col_c.text_input("Client City", value=st.session_state.get('active_city', 'City'))
+            prop_state = col_s.text_input("State", value=st.session_state.get('active_state', 'FL'))
+            
+            current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            safe_city_name = prop_city.replace(" ", "_").replace("/", "_")
+            
+            export_dict = {
+                "city": prop_city,
+                "state": prop_state,
+                "k_resp": k_responder,
+                "k_guard": k_guardian,
+                "r_resp": resp_radius_mi,
+                "r_guard": guard_radius_mi,
+                "dfr_rate": int(dfr_dispatch_rate * 100),
+                "deflect_rate": int(deflection_rate * 100),
+                "calls_data": json.loads(st.session_state['df_calls'].replace({np.nan: None}).to_json(orient='records')) if st.session_state.get('df_calls') is not None else None,
+                "stations_data": json.loads(st.session_state['df_stations'].replace({np.nan: None}).to_json(orient='records')) if st.session_state.get('df_stations') is not None else None
+            }
+            
+            st.download_button(
+                label="💾 Download .brinc Scenario",
+                data=json.dumps(export_dict),
+                file_name=f"Brinc_{safe_city_name}_{current_time}.brinc",
+                mime="application/json",
+                use_container_width=True
+            )
+
+            # Re-generate the HTML map now that the figure is fully constructed
+            map_html = fig.to_html(full_html=False, include_plotlyjs='cdn', default_height='500px', default_width='100%')
+            
+            station_rows = ""
+            for d in active_drones:
+                station_rows += f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>{d['faa_ceiling']}</td><td>${d['cost']:,}</td></tr>"
+                
+            pop_metric = st.session_state.get('estimated_pop', 250000)
+            grant_bracket = estimate_grants(pop_metric)
+            
+            avg_resp_time = sum(d['avg_time_min'] for d in active_drones) / len(active_drones) if active_drones else 0.0
+            avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - (traffic_level / 100))
+            avg_time_saved = (sum((d['radius_m']/1609.34 * 1.4 / avg_ground_speed)*60 for d in active_drones) / len(active_drones)) - avg_resp_time if active_drones and avg_ground_speed > 0 else 0.0
+            
+            export_html = f"""
+            <html>
+            <head>
+                <title>BRINC DFR Proposal - {prop_city}</title>
+                <style>
+                    body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; margin: 40px; }}
+                    h1 {{ color: #000; border-bottom: 2px solid #00D2FF; padding-bottom: 10px; }}
+                    h2 {{ color: #444; margin-top: 30px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }}
+                    .metric-box {{ background: #f8f9fa; border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
+                    .metric-title {{ font-size: 12px; font-weight: bold; color: #888; text-transform: uppercase; }}
+                    .metric-value {{ font-size: 24px; font-weight: bold; color: #00D2FF; margin-top: 5px; }}
+                    .grid {{ display: flex; flex-wrap: wrap; gap: 20px; }}
+                    .grid-item {{ flex: 1; min-width: 200px; }}
+                    table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; }}
+                    th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
+                    th {{ background-color: #f1f1f1; }}
+                    .map-container {{ border: 1px solid #ddd; border-radius: 8px; overflow: hidden; margin-top: 20px; }}
+                </style>
+            </head>
+            <body>
+                <h1>Drone as a First Responder (DFR) Proposal</h1>
+                <p><strong>Prepared for:</strong> {prop_city}, {prop_state}</p>
+                <p><strong>Estimated Population:</strong> {pop_metric:,}</p>
+                
+                <h2>Executive Summary</h2>
+                <div class="grid">
+                    <div class="metric-box grid-item">
+                        <div class="metric-title">Total Fleet Capex</div>
+                        <div class="metric-value">${fleet_capex:,.0f}</div>
+                    </div>
+                    <div class="metric-box grid-item">
+                        <div class="metric-title">Annual Savings Capacity</div>
+                        <div class="metric-value">${annual_savings:,.0f}</div>
+                    </div>
+                    <div class="metric-box grid-item">
+                        <div class="metric-title">Est. ROI / Break-Even</div>
+                        <div class="metric-value">{break_even_text}</div>
+                    </div>
+                </div>
+
+                <h2>Coverage & Operational Impact</h2>
+                <div class="grid">
+                    <div class="metric-box grid-item">
+                        <div class="metric-title">911 Call Coverage</div>
+                        <div class="metric-value">{calls_covered_perc:.1f}%</div>
+                    </div>
+                    <div class="metric-box grid-item">
+                        <div class="metric-title">Avg Response Time</div>
+                        <div class="metric-value">{avg_resp_time:.1f} min</div>
+                    </div>
+                    <div class="metric-box grid-item">
+                        <div class="metric-title">Est. Time Saved vs Patrol</div>
+                        <div class="metric-value">{avg_time_saved:.1f} min</div>
+                    </div>
+                </div>
+                
+                <h2>Funding & Grant Eligibility</h2>
+                <p>Based on a population of {pop_metric:,}, {prop_city} is eligible for an estimated <strong>{grant_bracket}</strong> in federal funding.</p>
+                <ul>
+                    <li><strong>DOJ Byrne JAG:</strong> Formula-based technology grants for law enforcement.</li>
+                    <li><strong>FEMA HSGP:</strong> Homeland security grants for disaster and tactical response.</li>
+                </ul>
+                
+                <h2>Proposed Fleet Configuration</h2>
+                <table>
+                    <tr>
+                        <th>Drone Type</th>
+                        <th>Quantity</th>
+                        <th>Range</th>
+                        <th>Unit Cost</th>
+                    </tr>
+                    <tr>
+                        <td>BRINC Responder</td>
+                        <td>{actual_k_responder}</td>
+                        <td>{resp_radius_mi} miles</td>
+                        <td>${CONFIG['RESPONDER_COST']:,}</td>
+                    </tr>
+                    <tr>
+                        <td>BRINC Guardian</td>
+                        <td>{actual_k_guardian}</td>
+                        <td>{guard_radius_mi} miles</td>
+                        <td>${CONFIG['GUARDIAN_COST']:,}</td>
+                    </tr>
+                </table>
+                
+                <h2>Interactive Coverage Map</h2>
+                <p style="font-size: 13px; color: #666;">The interactive map below illustrates the optimized placement for the proposed DFR fleet.</p>
+                <div class="map-container">
+                    {map_html}
+                </div>
+                
+                <h2>Selected Deployment Locations</h2>
+                <table>
+                    <tr>
+                        <th>Station Name</th>
+                        <th>Drone Type</th>
+                        <th>Avg Response Time</th>
+                        <th>FAA LAANC Limit</th>
+                        <th>Hardware Capex</th>
+                    </tr>
+                    {station_rows}
+                </table>
+                
+                <h2>Grant Proposal Narrative (AI Generated)</h2>
+                <div style="background-color: #fff3cd; border-left: 4px solid #ffeeba; padding: 15px; margin-bottom: 20px; font-size: 13px; color: #856404;">
+                    <strong>⚠️ DISCLAIMER:</strong> The following grant narrative is AI-generated based on the simulated parameters of this proposal. It is intended as a starting draft and <strong>must be thoroughly reviewed, edited, and fact-checked</strong> by your agency's grant writer or legal team prior to official submission.
+                </div>
+                <p><strong>Project Title:</strong> Establishing a Drone as a First Responder (DFR) Program for {prop_city}</p>
+                <p><strong>Statement of Need:</strong> The {prop_city} Police/Fire Department respectfully requests funding under the DOJ Byrne JAG program to procure and deploy a highly specialized Drone as a First Responder (DFR) network. Protecting a population of {pop_metric:,} residents requires an innovative approach to reduce response times and increase situational awareness. Our spatial analysis of {st.session_state.get('total_original_calls', total_calls):,} historical 911 calls indicates that establishing a network of {actual_k_responder + actual_k_guardian} automated drone systems will provide direct overhead coverage to {calls_covered_perc:.1f}% of all high-priority emergency incidents.</p>
+                <p><strong>Project Design and Implementation:</strong> The proposed network consists of {actual_k_responder} tactical Responder drones and {actual_k_guardian} heavy-lift Guardian drones. By pre-positioning these automated assets on municipal infrastructure, {prop_city} will achieve an average response time of {avg_resp_time:.1f} minutes to {calls_covered_perc:.1f}% of our jurisdiction. This represents an estimated {avg_time_saved:.1f} minute reduction in emergency response latency compared to traditional vehicular patrol routing.</p>
+                <p><strong>Capabilities and Competencies (ROI):</strong> Investing ${fleet_capex:,.0f} in capital hardware will yield compounding returns in officer safety and operational capacity. The DFR system is projected to deflect an estimated {daily_drone_only_calls:.1f} unnecessary physical patrol dispatches per day, creating an annual capacity equivalent value of ${annual_savings:,.0f}. This ensures that human officers are preserved for critical interventions while the DFR network handles rapid triage and de-escalation.</p>
+
+                <p style="margin-top:40px; font-size:12px; color:#888;">Generated dynamically by the BRINC COS Drone Optimizer.</p>
+            </body>
+            </html>
+            """
+            
+            st.download_button(
+                label="📄 Download Executive Summary",
+                data=export_html,
+                file_name=f"Brinc_{safe_city_name}_Proposal_{current_time}.html",
+                mime="text/html",
+                use_container_width=True
+            )
+
+        with grants_placeholder:
+            st.markdown("---")
+            pop_metric = st.session_state.get('estimated_pop', 250000)
+            grant_bracket = estimate_grants(pop_metric)
+            
+            st.markdown(f"<h4 style='margin-bottom:5px; color:{text_main};'>🏛️ Federal Grant Opportunities</h4>", unsafe_allow_html=True)
+            st.markdown(f"""
+            <div style="background-color: {card_bg}; border: 1px solid {budget_box_border}; padding: 10px; border-radius: 4px; margin-bottom: 15px;">
+                <div style="font-size: 0.7rem; color: {text_muted}; font-weight: bold; text-transform: uppercase;">Estimated Eligibility</div>
+                <div style="font-size: 1.2rem; color: {budget_box_border}; font-weight: bold; font-family: monospace;">{grant_bracket}</div>
+            </div>
+            <div style="font-size: 0.75rem; color: {text_muted}; line-height: 1.4; margin-bottom: 15px;">
+                <a href="https://bja.ojp.gov/program/jag/overview" target="_blank" style="color: {accent_color}; text-decoration: none; font-weight: bold;">DOJ Byrne JAG Program</a><br>
+                The leading source of federal justice funding to state and local jurisdictions. Fully eligible for UAS/drone technology procurement.
+                <br><br>
+                <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank" style="color: {accent_color}; text-decoration: none; font-weight: bold;">FEMA HSGP</a><br>
+                Homeland Security Grant Program. Can offset hardware CAPEX for disaster response and tactical deployments.
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.download_button(
+                label="🌏 Download for Google Earth",
+                data=generate_kml(active_gdf, active_drones, calls_in_city),
+                file_name="drone_deployment.kml",
+                mime="application/vnd.google-earth.kml+xml",
+                use_container_width=True
+            )
