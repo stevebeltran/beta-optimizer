@@ -17,6 +17,7 @@ import re
 import random
 import json
 import urllib.request
+import urllib.parse
 import zipfile
 import io
 import datetime
@@ -69,10 +70,10 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['csvs_ready'] = False
     st.session_state['df_calls'] = None
     st.session_state['df_stations'] = None
+    st.session_state['use_osm'] = True
     st.session_state['active_city'] = "Orlando"
     st.session_state['active_state'] = "FL"
     st.session_state['estimated_pop'] = 316081
-    # Interactive sliders state fallback
     st.session_state['k_resp'] = 0
     st.session_state['k_guard'] = 0
     st.session_state['r_resp'] = 2.0
@@ -94,8 +95,20 @@ with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
             st.session_state['r_guard'] = scenario_data.get('r_guard', 8.0)
             st.session_state['dfr_rate'] = scenario_data.get('dfr_rate', 25)
             st.session_state['deflect_rate'] = scenario_data.get('deflect_rate', 30)
-            st.session_state['trigger_sim'] = True # Forces the synthetic generation block to run
-            st.success(f"Loaded {st.session_state['active_city']} scenario!")
+            
+            # Check if custom embedded data exists
+            calls_data = scenario_data.get('calls_data')
+            stations_data = scenario_data.get('stations_data')
+            
+            if calls_data and stations_data:
+                st.session_state['df_calls'] = pd.DataFrame(calls_data)
+                st.session_state['df_stations'] = pd.DataFrame(stations_data)
+                st.session_state['csvs_ready'] = True
+                st.success(f"Loaded custom scenario for {st.session_state['active_city']}!")
+                st.rerun()
+            else:
+                st.session_state['trigger_sim'] = True
+                st.success(f"Loaded synthetic scenario for {st.session_state['active_city']}!")
         except Exception as e:
             st.error("Invalid scenario file.")
 
@@ -1329,7 +1342,9 @@ if st.session_state['csvs_ready']:
         "r_resp": resp_radius_mi,
         "r_guard": guard_radius_mi,
         "dfr_rate": int(dfr_dispatch_rate * 100),
-        "deflect_rate": int(deflection_rate * 100)
+        "deflect_rate": int(deflection_rate * 100),
+        "calls_data": st.session_state['df_calls'].to_dict(orient='records') if st.session_state.get('df_calls') is not None else None,
+        "stations_data": st.session_state['df_stations'].to_dict(orient='records') if st.session_state.get('df_stations') is not None else None
     }
     
     st.sidebar.download_button(
@@ -1505,6 +1520,12 @@ if st.session_state['csvs_ready']:
         
         # --- HTML EXECUTIVE SUMMARY EXPORT ---
         if fleet_capex > 0:
+            map_html = fig.to_html(full_html=False, include_plotlyjs='cdn', default_height='500px', default_width='100%')
+            
+            station_rows = ""
+            for d in active_drones:
+                station_rows += f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>${d['cost']:,}</td></tr>"
+                
             export_html = f"""
             <html>
             <head>
@@ -1512,21 +1533,21 @@ if st.session_state['csvs_ready']:
                 <style>
                     body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333; margin: 40px; }}
                     h1 {{ color: #000; border-bottom: 2px solid #00D2FF; padding-bottom: 10px; }}
-                    h2 {{ color: #444; margin-top: 30px; }}
+                    h2 {{ color: #444; margin-top: 30px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }}
                     .metric-box {{ background: #f8f9fa; border: 1px solid #ddd; padding: 20px; border-radius: 8px; margin-bottom: 20px; }}
                     .metric-title {{ font-size: 12px; font-weight: bold; color: #888; text-transform: uppercase; }}
                     .metric-value {{ font-size: 24px; font-weight: bold; color: #00D2FF; margin-top: 5px; }}
                     .grid {{ display: flex; flex-wrap: wrap; gap: 20px; }}
                     .grid-item {{ flex: 1; min-width: 200px; }}
-                    table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
+                    table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; }}
                     th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
                     th {{ background-color: #f1f1f1; }}
+                    .map-container {{ border: 1px solid #ddd; border-radius: 8px; overflow: hidden; margin-top: 20px; }}
                 </style>
             </head>
             <body>
                 <h1>Drone as a First Responder (DFR) Proposal</h1>
                 <p><strong>Prepared for:</strong> {st.session_state.get('active_city', 'City')}, {st.session_state.get('active_state', 'US')}</p>
-                <p><strong>Estimated Population:</strong> {st.session_state.get('estimated_pop', 0):,}</p>
                 
                 <h2>Executive Summary</h2>
                 <div class="grid">
@@ -1581,7 +1602,25 @@ if st.session_state['csvs_ready']:
                         <td>${CONFIG['GUARDIAN_COST']:,}</td>
                     </tr>
                 </table>
-                <p style="margin-top:40px; font-size:12px; color:#888;">Generated by BRINC COS Drone Optimizer.</p>
+                
+                <h2>Interactive Coverage Map</h2>
+                <p style="font-size: 13px; color: #666;">The interactive map below illustrates the optimized placement for the proposed DFR fleet.</p>
+                <div class="map-container">
+                    {map_html}
+                </div>
+                
+                <h2>Selected Deployment Locations</h2>
+                <table>
+                    <tr>
+                        <th>Station Name</th>
+                        <th>Drone Type</th>
+                        <th>Avg Response Time</th>
+                        <th>Hardware Capex</th>
+                    </tr>
+                    {station_rows}
+                </table>
+
+                <p style="margin-top:40px; font-size:12px; color:#888;">Generated dynamically by the BRINC COS Drone Optimizer.</p>
             </body>
             </html>
             """
