@@ -70,7 +70,6 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['csvs_ready'] = False
     st.session_state['df_calls'] = None
     st.session_state['df_stations'] = None
-    st.session_state['use_osm'] = True
     st.session_state['active_city'] = "Orlando"
     st.session_state['active_state'] = "FL"
     st.session_state['estimated_pop'] = 316081
@@ -96,7 +95,6 @@ with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
             st.session_state['dfr_rate'] = scenario_data.get('dfr_rate', 25)
             st.session_state['deflect_rate'] = scenario_data.get('deflect_rate', 30)
             
-            # Check if custom embedded data exists
             calls_data = scenario_data.get('calls_data')
             stations_data = scenario_data.get('stations_data')
             
@@ -568,7 +566,7 @@ def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
     return master_gdf
 
 @st.cache_resource
-def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, bounds_hash):
+def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash):
     gdf_calls = gpd.GeoDataFrame(df_calls, geometry=gpd.points_from_xy(df_calls.lon, df_calls.lat), crs="EPSG:4326")
     gdf_calls_utm = gdf_calls.to_crs(epsg=epsg_code)
     
@@ -589,6 +587,12 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_
     
     display_calls = calls_in_city.sample(min(5000, total_calls), random_state=42).to_crs(epsg=4326) if not calls_in_city.empty else gpd.GeoDataFrame()
     
+    max_dist = 0
+    for _, row in df_stations_all.iterrows():
+        d = ((row['lon'] - center_lon)**2 + (row['lat'] - center_lat)**2)**0.5
+        if d > max_dist: max_dist = d
+    if max_dist == 0: max_dist = 1.0
+
     if not calls_in_city.empty:
         calls_array = np.array(list(zip(calls_in_city.geometry.x, calls_in_city.geometry.y)))
         for idx_pos, (i, row) in enumerate(df_stations_all.iterrows()):
@@ -614,11 +618,15 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_
             
             avg_dist_r = dists_mi[mask_r].mean() if mask_r.any() else (resp_radius_mi * (2/3))
             avg_dist_g = dists_mi[mask_g].mean() if mask_g.any() else (guard_radius_mi * (2/3))
-                
+            
+            dist_c = ((row['lon'] - center_lon)**2 + (row['lat'] - center_lat)**2)**0.5
+            centrality = 1.0 - (dist_c / max_dist)
+            
             station_metadata.append({
                 'name': row['name'], 'lat': row['lat'], 'lon': row['lon'],
                 'clipped_2m': clipped_2m, 'clipped_guard': clipped_guard,
-                'avg_dist_r': avg_dist_r, 'avg_dist_g': avg_dist_g
+                'avg_dist_r': avg_dist_r, 'avg_dist_g': avg_dist_g,
+                'centrality': centrality
             })
             
     return calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls
@@ -890,7 +898,7 @@ if st.session_state['csvs_ready']:
 
     with st.spinner("⚡ Precomputing spatial optimization matrices..."):
         calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls = precompute_spatial_data(
-            df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, bounds_hash
+            df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash
         )
         
         df_curve = compute_all_elbow_curves(
@@ -1548,6 +1556,7 @@ if st.session_state['csvs_ready']:
             <body>
                 <h1>Drone as a First Responder (DFR) Proposal</h1>
                 <p><strong>Prepared for:</strong> {st.session_state.get('active_city', 'City')}, {st.session_state.get('active_state', 'US')}</p>
+                <p><strong>Estimated Population:</strong> {st.session_state.get('estimated_pop', 0):,}</p>
                 
                 <h2>Executive Summary</h2>
                 <div class="grid">
