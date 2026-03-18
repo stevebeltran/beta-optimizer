@@ -46,6 +46,21 @@ STATE_FIPS = {
     "WY": "56"
 }
 
+# --- ADDED: REVERSE LOOKUP DICTIONARY ---
+US_STATES_ABBR = {
+    "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR", "California": "CA",
+    "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE", "Florida": "FL", "Georgia": "GA",
+    "Hawaii": "HI", "Idaho": "ID", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA",
+    "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
+    "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
+    "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV", "New Hampshire": "NH",
+    "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY", "North Carolina": "NC",
+    "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK", "Oregon": "OR", "Pennsylvania": "PA",
+    "Rhode Island": "RI", "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN",
+    "Texas": "TX", "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA",
+    "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY"
+}
+
 KNOWN_POPULATIONS = {
     "New York": 8336817, "Los Angeles": 3822238, "Chicago": 2665039, "Houston": 1304379, 
     "Phoenix": 1644409, "Philadelphia": 1567258, "San Antonio": 2302878, "San Diego": 1472530, 
@@ -240,6 +255,21 @@ if not os.path.exists(SHAPEFILE_DIR):
 if not st.session_state['csvs_ready']:
     st.title("🛰️ BRINC COS Drone Optimizer")
 
+# --- ADDED: REVERSE GEOCODING FUNCTION ---
+@st.cache_data
+def reverse_geocode_state(lat, lon):
+    url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&addressdetails=1"
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            address = data.get('address', {})
+            state = address.get('state', '')
+            city = address.get('city', address.get('town', address.get('village', address.get('county', 'Unknown City'))))
+            return state, city
+    except Exception:
+        return None, None
+
 # --- CENSUS TIGER SHAPEFILE & API FETCHER ---
 @st.cache_data
 def fetch_census_population(state_fips, place_name):
@@ -390,6 +420,18 @@ if not st.session_state['csvs_ready']:
                 df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
                 
             st.session_state['df_stations'] = df_s
+            
+            # --- ADDED: Auto-State Detection via Nominatim ---
+            with st.spinner("🌍 Auto-detecting state from GPS coordinates..."):
+                sample_lat, sample_lon = df_c['lat'].iloc[0], df_c['lon'].iloc[0]
+                detected_state_full, detected_city = reverse_geocode_state(sample_lat, sample_lon)
+                
+                if detected_state_full and detected_state_full in US_STATES_ABBR:
+                    st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
+                    if detected_city and detected_city != 'Unknown City':
+                        st.session_state['active_city'] = detected_city
+                    st.toast(f"📍 Auto-detected jurisdiction: {st.session_state['active_city']}, {st.session_state['active_state']}")
+
             st.session_state['csvs_ready'] = True
             st.rerun()
 
@@ -411,6 +453,11 @@ if not st.session_state['csvs_ready']:
         if submit_demo or st.session_state.get('trigger_sim', False):
             if st.session_state.get('trigger_sim', False):
                 st.session_state['trigger_sim'] = False
+                
+            # --- ADDED: Explicitly set state to fix Florida bug ---
+            if submit_demo:
+                st.session_state['active_state'] = input_state
+                st.session_state['active_city'] = input_city
                 
             with st.spinner(f"Fetching exact TIGER boundary data for {input_city}, {input_state} from US Census Bureau..."):
                 success, active_city_gdf = fetch_tiger_city_shapefile(STATE_FIPS[input_state], input_city, SHAPEFILE_DIR)
@@ -476,12 +523,12 @@ def format_3_lines(name_str):
         if ',' in rest:
             parts = rest.split(',', 1)
             return f"{line1}<br>{parts[0].strip()},<br>{parts[1].strip()}"
-        return f"{line1}<br>{rest}<br> "
+        return f"{line1}<br>{rest}<br> "
     if ',' in name_str:
         parts = name_str.split(',')
         if len(parts) >= 3:
             return f"{parts[0].strip()},<br>{parts[1].strip()},<br>{','.join(parts[2:]).strip()}"
-    return f"{name_str}<br> <br> "
+    return f"{name_str}<br> <br> "
 
 def to_kml_color(hex_str):
     h = hex_str.lstrip('#')
@@ -833,7 +880,6 @@ if st.session_state['csvs_ready']:
     selected_names = [options_map[l] for l in selected_labels]
     active_gdf = master_gdf[master_gdf['DISPLAY_NAME'].isin(selected_names)]
     
-    # Bypassing the Florida bug: Allow users to edit this name explicitly in the Export section later
     if selected_names and not st.session_state.get('trigger_sim', False) and st.session_state.get('active_city') == "Orlando":
         st.session_state['active_city'] = selected_names[0]
 
