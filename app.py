@@ -17,9 +17,9 @@ import re
 import random
 import json
 import urllib.request
-import urllib.parse
 import zipfile
 import io
+import datetime
 import streamlit.components.v1 as components
 
 # --- GLOBAL CONFIGURATION ---
@@ -69,7 +69,6 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['csvs_ready'] = False
     st.session_state['df_calls'] = None
     st.session_state['df_stations'] = None
-    st.session_state['use_osm'] = True
     st.session_state['active_city'] = "Orlando"
     st.session_state['active_state'] = "FL"
     st.session_state['estimated_pop'] = 316081
@@ -102,7 +101,7 @@ with st.sidebar.expander("💾 Save / Load Scenario", expanded=False):
 
 # --- THEME TOGGLE ---
 st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
-theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed")
+theme_choice = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
 is_dark = theme_choice == "Dark Mode"
 
 # --- DYNAMIC THEME VARIABLES ---
@@ -272,37 +271,6 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         return False, None
     return False, None
 
-@st.cache_data
-def fetch_osm_stations(minx, miny, maxx, maxy):
-    query = f"""
-    [out:json];
-    (
-      node["amenity"="police"]({miny},{minx},{maxy},{maxx});
-      node["amenity"="fire_station"]({miny},{minx},{maxy},{maxx});
-      way["amenity"="police"]({miny},{minx},{maxy},{maxx});
-      way["amenity"="fire_station"]({miny},{minx},{maxy},{maxx});
-    );
-    out center;
-    """
-    url = "https://overpass-api.de/api/interpreter"
-    data = urllib.parse.urlencode({'data': query}).encode('utf-8')
-    req = urllib.request.Request(url, data=data, headers={'User-Agent': 'Mozilla/5.0'})
-    try:
-        with urllib.request.urlopen(req) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            stations = []
-            for idx, element in enumerate(result['elements']):
-                lat = element.get('lat') or element.get('center', {}).get('lat')
-                lon = element.get('lon') or element.get('center', {}).get('lon')
-                tags = element.get('tags', {})
-                name = tags.get('name', f"Station {idx+1}")
-                stype = "Police" if tags.get('amenity') == 'police' else "Fire"
-                if lat and lon:
-                    stations.append({'name': name, 'lat': lat, 'lon': lon, 'type': stype})
-            return pd.DataFrame(stations)
-    except Exception as e:
-        return pd.DataFrame()
-
 def generate_random_points_in_polygon(polygon, num_points):
     points = []
     minx, miny, maxx, maxy = polygon.bounds
@@ -405,7 +373,6 @@ if not st.session_state['csvs_ready']:
             state_idx = list(STATE_FIPS.keys()).index(st.session_state['active_state']) if st.session_state['active_state'] in STATE_FIPS else 8
             input_state = col2.selectbox("State", list(STATE_FIPS.keys()), index=state_idx) 
             
-            st.session_state['use_osm'] = st.toggle("Pull Real Station Locations (OpenStreetMap API)", value=st.session_state['use_osm'], help="Automatically searches for real-world Police and Fire stations inside the city limits.")
             submit_demo = st.form_submit_button("🚀 Simulate City")
             
         if submit_demo or st.session_state.get('trigger_sim', False):
@@ -448,29 +415,14 @@ if not st.session_state['csvs_ready']:
                     })
                     
                 with st.spinner("Distributing municipal infrastructure grid..."):
-                    minx, miny, maxx, maxy = city_poly.bounds
-                    df_osm = pd.DataFrame()
-                    
-                    if st.session_state['use_osm']:
-                        df_osm = fetch_osm_stations(minx, miny, maxx, maxy)
-                        
-                    if not df_osm.empty:
-                        points = gpd.GeoDataFrame(df_osm, geometry=gpd.points_from_xy(df_osm.lon, df_osm.lat), crs="EPSG:4326")
-                        valid_points = points[points.within(city_poly)]
-                        if not valid_points.empty:
-                            st.session_state['df_stations'] = valid_points.drop(columns=['geometry'])
-                        else:
-                            df_osm = pd.DataFrame() 
-                            
-                    if df_osm.empty:
-                        station_points = generate_random_points_in_polygon(city_poly, 80)
-                        types = ['Police', 'Fire', 'EMS'] * 30
-                        st.session_state['df_stations'] = pd.DataFrame({
-                            'name': [f'Station {i+1}' for i in range(len(station_points))],
-                            'lat': [p[0] for p in station_points], 
-                            'lon': [p[1] for p in station_points],
-                            'type': types[:len(station_points)]
-                        })
+                    station_points = generate_random_points_in_polygon(city_poly, 100)
+                    types = ['Police', 'Fire', 'EMS'] * 34
+                    st.session_state['df_stations'] = pd.DataFrame({
+                        'name': [f'Station {i+1}' for i in range(len(station_points))],
+                        'lat': [p[0] for p in station_points], 
+                        'lon': [p[1] for p in station_points],
+                        'type': types[:len(station_points)]
+                    })
                     
                     st.session_state['inferred_daily_calls_override'] = int(annual_cfs / 365)
                     st.session_state['csvs_ready'] = True
@@ -834,6 +786,9 @@ if st.session_state['csvs_ready']:
         
     selected_names = [options_map[l] for l in selected_labels]
     active_gdf = master_gdf[master_gdf['DISPLAY_NAME'].isin(selected_names)]
+    
+    if selected_names and not st.session_state.get('trigger_sim', False):
+        st.session_state['active_city'] = selected_names[0]
 
     minx, miny, maxx, maxy = active_gdf.to_crs(epsg=4326).total_bounds
     center_lon = (minx + maxx) / 2
@@ -861,10 +816,6 @@ if st.session_state['csvs_ready']:
     # --- SIDEBAR LAYOUT CONTAINERS ---
     opt_container = st.sidebar.container()
     strat_expander = st.sidebar.expander("⚙️ Deployment Strategy", expanded=False)
-    
-    with opt_container:
-        st.session_state['use_osm'] = st.toggle("Include Live Station Map Data (OSM API)", value=st.session_state.get('use_osm', True), help="If active when generating a city, plots actual municipal infrastructure.")
-
     disp_expander = st.sidebar.expander("👁️ Display Options", expanded=False)
     filter_expander = st.sidebar.expander("⚙️ Data Filters", expanded=False)
     sim_expander = st.sidebar.expander("🚗 Ground Traffic Simulator", expanded=False)
@@ -1367,6 +1318,9 @@ if st.session_state['csvs_ready']:
     st.sidebar.markdown(f"<h4 style='margin-bottom:5px; color:{text_main};'>📤 Export Scenario</h4>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<div style='font-size: 0.75rem; color: {text_muted}; margin-bottom: 10px;'>Save your current configurations and drone counts to share with a customer.</div>", unsafe_allow_html=True)
     
+    current_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    safe_city_name = st.session_state.get('active_city', 'City').replace(" ", "_").replace("/", "_")
+    
     export_dict = {
         "city": st.session_state.get('active_city', 'Orlando'),
         "state": st.session_state.get('active_state', 'FL'),
@@ -1381,7 +1335,7 @@ if st.session_state['csvs_ready']:
     st.sidebar.download_button(
         label="💾 Download .brinc File",
         data=json.dumps(export_dict),
-        file_name=f"{st.session_state.get('active_city', 'city')}_scenario.brinc",
+        file_name=f"Brinc_{safe_city_name}_{current_date}.brinc",
         mime="application/json"
     )
 
@@ -1634,7 +1588,7 @@ if st.session_state['csvs_ready']:
             st.download_button(
                 label="📄 Download Executive Summary",
                 data=export_html,
-                file_name=f"{st.session_state.get('active_city', 'city')}_DFR_Proposal.html",
+                file_name=f"Brinc_{safe_city_name}_Proposal_{current_date}.html",
                 mime="text/html",
                 use_container_width=True
             )
