@@ -180,13 +180,21 @@ html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family:
 div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
 div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
 
-/* Fix for selectbox and multiselect styling */
+/* Fix for expanders and forms */
+div[data-testid="stExpander"] details {{ background-color: #111111 !important; border-color: #333333 !important; }}
+div[data-testid="stExpander"] summary {{ background-color: #111111 !important; color: #ffffff !important; }}
+div[data-testid="stExpander"] summary:hover {{ background-color: #222222 !important; }}
+div[data-testid="stForm"] {{ background-color: #111111 !important; border-color: #333333 !important; }}
+
+/* Fix for selectbox, multiselect, and text input styling */
 div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
 div[data-baseweb="select"] > div input {{ color: #ffffff !important; }}
 div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #333333 !important; color: #ffffff !important; font-weight: normal; border: 1px solid #555555 !important; }}
 div[data-baseweb="select"] span[data-baseweb="tag"] span {{ color: #ffffff !important; }}
 div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
 div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
+div[data-baseweb="input"] {{ background-color: #222222 !important; border-color: #444444 !important; }}
+div[data-baseweb="input"] > div > input {{ color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; }}
 
 /* Fix for standard Streamlit buttons & icons rendering washed out in forced dark mode */
 button[kind="secondary"] {{ background-color: #222222 !important; border: 1px solid #444444 !important; }}
