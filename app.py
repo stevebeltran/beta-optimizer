@@ -77,6 +77,12 @@ KNOWN_POPULATIONS = {
     "Wichita": 402263, "Cleveland": 900000, "Tampa": 449514, "Orlando": 316081
 }
 
+DEMO_CITIES = [
+    ("Las Vegas", "NV"), ("Austin", "TX"), ("Seattle", "WA"), 
+    ("Denver", "CO"), ("Nashville", "TN"), ("Columbus", "OH"), 
+    ("Detroit", "MI"), ("San Diego", "CA"), ("Charlotte", "NC")
+]
+
 FAA_CEILING_COLORS = {
     0:   {"line": "rgba(255,  20,  20, 0.95)", "fill": "rgba(255,  20,  20, 0.20)"},
     50:  {"line": "rgba(255, 120,   0, 0.95)", "fill": "rgba(255, 120,   0, 0.18)"},
@@ -109,7 +115,7 @@ defaults = {
     'active_city': "Orlando", 'active_state': "FL", 'estimated_pop': 316081,
     'k_resp': 0, 'k_guard': 0, 'r_resp': 2.0, 'r_guard': 8.0,
     'dfr_rate': 25, 'deflect_rate': 30, 'total_original_calls': 0,
-    'onboarding_done': False
+    'onboarding_done': False, 'trigger_sim': False
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -172,6 +178,14 @@ div[data-testid="stToast"] span, div[data-testid="stToast"] div {{ color: #fffff
     font-size: 0.65rem !important; font-weight: 800 !important; letter-spacing: 1.5px !important;
     text-transform: uppercase !important; color: {accent_color} !important;
     border-top: 1px solid {card_border}; padding-top: 12px; margin-top: 4px; margin-bottom: 8px;
+}}
+/* Tooltip Fixes */
+div[data-testid="stTooltipIcon"] svg {{
+    stroke: {accent_color} !important;
+    fill: transparent !important;
+}}
+div[data-testid="stTooltipHoverTarget"] {{
+    color: {accent_color} !important;
 }}
 /* UX: improved card grid layout */
 .card-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }}
@@ -820,33 +834,6 @@ if not st.session_state['csvs_ready']:
     </div>
     """, unsafe_allow_html=True)
 
-    if not st.session_state.get('onboarding_done'):
-        st.markdown(f"""
-        <div style="background:{card_bg}; border:1px solid {accent_color}; border-radius:8px; padding:18px 24px; margin-bottom:20px;">
-            <div style="font-size:0.75rem; color:{accent_color}; font-weight:800; text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">How it works — 3 steps</div>
-            <div style="display:flex; gap:24px; flex-wrap:wrap;">
-                <div style="flex:1; min-width:180px;">
-                    <div style="font-size:1.4rem;">1️⃣</div>
-                    <div style="font-weight:700; color:{text_main}; margin:4px 0;">Pick a city</div>
-                    <div style="font-size:0.8rem; color:{text_muted};">Enter any US city below — or upload your own 911 call data.</div>
-                </div>
-                <div style="flex:1; min-width:180px;">
-                    <div style="font-size:1.4rem;">2️⃣</div>
-                    <div style="font-weight:700; color:{text_main}; margin:4px 0;">Set your fleet</div>
-                    <div style="font-size:0.8rem; color:{text_muted};">Use the sidebar sliders to deploy Responder and Guardian drones.</div>
-                </div>
-                <div style="flex:1; min-width:180px;">
-                    <div style="font-size:1.4rem;">3️⃣</div>
-                    <div style="font-weight:700; color:{text_main}; margin:4px 0;">Export your proposal</div>
-                    <div style="font-size:0.8rem; color:{text_muted};">Download a grant-ready HTML proposal and Google Earth KML in one click.</div>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("Got it — let's go ✓", use_container_width=False):
-            st.session_state['onboarding_done'] = True
-            st.rerun()
-
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #0a0a0a 0%, #001a22 100%);
          border:1px solid {card_border}; border-left: 4px solid {accent_color};
@@ -855,29 +842,94 @@ if not st.session_state['csvs_ready']:
         <div>
             <div style="font-weight:800; color:{accent_color}; font-size:0.9rem;">3D SWARM SIMULATION INCLUDED</div>
             <div style="font-size:0.78rem; color:{text_muted}; margin-top:2px;">
-                Once you deploy a fleet, unlock a live animated deck.gl simulation showing every DFR flight over a compressed 24-hour day.
-                Perfect for council presentations and grant applications.
+                Deploy a fleet to unlock a live animated 3D simulation showing every DFR flight over a 24-hour day. Export grant-ready PDF proposals directly from your simulated operations.
             </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown(f"<h3 style='color:{text_main}; margin-bottom:4px;'>🚀 Simulate Any US City</h3>", unsafe_allow_html=True)
-    st.markdown(f"<div style='font-size:0.85rem; color:{text_muted}; margin-bottom:14px;'>No data needed — we fetch the real Census boundary, population, and generate a realistic 911 call distribution automatically.</div>", unsafe_allow_html=True)
+    col_left, col_right = st.columns(2)
 
-    with st.form("demo_city_form"):
-        col1, col2 = st.columns([3, 1])
-        input_city = col1.text_input("City Name", value=st.session_state['active_city'], placeholder="e.g. Orlando")
-        state_idx = list(STATE_FIPS.keys()).index(st.session_state['active_state']) if st.session_state['active_state'] in STATE_FIPS else 8
-        input_state = col2.selectbox("State", list(STATE_FIPS.keys()), index=state_idx)
-        submit_demo = st.form_submit_button("🚀 Run Simulation", use_container_width=True)
+    with col_left:
+        st.markdown(f"<h3 style='color:{text_main}; margin-bottom:4px;'>🚀 Simulate Any US City</h3>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:0.8rem; color:{text_muted}; margin-bottom:14px;'>No data needed — we fetch the real Census boundary and generate a highly realistic 911 call distribution automatically.</div>", unsafe_allow_html=True)
+
+        with st.form("demo_city_form"):
+            c1, c2 = st.columns([3, 1])
+            input_city = c1.text_input("City Name", value=st.session_state['active_city'], placeholder="e.g. Orlando")
+            state_idx = list(STATE_FIPS.keys()).index(st.session_state['active_state']) if st.session_state['active_state'] in STATE_FIPS else 8
+            input_state = c2.selectbox("State", list(STATE_FIPS.keys()), index=state_idx)
+            submit_demo = st.form_submit_button("🚀 Run Simulation", use_container_width=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("🎲 1-Click Demo (Random Large City)", use_container_width=True):
+            rcity, rstate = random.choice(DEMO_CITIES)
+            st.session_state['active_city'] = rcity
+            st.session_state['active_state'] = rstate
+            st.session_state['trigger_sim'] = True
+            st.rerun()
+
+    with col_right:
+        st.markdown(f"<h3 style='color:{text_main}; margin-bottom:4px;'>📁 Upload Real Data</h3>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="font-size:0.8rem; color:{text_muted}; margin-bottom:12px;">
+            Upload your own <b>calls.csv</b> and <b>stations.csv</b> (Requires <code>lat</code> and <code>lon</code> columns). The jurisdiction boundary will auto-detect from your coordinates.
+        </div>
+        """, unsafe_allow_html=True)
+        uploaded_files = st.file_uploader("Drop calls.csv & stations.csv here", accept_multiple_files=True, label_visibility="collapsed")
+        call_file, station_file = None, None
+        if uploaded_files:
+            for f in uploaded_files:
+                fname = f.name.lower()
+                if fname == "calls.csv": call_file = f
+                elif fname == "stations.csv": station_file = f
+            if call_file and station_file:
+                df_c = pd.read_csv(call_file)
+                df_c.columns = [str(c).lower().strip() for c in df_c.columns]
+                df_c = df_c.rename(columns={'latitude':'lat','longitude':'lon'})
+                if 'lat' not in df_c.columns or 'lon' not in df_c.columns:
+                    st.error(f"❌ calls.csv must have lat/lon columns. Found: {', '.join(df_c.columns)}")
+                    st.stop()
+                keep_c = ['lat','lon'] + (['priority'] if 'priority' in df_c.columns else [])
+                df_c = df_c[keep_c].dropna(subset=['lat','lon']).reset_index(drop=True)
+                st.session_state['total_original_calls'] = len(df_c)
+                if len(df_c) > 25000:
+                    df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
+                    st.toast("⚠️ Sampled to 25,000 calls for performance.")
+                st.session_state['df_calls'] = df_c
+                df_s = pd.read_csv(station_file)
+                df_s.columns = [str(c).lower().strip() for c in df_s.columns]
+                df_s = df_s.rename(columns={'latitude':'lat','longitude':'lon'})
+                if 'lat' not in df_s.columns or 'lon' not in df_s.columns:
+                    st.error(f"❌ stations.csv must have lat/lon columns. Found: {', '.join(df_s.columns)}")
+                    st.stop()
+                keep_s = ['lat','lon'] + [c for c in ['name','type'] if c in df_s.columns]
+                df_s = df_s[keep_s].dropna(subset=['lat','lon']).reset_index(drop=True)
+                if 'name' not in df_s.columns:
+                    df_s['name'] = [f"Station {i+1}" for i in range(len(df_s))]
+                if len(df_s) > 100:
+                    df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
+                st.session_state['df_stations'] = df_s
+                with st.spinner("🌍 Auto-detecting jurisdiction from coordinates…"):
+                    detected_state_full, detected_city = reverse_geocode_state(df_c['lat'].iloc[0], df_c['lon'].iloc[0])
+                    if detected_state_full and detected_state_full in US_STATES_ABBR:
+                        st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
+                        if detected_city and detected_city != 'Unknown City':
+                            st.session_state['active_city'] = detected_city
+                        st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
+                st.session_state['csvs_ready'] = True
+                st.rerun()
+            elif call_file or station_file:
+                missing = "stations.csv" if call_file else "calls.csv"
+                st.warning(f"⚠️ Also upload **{missing}** to continue.")
 
     if submit_demo or st.session_state.get('trigger_sim', False):
         if st.session_state.get('trigger_sim', False):
             st.session_state['trigger_sim'] = False
-        if submit_demo:
-            st.session_state['active_state'] = input_state
-            st.session_state['active_city'] = input_city
+        
+        # Override with session values in case 1-Click demo triggered
+        input_city = st.session_state['active_city']
+        input_state = st.session_state['active_state']
 
         prog = st.progress(0, text="Starting simulation…")
         prog.progress(10, text=f"📡 Fetching Census boundary for {input_city}, {input_state}…")
@@ -893,7 +945,6 @@ if not st.session_state['csvs_ready']:
                     <li>Check spelling — use the official Census name (e.g. <b>Saint Paul</b> not <b>St. Paul</b>)</li>
                     <li>Try the county name instead (e.g. <b>Miami-Dade</b> instead of <b>Miami</b>)</li>
                     <li>Use a nearby larger city and adjust the jurisdiction boundary in the sidebar</li>
-                    <li>Upload your own <b>calls.csv</b> and <b>stations.csv</b> below to skip boundary detection</li>
                 </ul>
             </div>
             """, unsafe_allow_html=True)
@@ -941,63 +992,6 @@ if not st.session_state['csvs_ready']:
             st.session_state['inferred_daily_calls_override'] = int(annual_cfs / 365)
             st.session_state['csvs_ready'] = True
             st.rerun()
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    with st.expander("📁 Have real data? Upload calls.csv + stations.csv", expanded=False):
-        st.markdown(f"""
-        <div style="font-size:0.82rem; color:{text_muted}; margin-bottom:12px;">
-            Both files require <code>lat</code> and <code>lon</code> columns (or <code>latitude</code>/<code>longitude</code>).
-            Optionally include <code>priority</code> (calls) and <code>name</code>, <code>type</code> (stations).
-            The jurisdiction boundary will be auto-detected from your coordinates.
-        </div>
-        """, unsafe_allow_html=True)
-        uploaded_files = st.file_uploader("Drop files here", accept_multiple_files=True, label_visibility="collapsed")
-        call_file, station_file = None, None
-        if uploaded_files:
-            for f in uploaded_files:
-                fname = f.name.lower()
-                if fname == "calls.csv": call_file = f
-                elif fname == "stations.csv": station_file = f
-            if call_file and station_file:
-                df_c = pd.read_csv(call_file)
-                df_c.columns = [str(c).lower().strip() for c in df_c.columns]
-                df_c = df_c.rename(columns={'latitude':'lat','longitude':'lon'})
-                if 'lat' not in df_c.columns or 'lon' not in df_c.columns:
-                    st.error(f"❌ calls.csv must have lat/lon columns. Found: {', '.join(df_c.columns)}")
-                    st.stop()
-                keep_c = ['lat','lon'] + (['priority'] if 'priority' in df_c.columns else [])
-                df_c = df_c[keep_c].dropna(subset=['lat','lon']).reset_index(drop=True)
-                st.session_state['total_original_calls'] = len(df_c)
-                if len(df_c) > 25000:
-                    df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
-                    st.toast("⚠️ Sampled to 25,000 calls for performance.")
-                st.session_state['df_calls'] = df_c
-                df_s = pd.read_csv(station_file)
-                df_s.columns = [str(c).lower().strip() for c in df_s.columns]
-                df_s = df_s.rename(columns={'latitude':'lat','longitude':'lon'})
-                if 'lat' not in df_s.columns or 'lon' not in df_s.columns:
-                    st.error(f"❌ stations.csv must have lat/lon columns. Found: {', '.join(df_s.columns)}")
-                    st.stop()
-                keep_s = ['lat','lon'] + [c for c in ['name','type'] if c in df_s.columns]
-                df_s = df_s[keep_s].dropna(subset=['lat','lon']).reset_index(drop=True)
-                if 'name' not in df_s.columns:
-                    df_s['name'] = [f"Station {i+1}" for i in range(len(df_s))]
-                if len(df_s) > 100:
-                    df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
-                st.session_state['df_stations'] = df_s
-                with st.spinner("🌍 Auto-detecting jurisdiction from coordinates…"):
-                    detected_state_full, detected_city = reverse_geocode_state(df_c['lat'].iloc[0], df_c['lon'].iloc[0])
-                    if detected_state_full and detected_state_full in US_STATES_ABBR:
-                        st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
-                        if detected_city and detected_city != 'Unknown City':
-                            st.session_state['active_city'] = detected_city
-                        st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
-                st.session_state['csvs_ready'] = True
-                st.rerun()
-            elif call_file or station_file:
-                missing = "stations.csv" if call_file else "calls.csv"
-                st.warning(f"⚠️ Also upload **{missing}** to continue.")
-
 
 # ============================================================
 # MAIN MAP INTERFACE
@@ -1072,7 +1066,6 @@ if st.session_state['csvs_ready']:
         show_cards = st.toggle("Unit Economics Cards", value=True)
         show_faa = st.toggle("FAA LAANC Airspace", value=False,
                              help="Overlay official FAA UAS Facility Map ceiling grids. Red=0ft, Orange=50ft, Yellow=100ft, Yellow-Green=200ft, Green=300ft, Teal=400ft.")
-        st.markdown("---")
         simulate_traffic = st.toggle("Simulate Ground Traffic", value=False)
         traffic_level = st.slider("Traffic Congestion", 0, 100, 40) if simulate_traffic else 40
 
@@ -1423,7 +1416,7 @@ if st.session_state['csvs_ready']:
             "faa_geojson": faa_geojson
         }
 
-        st.sidebar.download_button("💾 Save .brinc Scenario", data=json.dumps(export_dict),
+        st.sidebar.download_button("💾 Save Deployment Plan", data=json.dumps(export_dict),
                                    file_name=f"Brinc_{safe_city}_{current_time_str}.brinc",
                                    mime="application/json", use_container_width=True)
 
@@ -1524,7 +1517,7 @@ if st.session_state['csvs_ready']:
                                    mime="text/html", use_container_width=True)
 
         if active_drones:
-            st.sidebar.download_button("🌏 Google Earth KML", data=generate_kml(active_gdf, active_drones, calls_in_city),
+            st.sidebar.download_button("🌏 Google Earth Briefing File", data=generate_kml(active_gdf, active_drones, calls_in_city),
                                        file_name="drone_deployment.kml", mime="application/vnd.google-earth.kml+xml",
                                        use_container_width=True)
 
@@ -1562,24 +1555,27 @@ if st.session_state['csvs_ready']:
         avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level/100)
         eval_dist = guard_radius_mi if active_guard_names else resp_radius_mi
         eval_speed = CONFIG["GUARDIAN_SPEED"] if active_guard_names else CONFIG["RESPONDER_SPEED"]
-        if active_resp_names or active_guard_names and avg_ground_speed > 0:
+        if (active_resp_names or active_guard_names) and avg_ground_speed > 0:
             time_saved = ((eval_dist*1.4/avg_ground_speed) - (eval_dist/eval_speed)) * 60
             gain_val = f"{time_saved:.1f} min"
         else:
             gain_val = "N/A"
-        m1,m2,m3,m4,m5 = st.columns(5)
-        m1.metric("Total Incidents", f"{st.session_state.get('total_original_calls',total_calls):,}")
-        m2.metric("Response Capacity", f"{calls_covered_perc:.1f}%")
-        m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
-        m4.metric("Overlap", f"{overlap_perc:.1f}%")
-        m5.metric(f"Time Saved ({eval_dist:.0f}mi)", gain_val)
     else:
-        m1,m2,m3,m4 = st.columns(4)
-        m1.metric("Total Incidents", f"{st.session_state.get('total_original_calls',total_calls):,}")
-        m2.metric("Response Capacity", f"{calls_covered_perc:.1f}%")
-        m3.metric("Land Covered", f"{area_covered_perc:.1f}%")
-        m4.metric("Overlap", f"{overlap_perc:.1f}%")
-    st.markdown(f"<div style='font-size:0.65rem;color:gray;margin-top:-12px;margin-bottom:12px;'>(Optimized via {total_calls:,} representative sample)</div>", unsafe_allow_html=True)
+        gain_val = None
+
+    kpi_html = f"""
+    <div style="display:flex; justify-content:space-around; background:{card_bg}; border:1px solid {card_border}; border-radius:8px; padding:15px; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
+        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Total Incidents</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{st.session_state.get('total_original_calls',total_calls):,}</div></div>
+        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Response Capacity</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{calls_covered_perc:.1f}%</div></div>
+        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Land Covered</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{area_covered_perc:.1f}%</div></div>
+        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Overlap</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{overlap_perc:.1f}%</div></div>
+    """
+    if gain_val is not None:
+        kpi_html += f"""<div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Time Saved ({eval_dist:.0f}mi)</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{gain_val}</div></div>"""
+    
+    kpi_html += "</div>"
+    st.markdown(kpi_html, unsafe_allow_html=True)
+    st.markdown(f"<div style='font-size:0.65rem;color:gray;margin-top:-12px;margin-bottom:12px;text-align:center;'>(Optimized via {total_calls:,} representative sample)</div>", unsafe_allow_html=True)
 
     # ── MAP + STATS COLUMNS ───────────────────────────────────────────
     map_col, stats_col = st.columns([4.2, 1.8])
