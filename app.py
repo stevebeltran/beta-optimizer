@@ -1474,7 +1474,7 @@ if st.session_state['csvs_ready']:
         <div class="header"><div>{logo_html_str}</div>
         <div style="text-align:right;"><h1>DFR Deployment Proposal</h1>
         <div style="font-size:14px;color:#666;margin-top:5px;">For: {prop_city}, {prop_state} | Pop: {pop_metric:,}</div>
-        <div style="font-size:14px;color:#666;margin-top:3px;">By: {prop_name} &lt;{prop_email}&gt;</div></div></div>
+        <div style="font-size:14px;color:#666;margin-top:3px;">By: {prop_name} <{prop_email}></div></div></div>
         <div class="kpi-grid">
         <div class="kpi-box"><h2>Financial</h2>
           <div class="kpi-lbl">Fleet CapEx</div><div class="kpi-val">${fleet_capex:,.0f}</div>
@@ -1501,7 +1501,7 @@ if st.session_state['csvs_ready']:
         <p><strong>Design:</strong> {actual_k_responder} Responder and {actual_k_guardian} Guardian drones will achieve {avg_resp_time:.1f}-minute average response — {avg_time_saved:.1f} minutes faster than vehicular patrol — with all sites pre-cleared against FAA LAANC facility maps.</p>
         <p><strong>ROI:</strong> A ${fleet_capex:,.0f} investment yields ${annual_savings:,.0f} annual capacity value by deflecting {daily_drone_only_calls:.1f} dispatches/day, breaking even in {break_even_text.lower()}.</p>
         <p><strong>Potential Grant Funding Sources:</strong> 
-          <a href="https://bja.ojp.gov/program/jag/overview" target="_blank">DOJ Byrne JAG</a> &bull; 
+          <a href="https://bja.ojp.gov/program/jag/overview" target="_blank">DOJ Byrne JAG</a> • 
           <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank">FEMA HSGP</a>
         </p>
         <div class="footer">
@@ -1513,8 +1513,8 @@ if st.session_state['csvs_ready']:
             <a href="https://brincdrones.com" target="_blank">brincdrones.com</a> | <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> | +1 (855) 950-0226
           </div>
           <div>
-            <a href="https://www.linkedin.com/company/brincdrones" target="_blank">LinkedIn</a> &bull; 
-            <a href="https://twitter.com/brincdrones" target="_blank">Twitter / X</a> &bull; 
+            <a href="https://www.linkedin.com/company/brincdrones" target="_blank">LinkedIn</a> • 
+            <a href="https://twitter.com/brincdrones" target="_blank">Twitter / X</a> • 
             <a href="https://www.youtube.com/c/brincdrones" target="_blank">YouTube</a>
           </div>
         </div></div></body></html>"""
