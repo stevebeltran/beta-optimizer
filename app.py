@@ -2041,14 +2041,13 @@ if st.session_state['csvs_ready']:
             st.markdown("---")
             st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>📤 Proposals & Exports</h3>", unsafe_allow_html=True)
             
-            # Replaced "Finalize the client's information..." section with a custom input layout
-            col_c, col_s = st.columns([2, 1])
-            prop_city = col_c.text_input("Client City", value=st.session_state.get('active_city', 'City'))
-            prop_state = col_s.text_input("State", value=st.session_state.get('active_state', 'FL'))
-            
             col_n, col_e = st.columns(2)
             prop_name = col_n.text_input("Your Name", value="John Doe")
             prop_email = col_e.text_input("Your Email", value="john.doe@example.com")
+            
+            # Automatically pull city and state from session state
+            prop_city = st.session_state.get('active_city', 'City')
+            prop_state = st.session_state.get('active_state', 'FL')
             
             current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             safe_city_name = prop_city.replace(" ", "_").replace("/", "_")
@@ -2217,13 +2216,13 @@ if st.session_state['csvs_ready']:
                         <div style="font-weight: bold; font-size: 15px; color: #222; margin-bottom: 5px;">BRINC Drones, Inc.</div>
                         <div style="margin-bottom: 8px;">Leading the world in purpose-built Drone as a First Responder technology.</div>
                         <div>
-                            <a href="https://brincdrones.com">brincdrones.com</a> &nbsp;|&nbsp;&nbsp;
-                            <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> &nbsp;|&nbsp;&nbsp;
+                            <a href="https://brincdrones.com">brincdrones.com</a>  |  
+                            <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a>  |  
                             +1 (855) 950-0226
                         </div>
                         <div style="margin-top: 8px; font-size: 12px;">
-                            <a href="https://www.linkedin.com/company/brinc-drones">LinkedIn</a> &nbsp;&bull;&nbsp;&nbsp;
-                            <a href="https://twitter.com/brincdrones">Twitter / X</a> &nbsp;&bull;&nbsp;&nbsp;
+                            <a href="https://www.linkedin.com/company/brinc-drones">LinkedIn</a>  •  
+                            <a href="https://twitter.com/brincdrones">Twitter / X</a>  •  
                             <a href="https://www.youtube.com/c/BRINCDrones">YouTube</a>
                         </div>
                     </div>
@@ -2242,6 +2241,17 @@ if st.session_state['csvs_ready']:
 
     with grants_placeholder:
         st.markdown("---")
+        
+        st.download_button(
+            label="🌏 Download for Google Earth",
+            data=generate_kml(active_gdf, active_drones, calls_in_city),
+            file_name="drone_deployment.kml",
+            mime="application/vnd.google-earth.kml+xml",
+            use_container_width=True
+        )
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+
         pop_metric = st.session_state.get('estimated_pop', 250000)
         grant_bracket = estimate_grants(pop_metric)
         
@@ -2259,11 +2269,3 @@ if st.session_state['csvs_ready']:
             Homeland Security Grant Program. Can offset hardware CAPEX for disaster response and tactical deployments.
         </div>
         """, unsafe_allow_html=True)
-        
-        st.download_button(
-            label="🌏 Download for Google Earth",
-            data=generate_kml(active_gdf, active_drones, calls_in_city),
-            file_name="drone_deployment.kml",
-            mime="application/vnd.google-earth.kml+xml",
-            use_container_width=True
-        )
