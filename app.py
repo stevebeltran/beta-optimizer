@@ -104,7 +104,6 @@ if 'csvs_ready' not in st.session_state:
     st.session_state['r_guard'] = 8.0
     st.session_state['dfr_rate'] = 25
     st.session_state['deflect_rate'] = 30
-    st.session_state['theme'] = "Dark Mode"
     st.session_state['total_original_calls'] = 0
 
 # --- SCENARIO LOADER (HIDDEN WHEN MAP LOADED) ---
@@ -147,91 +146,55 @@ if not st.session_state['csvs_ready']:
                 st.error(f"Failed to load file. It may be corrupted or incorrectly formatted.")
                 st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
 
-# --- THEME TOGGLE (HIDDEN WHEN MAP LOADED) ---
-if not st.session_state['csvs_ready']:
-    st.sidebar.markdown("<h3 style='margin-bottom:0px;'>🎨 Appearance</h3>", unsafe_allow_html=True)
-    st.session_state['theme'] = st.sidebar.radio("Theme", ["Dark Mode", "Light Mode"], horizontal=True, label_visibility="collapsed", help="Switch between Dark and Light mode themes.")
-
-is_dark = st.session_state.get('theme', 'Dark Mode') == "Dark Mode"
-
 # --- DYNAMIC THEME VARIABLES ---
-if is_dark:
-    bg_main = "#000000"
-    bg_sidebar = "#111111"
-    text_main = "#ffffff"
-    text_muted = "#aaaaaa"
-    accent_color = "#00D2FF" 
-    card_bg = "#111111"
-    card_border = "#333333"
-    card_text = "#eeeeee"
-    card_title = "#ffffff"
-    budget_box_bg = "#0a0a0a"
-    budget_box_border = "#00D2FF"
-    budget_box_shadow = "rgba(0, 210, 255, 0.15)"
-    map_style = "carto-darkmatter"
-    map_boundary_color = "#ffffff"
-    map_incident_color = "#00D2FF"
-    legend_bg = "rgba(0, 0, 0, 0.7)"
-    legend_text = "#ffffff"
-    
-    STATION_COLORS = [
-        "#00D2FF", "#39FF14", "#FFD700", "#FF007F", "#FF4500", 
-        "#00FFCC", "#FF3333", "#7FFF00", "#00FFFF", "#FF9900"
-    ]
-    
-    theme_css = f"""
-    .stApp, .main {{ background-color: {bg_main} !important; }}
-    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
-    [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
-    [data-testid="stSidebar"] img {{ filter: invert(1) brightness(2); }}
-    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
-    div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
-    div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
-    div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
-    div[data-baseweb="select"] > div * {{ color: #ffffff !important; }}
-    div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #333333 !important; color: #ffffff !important; font-weight: normal; border: 1px solid #555555 !important; }}
-    div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #ffffff !important; }}
-    div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
-    div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
-    """
-else:
-    bg_main = "#ffffff"
-    bg_sidebar = "#f8f9fa"
-    text_main = "#222222"
-    text_muted = "#666666"
-    accent_color = "#ff4b4b" 
-    card_bg = "#ffffff"
-    card_border = "#e0e0e0"
-    card_text = "#222222"
-    card_title = "#333333"
-    budget_box_bg = "#ffffff"
-    budget_box_border = "#ff4b4b" 
-    budget_box_shadow = "rgba(0, 0, 0, 0.05)"
-    map_style = "open-street-map"
-    map_boundary_color = "#222222"
-    map_incident_color = "#000080"
-    legend_bg = "rgba(255, 255, 255, 0.9)"
-    legend_text = "#333333"
-    
-    STATION_COLORS = [
-        "#E6194B", "#3CB44B", "#4363D8", "#F58231", "#911EB4", 
-        "#800000", "#333333", "#000075", "#808000", "#9A6324"
-    ]
-    
-    theme_css = f"""
-    .stApp, .main {{ background-color: {bg_main} !important; }}
-    html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
-    [data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
-    [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
-    div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
-    div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
-    div[data-baseweb="select"] > div {{ background-color: #ffffff !important; border-color: #cccccc !important; color: #333333 !important; }}
-    div[data-baseweb="select"] > div * {{ color: #333333 !important; }}
-    div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #eeeeee !important; color: #000000 !important; font-weight: normal; border: 1px solid #cccccc !important; }}
-    div[data-baseweb="select"] span[data-baseweb="tag"] * {{ color: #000000 !important; }}
-    div[data-baseweb="popover"] ul {{ background-color: #ffffff !important; color: #333333 !important; }}
-    div[data-baseweb="popover"] li:hover {{ background-color: #f0f0f0 !important; }}
-    """
+bg_main = "#000000"
+bg_sidebar = "#111111"
+text_main = "#ffffff"
+text_muted = "#aaaaaa"
+accent_color = "#00D2FF" 
+card_bg = "#111111"
+card_border = "#333333"
+card_text = "#eeeeee"
+card_title = "#ffffff"
+budget_box_bg = "#0a0a0a"
+budget_box_border = "#00D2FF"
+budget_box_shadow = "rgba(0, 210, 255, 0.15)"
+map_style = "carto-darkmatter"
+map_boundary_color = "#ffffff"
+map_incident_color = "#00D2FF"
+legend_bg = "rgba(0, 0, 0, 0.7)"
+legend_text = "#ffffff"
+
+STATION_COLORS = [
+    "#00D2FF", "#39FF14", "#FFD700", "#FF007F", "#FF4500", 
+    "#00FFCC", "#FF3333", "#7FFF00", "#00FFFF", "#FF9900"
+]
+
+theme_css = f"""
+.stApp, .main {{ background-color: {bg_main} !important; }}
+html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
+[data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
+[data-testid="stSidebar"] img {{ filter: invert(1) brightness(2); }}
+[data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
+[data-testid="stFileUploader"] section {{ background-color: #111111 !important; border-color: #333333 !important; }}
+div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
+div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
+
+/* Fix for selectbox and multiselect styling */
+div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
+div[data-baseweb="select"] > div input {{ color: #ffffff !important; }}
+div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #333333 !important; color: #ffffff !important; font-weight: normal; border: 1px solid #555555 !important; }}
+div[data-baseweb="select"] span[data-baseweb="tag"] span {{ color: #ffffff !important; }}
+div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
+div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
+
+/* Fix for standard Streamlit buttons & icons rendering washed out in forced dark mode */
+button[kind="secondary"] {{ background-color: #222222 !important; border: 1px solid #444444 !important; }}
+button[kind="secondary"] p, button[kind="secondary"] span {{ color: #ffffff !important; }}
+button[kind="secondary"]:hover {{ background-color: #ffffff !important; border-color: #ffffff !important; }}
+button[kind="secondary"]:hover p, button[kind="secondary"]:hover span {{ color: #000000 !important; }}
+button[kind="secondary"]:hover svg {{ fill: #000000 !important; color: #000000 !important; }}
+"""
 
 # --- INJECT CSS ---
 st.markdown(
