@@ -2040,11 +2040,15 @@ if st.session_state['csvs_ready']:
         with export_placeholder:
             st.markdown("---")
             st.markdown(f"<h3 style='margin-bottom:0px; color:{text_main};'>📤 Proposals & Exports</h3>", unsafe_allow_html=True)
-            st.markdown(f"<div style='font-size: 0.75rem; color: {text_muted}; margin-bottom: 10px;'>Finalize the client's information to download the proposal documents.</div>", unsafe_allow_html=True)
             
+            # Replaced "Finalize the client's information..." section with a custom input layout
             col_c, col_s = st.columns([2, 1])
             prop_city = col_c.text_input("Client City", value=st.session_state.get('active_city', 'City'))
             prop_state = col_s.text_input("State", value=st.session_state.get('active_state', 'FL'))
+            
+            col_n, col_e = st.columns(2)
+            prop_name = col_n.text_input("Your Name", value="John Doe")
+            prop_email = col_e.text_input("Your Email", value="john.doe@example.com")
             
             current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             safe_city_name = prop_city.replace(" ", "_").replace("/", "_")
@@ -2117,6 +2121,7 @@ if st.session_state['csvs_ready']:
                         <div class="header-text">
                             <h1>DFR Deployment Proposal</h1>
                             <div style="font-size: 14px; color: #666; margin-top: 5px;">Prepared for: {prop_city}, {prop_state} | Est. Pop: {pop_metric:,}</div>
+                            <div style="font-size: 14px; color: #666; margin-top: 5px;">Prepared by: {prop_name} | <a href="mailto:{prop_email}">{prop_email}</a></div>
                         </div>
                     </div>
                     
@@ -2200,25 +2205,25 @@ if st.session_state['csvs_ready']:
                     
                     <h2>Grant Proposal Narrative (AI Generated)</h2>
                     <div style="background-color: #fff3cd; border-left: 4px solid #ffeeba; padding: 15px; margin-bottom: 20px; font-size: 13px; color: #856404;">
-                        <strong>⚠️ DISCLAIMER:</strong> The following grant narrative is AI-generated based on the simulated parameters of this proposal. It is intended as a starting draft and <strong>must be thoroughly reviewed, edited, and fact-checked</strong> by your agency's grant writer or legal team prior to official submission.
+                        <strong>DISCLAIMER:</strong> The following grant narrative is AI-generated based on the simulated parameters of this proposal. It is intended as a starting draft and <strong>must be thoroughly reviewed, edited, and fact-checked</strong> by your agency's grant writer or legal team prior to official submission.
                     </div>
-                    <p><strong>Project Title:</strong> Establishing a Drone as a First Responder (DFR) Program for {prop_city}</p>
-                    <p><strong>Statement of Need:</strong> The {prop_city} Police/Fire Department respectfully requests funding under the DOJ Byrne JAG program to procure and deploy a highly specialized Drone as a First Responder (DFR) network. Protecting a population of {pop_metric:,} residents requires an innovative approach to reduce response times and increase situational awareness. Our spatial analysis of {st.session_state.get('total_original_calls', total_calls):,} historical 911 calls indicates that establishing a network of {actual_k_responder + actual_k_guardian} automated drone systems will provide direct overhead coverage to {calls_covered_perc:.1f}% of all high-priority emergency incidents.</p>
-                    <p><strong>Project Design and Implementation:</strong> The proposed network consists of {actual_k_responder} tactical Responder drones and {actual_k_guardian} heavy-lift Guardian drones. By pre-positioning these automated assets on municipal infrastructure, {prop_city} will achieve an average response time of {avg_resp_time:.1f} minutes to {calls_covered_perc:.1f}% of our jurisdiction. This represents an estimated {avg_time_saved:.1f} minute reduction in emergency response latency compared to traditional vehicular patrol routing.</p>
-                    <p><strong>Capabilities and Competencies (ROI):</strong> Investing ${fleet_capex:,.0f} in capital hardware will yield compounding returns in officer safety and operational capacity. The DFR system is projected to deflect an estimated {daily_drone_only_calls:.1f} unnecessary physical patrol dispatches per day, creating an annual capacity equivalent value of ${annual_savings:,.0f}. This ensures that human officers are preserved for critical interventions while the DFR network handles rapid triage and de-escalation.</p>
+                    <p><strong>Project Title:</strong> Establishing a BRINC DRONES Drone as a First Responder (DFR) Program for {prop_city}</p>
+                    <p><strong>Statement of Need:</strong> The {prop_city} Police/Fire Department respectfully requests funding under the DOJ Byrne JAG program to procure and deploy a highly specialized Drone as a First Responder (DFR) network powered by BRINC DRONES. Protecting a population of {pop_metric:,} residents requires an innovative approach to reduce response times and increase situational awareness. Our spatial analysis of {st.session_state.get('total_original_calls', total_calls):,} historical 911 calls indicates that establishing a network of {actual_k_responder + actual_k_guardian} automated BRINC DRONES systems will provide direct overhead coverage to {calls_covered_perc:.1f}% of all high-priority emergency incidents.</p>
+                    <p><strong>Project Design and Implementation:</strong> The proposed network consists of {actual_k_responder} tactical BRINC Responder drones and {actual_k_guardian} heavy-lift BRINC Guardian drones. By pre-positioning these automated BRINC DRONES assets on municipal infrastructure, {prop_city} will achieve an average response time of {avg_resp_time:.1f} minutes to {calls_covered_perc:.1f}% of our jurisdiction. This represents an estimated {avg_time_saved:.1f} minute reduction in emergency response latency compared to traditional vehicular patrol routing, leveraging the integrated BRINC LiveOps software and purpose-built hardware ecosystem.</p>
+                    <p><strong>Capabilities and Competencies (ROI):</strong> Investing ${fleet_capex:,.0f} in capital hardware from BRINC DRONES will yield compounding returns in officer safety, de-escalation, and operational capacity. The BRINC DFR system is projected to deflect an estimated {daily_drone_only_calls:.1f} unnecessary physical patrol dispatches per day, creating an annual capacity equivalent value of ${annual_savings:,.0f}. This ensures that human officers are preserved for critical interventions while the reliable, American-made BRINC DRONES network handles rapid triage and real-time intelligence gathering.</p>
 
                     <div class="footer">
                         <div style="font-size: 20px; font-weight: 900; letter-spacing: 2px; color: #111; margin-bottom: 10px;">BRINC</div>
                         <div style="font-weight: bold; font-size: 15px; color: #222; margin-bottom: 5px;">BRINC Drones, Inc.</div>
                         <div style="margin-bottom: 8px;">Leading the world in purpose-built Drone as a First Responder technology.</div>
                         <div>
-                            <a href="https://brincdrones.com">brincdrones.com</a> &nbsp;|&nbsp; 
-                            <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> &nbsp;|&nbsp; 
+                            <a href="https://brincdrones.com">brincdrones.com</a> &nbsp;|&nbsp;&nbsp;
+                            <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> &nbsp;|&nbsp;&nbsp;
                             +1 (855) 950-0226
                         </div>
                         <div style="margin-top: 8px; font-size: 12px;">
-                            <a href="https://www.linkedin.com/company/brinc-drones">LinkedIn</a> &nbsp;&bull;&nbsp; 
-                            <a href="https://twitter.com/brincdrones">Twitter / X</a> &nbsp;&bull;&nbsp; 
+                            <a href="https://www.linkedin.com/company/brinc-drones">LinkedIn</a> &nbsp;&bull;&nbsp;&nbsp;
+                            <a href="https://twitter.com/brincdrones">Twitter / X</a> &nbsp;&bull;&nbsp;&nbsp;
                             <a href="https://www.youtube.com/c/BRINCDrones">YouTube</a>
                         </div>
                     </div>
