@@ -77,6 +77,8 @@ KNOWN_POPULATIONS = {
     "Wichita": 402263, "Cleveland": 900000, "Tampa": 449514, "Orlando": 316081
 }
 
+# Official FAA Unique Value Renderer — 6 discrete ceiling values, colors matched to the
+# ArcGIS viewer at https://www.arcgis.com/apps/webappviewer/index.html?id=9c2e4406710048e19806ebf6a06754ad
 FAA_CEILING_COLORS = {
     0:   {"line": "rgba(255,  20,  20, 0.95)", "fill": "rgba(255,  20,  20, 0.20)"},
     50:  {"line": "rgba(255, 120,   0, 0.95)", "fill": "rgba(255, 120,   0, 0.18)"},
@@ -167,11 +169,13 @@ div[data-testid="stButton"] button:hover p, div[data-testid="stFormSubmitButton"
 div[data-testid="stButton"] button:hover svg, div[data-testid="stFormSubmitButton"] button:hover svg, div[data-testid="stDownloadButton"] button:hover svg {{ fill: #000000 !important; color: #000000 !important; }}
 div[data-testid="stToast"] {{ background-color: #222222 !important; border-color: #444444 !important; }}
 div[data-testid="stToast"] span, div[data-testid="stToast"] div {{ color: #ffffff !important; }}
+/* Sidebar section headers */
 .sidebar-section-header {{
     font-size: 0.65rem !important; font-weight: 800 !important; letter-spacing: 1.5px !important;
     text-transform: uppercase !important; color: {accent_color} !important;
     border-top: 1px solid {card_border}; padding-top: 12px; margin-top: 4px; margin-bottom: 8px;
 }}
+/* UX: improved card grid layout */
 .card-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }}
 .econ-card {{
     background: {card_bg}; border-radius: 6px; padding: 12px;
@@ -184,6 +188,7 @@ div[data-testid="stToast"] span, div[data-testid="stToast"] div {{ color: #fffff
 .econ-card .kv .k {{ color: {text_muted}; }}
 .econ-card .kv .v {{ font-weight: 700; color: {card_title}; }}
 .econ-card .kv .v-accent {{ font-weight: 700; color: {accent_color}; }}
+/* Responsive: stack map/stats on narrow */
 @media (max-width: 900px) {{
     div[data-testid="stHorizontalBlock"] {{ flex-direction: column !important; }}
     div[data-testid="stColumn"] {{ width: 100% !important; max-width: 100% !important; }}
@@ -209,6 +214,7 @@ div[role="radiogroup"] {{ gap: 0.5rem !important; }}
 </style>
 """, unsafe_allow_html=True)
 
+# UX: Beforeunload warning to prevent accidental session loss
 components.html("""
 <script>
 window.addEventListener('beforeunload', function(e) {
@@ -332,7 +338,14 @@ def generate_mock_faa_grid(minx, miny, maxx, maxy):
 
 @st.cache_data
 def load_faa_local(minx, miny, maxx, maxy):
+    """
+    Load FAA UASFM data from the pre-filtered local file.
+    Zero network calls, instant, never fails.
+    Supports both plain .geojson and gzipped .geojson.gz.
+    """
     import gzip as _gzip
+
+    # Try plain file first, then gzipped
     for path, use_gz in [("faa_uasfm.geojson", False), ("faa_uasfm.geojson.gz", True)]:
         if not os.path.exists(path):
             continue
@@ -343,6 +356,8 @@ def load_faa_local(minx, miny, maxx, maxy):
             else:
                 with open(path, "r", encoding="utf-8") as f:
                     full = json.load(f)
+
+            # Spatial filter to current map view (with small pad)
             pad = 0.05
             filtered = []
             for feat in full.get("features", []):
@@ -356,12 +371,14 @@ def load_faa_local(minx, miny, maxx, maxy):
                     if (minx - pad <= cx <= maxx + pad and
                             miny - pad <= cy <= maxy + pad):
                         filtered.append(feat)
+
             if filtered:
                 return {"type": "FeatureCollection", "features": filtered}
         except Exception as e:
             print(f"FAA local load error ({path}): {e}")
             continue
-    return None
+
+    return None  # caller will fall back to mock grid
 
 
 def add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=True):
@@ -438,9 +455,8 @@ def fetch_airfields(minx, miny, maxx, maxy):
                 lat = el.get('lat') or el.get('center', {}).get('lat')
                 lon = el.get('lon') or el.get('center', {}).get('lon')
                 name = el.get('tags', {}).get('name', 'Unknown Airfield')
-                atype = el.get('tags', {}).get('aeroway', 'aerodrome')
                 if lat and lon:
-                    airfields.append({'name': name, 'lat': lat, 'lon': lon, 'type': atype})
+                    airfields.append({'name': name, 'lat': lat, 'lon': lon})
             return airfields
     except Exception:
         return []
@@ -831,7 +847,7 @@ if not st.session_state['csvs_ready']:
 
 
 # ============================================================
-# ONBOARDING / LANDING PAGE
+# ONBOARDING / LANDING PAGE  (UX: simulation is primary CTA)
 # ============================================================
 if not st.session_state['csvs_ready']:
 
@@ -842,6 +858,7 @@ if not st.session_state['csvs_ready']:
     </div>
     """, unsafe_allow_html=True)
 
+    # UX: 3-step onboarding banner
     if not st.session_state.get('onboarding_done'):
         st.markdown(f"""
         <div style="background:{card_bg}; border:1px solid {accent_color}; border-radius:8px; padding:18px 24px; margin-bottom:20px;">
@@ -869,6 +886,7 @@ if not st.session_state['csvs_ready']:
             st.session_state['onboarding_done'] = True
             st.rerun()
 
+    # UX: Swarm simulation teaser above fold
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #0a0a0a 0%, #001a22 100%);
          border:1px solid {card_border}; border-left: 4px solid {accent_color};
@@ -884,6 +902,7 @@ if not st.session_state['csvs_ready']:
     </div>
     """, unsafe_allow_html=True)
 
+    # ── PRIMARY CTA: Synthetic simulation ──────────────────────────────
     st.markdown(f"<h3 style='color:{text_main}; margin-bottom:4px;'>🚀 Simulate Any US City</h3>", unsafe_allow_html=True)
     st.markdown(f"<div style='font-size:0.85rem; color:{text_muted}; margin-bottom:14px;'>No data needed — we fetch the real Census boundary, population, and generate a realistic 911 call distribution automatically.</div>", unsafe_allow_html=True)
 
@@ -901,12 +920,14 @@ if not st.session_state['csvs_ready']:
             st.session_state['active_state'] = input_state
             st.session_state['active_city'] = input_city
 
+        # UX: staged progress feedback
         prog = st.progress(0, text="Starting simulation…")
         prog.progress(10, text=f"📡 Fetching Census boundary for {input_city}, {input_state}…")
         success, active_city_gdf = fetch_tiger_city_shapefile(STATE_FIPS[input_state], input_city, SHAPEFILE_DIR)
 
         if not success:
             prog.empty()
+            # UX: error recovery with suggestions
             st.error(f"❌ Could not find a Census boundary for **'{input_city}'** in **{input_state}**.")
             st.markdown(f"""
             <div style="background:{card_bg}; border:1px solid #ff4444; border-radius:6px; padding:14px; margin-top:8px;">
@@ -964,6 +985,7 @@ if not st.session_state['csvs_ready']:
             st.session_state['csvs_ready'] = True
             st.rerun()
 
+    # ── SECONDARY CTA: Upload real data ────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     with st.expander("📁 Have real data? Upload calls.csv + stations.csv", expanded=False):
         st.markdown(f"""
@@ -1025,6 +1047,7 @@ if not st.session_state['csvs_ready']:
 # MAIN MAP INTERFACE
 # ============================================================
 if st.session_state['csvs_ready']:
+    # Signal JS that data is loaded so beforeunload fires
     components.html("<script>window._brincHasData = true;</script>", height=0)
 
     df_calls = st.session_state['df_calls'].copy()
@@ -1042,6 +1065,7 @@ if st.session_state['csvs_ready']:
         master_gdf = gpd.GeoDataFrame({'DISPLAY_NAME':['Auto-Generated Boundary'],'data_count':[len(df_calls)]}, geometry=[poly], crs="EPSG:4326")
 
     # ── SIDEBAR ────────────────────────────────────────────────────────
+    # UX: 3 clear sections — Configure / Optimize / Export
 
     # ── SECTION 1: CONFIGURE ──────────────────────────────────────────
     st.sidebar.markdown('<div class="sidebar-section-header">① Configure</div>', unsafe_allow_html=True)
@@ -1100,20 +1124,19 @@ if st.session_state['csvs_ready']:
         simulate_traffic = st.toggle("Simulate Ground Traffic", value=False)
         traffic_level = st.slider("Traffic Congestion", 0, 100, 40) if simulate_traffic else 40
 
-    # ── DEPLOYMENT STRATEGY (moved below Display Options) ─────────────
-    strat_expander = st.sidebar.expander("⚙️ Deployment Strategy", expanded=False)
-    with strat_expander:
-        incremental_build = st.toggle("Phased Rollout", value=True,
-                                      help="Locks previously deployed stations in place as new drones are added — mirrors real procurement phases.")
-        allow_redundancy = st.toggle("Allow Coverage Overlap", value=True,
-                                     help="Permits rings to overlap in high-density areas. Disable to force maximum geographic spread.")
-
     # ── SECTION 2: OPTIMIZE ───────────────────────────────────────────
     st.sidebar.markdown('<div class="sidebar-section-header">② Optimize Fleet</div>', unsafe_allow_html=True)
 
     opt_strategy_raw = st.sidebar.radio("Optimization Goal", ("Call Coverage", "Land Coverage"), horizontal=True,
                                         help="Prioritize covering the most 911 incidents (Call) or the most land area (Land).")
     opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
+
+    strat_expander = st.sidebar.expander("⚙️ Deployment Strategy", expanded=False)
+    with strat_expander:
+        incremental_build = st.toggle("Phased Rollout", value=True,
+                                      help="Locks previously deployed stations in place as new drones are added — mirrors real procurement phases.")
+        allow_redundancy = st.toggle("Allow Coverage Overlap", value=True,
+                                     help="Permits rings to overlap in high-density areas. Disable to force maximum geographic spread.")
 
     minx, miny, maxx, maxy = active_gdf.to_crs(epsg=4326).total_bounds
     center_lon = (minx + maxx) / 2
@@ -1137,6 +1160,7 @@ if st.session_state['csvs_ready']:
     n = len(df_stations_all)
     bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}"
 
+    # UX: staged progress for spatial precompute
     prog2 = st.sidebar.empty()
     prog2.caption("⚡ Precomputing spatial matrices…")
     calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls = precompute_spatial_data(
@@ -1181,7 +1205,7 @@ if st.session_state['csvs_ready']:
         city_m.area if city_m else 1.0, bounds_hash
     )
 
-    # FAA data
+    # FAA data — loaded from local pre-filtered file, no network call needed
     faa_geojson = load_faa_local(minx, miny, maxx, maxy)
     if not faa_geojson:
         faa_geojson = generate_mock_faa_grid(minx, miny, maxx, maxy)
@@ -1195,6 +1219,7 @@ if st.session_state['csvs_ready']:
     calls_per_day = st.sidebar.slider("Total Daily Calls (citywide)", 1, max(100, inferred_daily*3), inferred_daily,
                                        help="Total 911 calls dispatched per day across the entire city.")
 
+    # UX: renamed slider labels + helper text
     st.sidebar.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>DFR Dispatch Rate (%)</div>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>What % of in-range calls will the drone be sent to?</div>", unsafe_allow_html=True)
     dfr_dispatch_rate = st.sidebar.slider("DFR Dispatch Rate", 1, 100, st.session_state.get('dfr_rate',25), label_visibility="collapsed") / 100.0
@@ -1215,6 +1240,7 @@ if st.session_state['csvs_ready']:
         st.error("⚠️ Over-Deployment: Total drones exceed available stations.")
     elif k_responder > 0 or k_guardian > 0:
         if opt_strategy == "Maximize Call Coverage":
+            # UX: staged toast feedback during MCLP
             stage_bar = st.empty()
             stage_bar.info("🧠 Running MCLP optimizer… this may take 10-20 seconds for large fleets.")
             r_best, g_best, chrono_r, chrono_g = solve_mclp(
@@ -1458,7 +1484,8 @@ if st.session_state['csvs_ready']:
         avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level/100)
         avg_time_saved = ((sum((d['radius_m']/1609.34*1.4/avg_ground_speed)*60 for d in active_drones)/len(active_drones)) - avg_resp_time) if active_drones and avg_ground_speed > 0 else 0.0
 
-        fig_for_export = go.Figure()
+        # Build export HTML
+        fig_for_export = go.Figure()  # minimal version for export
         for d in active_drones:
             clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
             fig_for_export.add_trace(go.Scattermapbox(
@@ -1540,6 +1567,7 @@ if st.session_state['csvs_ready']:
                                        file_name="drone_deployment.kml", mime="application/vnd.google-earth.kml+xml",
                                        use_container_width=True)
 
+    # Grant eligibility
     pop_metric = st.session_state.get('estimated_pop', 250000)
     grant_bracket = estimate_grants(pop_metric)
     st.sidebar.markdown(f"""
@@ -1556,6 +1584,7 @@ if st.session_state['csvs_ready']:
     # ── MAIN CONTENT ──────────────────────────────────────────────────
     st.markdown("---")
 
+    # Health score
     if show_health:
         norm_redundancy = min(overlap_perc/35.0, 1.0)*100
         health_score = (calls_covered_perc*0.50) + (area_covered_perc*0.35) + (norm_redundancy*0.15)
@@ -1567,6 +1596,7 @@ if st.session_state['csvs_ready']:
             <span style="font-size:1.2em; background:rgba(128,128,128,0.15); padding:2px 10px; border-radius:4px;">{h_label}</span>
             </div>""", unsafe_allow_html=True)
 
+    # KPI bar
     if simulate_traffic:
         avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level/100)
         eval_dist = guard_radius_mi if active_guard_names else resp_radius_mi
@@ -1616,75 +1646,6 @@ if st.session_state['csvs_ready']:
 
         if show_faa and faa_geojson:
             add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=not show_satellite)
-
-            # ── AIRPORT ICONS on map when FAA layer is active ─────────
-            if airfields:
-                af_lats = [af['lat'] for af in airfields]
-                af_lons = [af['lon'] for af in airfields]
-                af_names = [af['name'] for af in airfields]
-                af_types = [af.get('type', 'aerodrome') for af in airfields]
-                af_hover = [
-                    f"✈️ <b>{n}</b><br><span style='color:#aaa'>{t.capitalize()}</span>"
-                    for n, t in zip(af_names, af_types)
-                ]
-                # Use different symbol for heliports vs aerodromes
-                af_symbols = ['airport' if t == 'aerodrome' else 'heliport' for t in af_types]
-
-                # Plotly mapbox doesn't support per-point symbols in a single trace,
-                # so split into two traces: aerodromes and heliports
-                aero_lats = [af_lats[i] for i in range(len(airfields)) if af_types[i] == 'aerodrome']
-                aero_lons = [af_lons[i] for i in range(len(airfields)) if af_types[i] == 'aerodrome']
-                aero_hover = [af_hover[i] for i in range(len(airfields)) if af_types[i] == 'aerodrome']
-                aero_names_list = [af_names[i] for i in range(len(airfields)) if af_types[i] == 'aerodrome']
-
-                heli_lats = [af_lats[i] for i in range(len(airfields)) if af_types[i] != 'aerodrome']
-                heli_lons = [af_lons[i] for i in range(len(airfields)) if af_types[i] != 'aerodrome']
-                heli_hover = [af_hover[i] for i in range(len(airfields)) if af_types[i] != 'aerodrome']
-                heli_names_list = [af_names[i] for i in range(len(airfields)) if af_types[i] != 'aerodrome']
-
-                if aero_lats:
-                    fig.add_trace(go.Scattermapbox(
-                        mode="markers+text",
-                        lat=aero_lats, lon=aero_lons,
-                        marker=dict(
-                            size=18,
-                            color="rgba(255, 220, 50, 0.92)",
-                            symbol="airport",
-                        ),
-                        text=["✈"] * len(aero_lats),
-                        textfont=dict(size=11, color="#ffffff"),
-                        hovertext=aero_hover,
-                        hoverinfo="text",
-                        name="Airports",
-                        showlegend=True,
-                        legendgroup="airports",
-                    ))
-                    # Label layer — names below icons
-                    fig.add_trace(go.Scattermapbox(
-                        mode="text",
-                        lat=aero_lats, lon=aero_lons,
-                        text=[n[:20] for n in aero_names_list],
-                        textfont=dict(size=9, color="rgba(255,220,50,0.9)"),
-                        hoverinfo="skip",
-                        showlegend=False,
-                        name="Airport Labels",
-                    ))
-
-                if heli_lats:
-                    fig.add_trace(go.Scattermapbox(
-                        mode="markers",
-                        lat=heli_lats, lon=heli_lons,
-                        marker=dict(
-                            size=14,
-                            color="rgba(180, 120, 255, 0.92)",
-                            symbol="heliport",
-                        ),
-                        hovertext=heli_hover,
-                        hoverinfo="text",
-                        name="Heliports",
-                        showlegend=True,
-                        legendgroup="heliports",
-                    ))
 
         for d in active_drones:
             clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
@@ -1757,9 +1718,11 @@ if st.session_state['csvs_ready']:
             )
             st.plotly_chart(fig_curve, use_container_width=True, config={'displayModeBar':False})
 
+        # UX: unit economics cards with improved two-column grid layout
         if show_cards:
             st.markdown(f"<h4 style='margin-top:8px; border-bottom:1px solid {card_border}; padding-bottom:8px; color:{text_main};'>Unit Economics</h4>", unsafe_allow_html=True)
             if not active_drones:
+                # UX: empty state with explicit sidebar CTA
                 st.markdown(f"""
                 <div style="background:{card_bg}; border:1px dashed {card_border}; border-radius:6px;
                      padding:24px; text-align:center; margin-top:10px;">
