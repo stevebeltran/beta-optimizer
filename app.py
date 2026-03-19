@@ -1740,73 +1740,52 @@ if st.session_state['csvs_ready']:
                         if i + j < len(active_drones):
                             d = active_drones[i + j]
                             short_name = format_3_lines(d['name'])
+                            d_color = d['color']
+                            d_type = d['type']
+                            d_step = d['deploy_step']
+                            d_savings = d['annual_savings']
+                            d_flights = d['marginal_flights']
+                            d_shared = d['shared_flights']
+                            d_deflected = d['marginal_deflected']
+                            d_time = d['avg_time_min']
+                            d_faa = d['faa_ceiling']
+                            d_airport = d['nearest_airport']
+                            d_cost = d['cost']
+                            d_be = d['be_text']
                             cols[j].markdown(f"""
-                    <div style="background:{card_bg}; border-top:4px solid {d['color']};
-                         border-left:1px solid {card_border}; border-right:1px solid {card_border}; border-bottom:1px solid {card_border};
-                         border-radius:4px; padding:12px; margin-bottom:12px;">
-                        <div style="font-weight:700; font-size:0.73rem; color:{card_title}; margin-bottom:2px;">{short_name}</div>
-                        <div style="font-size:0.58rem; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">{d['type']} · Phase #{d['deploy_step']}</div>
-                        <div style="background:rgba(0,210,255,0.07); border-radius:4px; padding:8px; text-align:center; margin-bottom:8px;">
-                            <div style="font-size:0.6rem; color:{text_muted}; text-transform:uppercase; letter-spacing:0.5px;">Annual Capacity Value</div>
-                            <div style="font-size:1.25rem; font-weight:900; color:{accent_color};">${d['annual_savings']:,.0f}</div>
-                        </div>
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:0.62rem;">
-                            <div style="color:{text_muted};">Net Flights/day</div>
-                            <div style="text-align:right; font-weight:700; color:{accent_color};">{d['marginal_flights']:.1f}</div>
-                            <div style="color:{text_muted};">Shared Flights/day</div>
-                            <div style="text-align:right; font-weight:700; color:{card_title};">{d['shared_flights']:.1f}</div>
-                            <div style="color:{text_muted};">Resolved/day</div>
-                            <div style="text-align:right; font-weight:700; color:{card_title};">{d['marginal_deflected']:.1f}</div>
-                            <div style="color:{text_muted};">Avg Response</div>
-                            <div style="text-align:right; font-weight:700; color:{card_title};">{d['avg_time_min']:.1f} min</div>
-                            <div style="color:{text_muted};">FAA Ceiling</div>
-                            <div style="text-align:right; font-weight:700; color:{card_title};">{d['faa_ceiling']}</div>
-                            <div style="color:{text_muted};">Nearest Airfield</div>
-                            <div style="text-align:right; font-weight:700; color:{card_title}; font-size:0.55rem;">{d['nearest_airport']}</div>
-                        </div>
-                        <div style="border-top:1px dashed {card_border}; margin-top:8px; padding-top:6px;
-                             display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:0.62rem;">
-                            <div style="color:{text_muted};">CapEx</div>
-                            <div style="text-align:right; font-weight:700; color:{card_title};">${d['cost']:,.0f}</div>
-                            <div style="color:{text_muted};">ROI</div>
-                            <div style="text-align:right; font-weight:800; color:{accent_color};">{d['be_text']}</div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    <div style="background:{card_bg}; border-top:4px solid {d['color']};
-                         border-left:1px solid {card_border}; border-right:1px solid {card_border}; border-bottom:1px solid {card_border};
-                         border-radius:4px; padding:12px; margin-bottom:12px;">
-                        <div style="font-weight:700; font-size:0.73rem; color:{card_title}; margin-bottom:2px;">{short_name}</div>
-                        <div style="font-size:0.58rem; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">{d['type']} · Phase #{d['deploy_step']}</div>
-                        <!-- Headline metric -->
-                        <div style="background:rgba(0,210,255,0.07); border-radius:4px; padding:8px; text-align:center; margin-bottom:8px;">
-                            <div style="font-size:0.6rem; color:{text_muted}; text-transform:uppercase; letter-spacing:0.5px;">Annual Capacity Value</div>
-                            <div style="font-size:1.25rem; font-weight:900; color:{accent_color};">${d['annual_savings']:,.0f}</div>
-                        </div>
-                        <!-- KV grid -->
-                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:0.62rem;">
-                            <div style="color:{text_muted};">Net Flights/day</div>
-                            <div style="text-align:right; font-weight:700; color:{accent_color};">{d['marginal_flights']:.1f}</div>
-                            <div style="color:{text_muted};">Shared Flights/day</div>
-                            <div style="text-align:right; font-weight:700; color:{card_title};">{d['shared_flights']:.1f}</div>
-                            <div style="color:{text_muted};">Resolved/day</div>
-                            <div style="text-align:right; font-weight:700; color:{card_title};">{d['marginal_deflected']:.1f}</div>
-                            <div style="color:{text_muted};">Avg Response</div>
-                            <div style="text-align:right; font-weight:700; color:{card_title};">{d['avg_time_min']:.1f} min</div>
-                            <div style="color:{text_muted};">FAA Ceiling</div>
-                            <div style="text-align:right; font-weight:700; color:{card_title};">{d['faa_ceiling']}</div>
-                            <div style="color:{text_muted};">Nearest Airfield</div>
-                            <div style="text-align:right; font-weight:700; color:{card_title}; font-size:0.55rem;">{d['nearest_airport']}</div>
-                        </div>
-                        <div style="border-top:1px dashed {card_border}; margin-top:8px; padding-top:6px;
-                             display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:0.62rem;">
-                            <div style="color:{text_muted};">CapEx</div>
-                            <div style="text-align:right; font-weight:700; color:{card_title};">${d['cost']:,.0f}</div>
-                            <div style="color:{text_muted};">ROI</div>
-                            <div style="text-align:right; font-weight:800; color:{accent_color};">{d['be_text']}</div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+<div style="background:{card_bg}; border-top:4px solid {d_color};
+     border-left:1px solid {card_border}; border-right:1px solid {card_border};
+     border-bottom:1px solid {card_border};
+     border-radius:4px; padding:12px; margin-bottom:12px;">
+    <div style="font-weight:700; font-size:0.73rem; color:{card_title}; margin-bottom:2px;">{short_name}</div>
+    <div style="font-size:0.58rem; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">{d_type} · Phase #{d_step}</div>
+    <div style="background:rgba(0,210,255,0.07); border-radius:4px; padding:8px; text-align:center; margin-bottom:8px;">
+        <div style="font-size:0.6rem; color:{text_muted}; text-transform:uppercase; letter-spacing:0.5px;">Annual Capacity Value</div>
+        <div style="font-size:1.25rem; font-weight:900; color:{accent_color};">${d_savings:,.0f}</div>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:0.62rem;">
+        <div style="color:{text_muted};">Net Flights/day</div>
+        <div style="text-align:right; font-weight:700; color:{accent_color};">{d_flights:.1f}</div>
+        <div style="color:{text_muted};">Shared Flights/day</div>
+        <div style="text-align:right; font-weight:700; color:{card_title};">{d_shared:.1f}</div>
+        <div style="color:{text_muted};">Resolved/day</div>
+        <div style="text-align:right; font-weight:700; color:{card_title};">{d_deflected:.1f}</div>
+        <div style="color:{text_muted};">Avg Response</div>
+        <div style="text-align:right; font-weight:700; color:{card_title};">{d_time:.1f} min</div>
+        <div style="color:{text_muted};">FAA Ceiling</div>
+        <div style="text-align:right; font-weight:700; color:{card_title};">{d_faa}</div>
+        <div style="color:{text_muted};">Nearest Airfield</div>
+        <div style="text-align:right; font-weight:700; color:{card_title}; font-size:0.55rem;">{d_airport}</div>
+    </div>
+    <div style="border-top:1px dashed {card_border}; margin-top:8px; padding-top:6px;
+         display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:0.62rem;">
+        <div style="color:{text_muted};">CapEx</div>
+        <div style="text-align:right; font-weight:700; color:{card_title};">${d_cost:,.0f}</div>
+        <div style="color:{text_muted};">ROI</div>
+        <div style="text-align:right; font-weight:800; color:{accent_color};">{d_be}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
     # ── 3D SWARM SIMULATION ───────────────────────────────────────────
     if fleet_capex > 0:
