@@ -1063,7 +1063,7 @@ if st.session_state['csvs_ready']:
     if len(df_calls) == 0:
         st.error("No calls match the selected filters."); st.stop()
 
- disp_expander = st.sidebar.expander("👁️ Display Options", expanded=False)
+    disp_expander = st.sidebar.expander("👁️ Display Options", expanded=False)
     with disp_expander:
         show_boundaries = st.toggle("Jurisdiction Boundaries", value=True)
         show_heatmap = st.toggle("911 Call Heatmap", value=False)
@@ -1090,7 +1090,6 @@ if st.session_state['csvs_ready']:
                                         help="Prioritize covering the most 911 incidents (Call) or the most land area (Land).")
     opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
 
-   
     minx, miny, maxx, maxy = active_gdf.to_crs(epsg=4326).total_bounds
     center_lon = (minx + maxx) / 2
     center_lat = (miny + maxy) / 2
@@ -1475,7 +1474,7 @@ if st.session_state['csvs_ready']:
         <div class="header"><div>{logo_html_str}</div>
         <div style="text-align:right;"><h1>DFR Deployment Proposal</h1>
         <div style="font-size:14px;color:#666;margin-top:5px;">For: {prop_city}, {prop_state} | Pop: {pop_metric:,}</div>
-        <div style="font-size:14px;color:#666;margin-top:3px;">By: {prop_name} <{prop_email}></div></div></div>
+        <div style="font-size:14px;color:#666;margin-top:3px;">By: {prop_name} | {prop_email}</div></div></div>
         <div class="kpi-grid">
         <div class="kpi-box"><h2>Financial</h2>
           <div class="kpi-lbl">Fleet CapEx</div><div class="kpi-val">${fleet_capex:,.0f}</div>
@@ -1497,8 +1496,8 @@ if st.session_state['csvs_ready']:
         <table><tr><th>Station</th><th>Type</th><th>Avg Response</th><th>FAA Ceiling</th><th>CapEx</th></tr>{station_rows}</table>
         <h2>Grant Narrative (AI Draft)</h2>
         <div class="disclaimer"><strong>DISCLAIMER:</strong> AI-generated draft. Must be reviewed and fact-checked before submission.</div>
-        <p><strong>Project Title:</strong> BRINC DFR Program for {prop_city}</p>
-        <p><strong>Need:</strong> {prop_city} respectfully requests DOJ Byrne JAG funding to deploy {actual_k_responder+actual_k_guardian} BRINC drone systems covering {calls_covered_perc:.1f}% of {st.session_state.get('total_original_calls',total_calls):,} annual incidents for a population of {pop_metric:,}.</p>
+        <p><strong>Project Title:</strong> BRINC DRONES DFR Program for {prop_city}</p>
+        <p><strong>Need:</strong> {prop_city} respectfully requests DOJ Byrne JAG funding to deploy {actual_k_responder+actual_k_guardian} BRINC DRONES systems covering {calls_covered_perc:.1f}% of {st.session_state.get('total_original_calls',total_calls):,} annual incidents for a population of {pop_metric:,}.</p>
         <p><strong>Design:</strong> {actual_k_responder} Responder and {actual_k_guardian} Guardian drones will achieve {avg_resp_time:.1f}-minute average response — {avg_time_saved:.1f} minutes faster than vehicular patrol — with all sites pre-cleared against FAA LAANC facility maps.</p>
         <p><strong>ROI:</strong> A ${fleet_capex:,.0f} investment yields ${annual_savings:,.0f} annual capacity value by deflecting {daily_drone_only_calls:.1f} dispatches/day, breaking even in {break_even_text.lower()}.</p>
         <p><strong>Potential Grant Funding Sources:</strong> 
