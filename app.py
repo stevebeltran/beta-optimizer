@@ -220,6 +220,10 @@ div[data-testid="stButton"] button:hover svg, div[data-testid="stFormSubmitButto
     fill: #000000 !important; 
     color: #000000 !important; 
 }}
+
+/* Fix for Toast Notifications */
+div[data-testid="stToast"] {{ background-color: #222222 !important; border-color: #444444 !important; }}
+div[data-testid="stToast"] span, div[data-testid="stToast"] div {{ color: #ffffff !important; }}
 """
 
 # --- INJECT CSS ---
