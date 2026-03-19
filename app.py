@@ -1090,6 +1090,7 @@ if st.session_state['csvs_ready']:
                                         help="Prioritize covering the most 911 incidents (Call) or the most land area (Land).")
     opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
 
+   
     minx, miny, maxx, maxy = active_gdf.to_crs(epsg=4326).total_bounds
     center_lon = (minx + maxx) / 2
     center_lat = (miny + maxy) / 2
