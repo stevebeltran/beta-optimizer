@@ -348,7 +348,6 @@ def generate_mock_faa_grid(minx, miny, maxx, maxy):
                 })
     return {"type": "FeatureCollection", "features": features}
 
-# FIXED FAA QUERY WITH inSR and outSR appended
 @st.cache_data
 def fetch_faa_airspace_grids(minx, miny, maxx, maxy):
     pad = 0.15 
@@ -378,7 +377,6 @@ def get_station_faa_ceiling(lat, lon, faa_geojson):
                 pass
     return "400 ft (Class G)"
 
-# ADDED OVERPASS API CALL FOR AIRFIELDS
 @st.cache_data
 def fetch_airfields(minx, miny, maxx, maxy):
     pad = 0.2
@@ -411,7 +409,6 @@ def get_nearest_airfield(lat, lon, airfields):
     min_dist = float('inf')
     best = None
     for af in airfields:
-        # Haversine formula
         lat1, lon1, lat2, lon2 = map(math.radians, [lat, lon, af['lat'], af['lon']])
         dlat = lat2 - lat1
         dlon = lon2 - lon1
@@ -896,7 +893,6 @@ def solve_mclp(resp_matrix, guard_matrix, dist_r, dist_g, num_resp, num_guard, a
             curr_r, curr_g = next_r, next_g
         return curr_r, curr_g, chrono_r, chrono_g
 
-# UPDATED: SMART ELBOW CURVE LOGIC
 @st.cache_resource
 def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash):
     n_st = _resp_matrix.shape[0]
@@ -911,7 +907,6 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
                 cov = (matrix[s] & uncovered).sum()
                 if cov > best_cov: best_cov, best_s = cov, s
             
-            # SMART ELBOW logic: Stop plotting if marginal gain drops below 1%
             improvement = best_cov / max(1, n_calls)
             if best_s != -1 and improvement >= 0.01:
                 uncovered = uncovered & ~matrix[best_s]
@@ -934,7 +929,6 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
                 if cand.area > best_area:
                     best_area, best_poly, best_s = cand.area, cand, s
             
-            # SMART ELBOW logic: Stop plotting if marginal gain drops below 1%
             improvement = (best_area - current_union.area) / total_area
             if best_s != -1 and improvement >= 0.01:
                 current_union = best_poly
@@ -1093,7 +1087,6 @@ if st.session_state['csvs_ready']:
     disp_expander = st.sidebar.expander("👁️ Display Options", expanded=False)
     filter_expander = st.sidebar.expander("⚙️ Data Filters", expanded=False)
     
-    # Pre-allocate export and grants containers at the correct spot in the sidebar flow
     export_placeholder = st.sidebar.container()
     grants_placeholder = st.sidebar.container()
 
@@ -1132,18 +1125,17 @@ if st.session_state['csvs_ready']:
         allow_redundancy = st.toggle("Multi-Tier (Allow Overlap)", value=True, help="Allows drone coverage rings to overlap if call volume justifies it. If disabled, forces drones apart.")
 
     with disp_expander:
-        col1, col2 = st.columns(2)
-        show_boundaries = col1.toggle("Boundaries", value=True, help="Show or hide jurisdiction borders.")
-        show_heatmap = col2.toggle("Heatmap", value=False, help="Overlay a thermal density map of historical 911 calls.")
-        show_health = col1.toggle("Health Score", value=False, help="Display the department's overall drone coverage health score.")
-        show_satellite = col2.toggle("Satellite", value=False, help="Switch the map background to high-resolution satellite imagery.")
-        show_cards = col1.toggle("Unit Economics Cards", value=True, help="Show or hide the financial breakdown cards for each deployed drone.")
-        show_faa = col2.toggle("FAA Airspace Grids", value=False, help="Overlay official FAA LAANC facility grids with altitude limits.")
+        show_boundaries = st.toggle("Jurisdiction Boundaries", value=True)
+        show_heatmap = st.toggle("911 Call Heatmap", value=False)
+        show_health = st.toggle("Health Score", value=False)
+        show_satellite = st.toggle("Satellite Imagery", value=False)
+        show_cards = st.toggle("Unit Economics Cards", value=True)
+        show_faa = st.toggle("FAA LAANC Airspace", value=False)
         
         st.markdown("---")
-        simulate_traffic = st.toggle("Enable Traffic Sim", value=False, help="Compare drone flight times against ground vehicle drive times.")
+        simulate_traffic = st.toggle("Simulate Ground Traffic", value=False)
         if simulate_traffic:
-            traffic_level = st.slider("Traffic Intensity (%)", 0, 100, 40, help="Adjust the simulated ground traffic congestion.")
+            traffic_level = st.slider("Traffic Congestion", 0, 100, 40)
         else:
             traffic_level = 40
 
@@ -2267,13 +2259,13 @@ if st.session_state['csvs_ready']:
                         <div style="font-weight: bold; font-size: 15px; color: #222; margin-bottom: 5px;">BRINC Drones, Inc.</div>
                         <div style="margin-bottom: 8px;">Leading the world in purpose-built Drone as a First Responder technology.</div>
                         <div>
-                            <a href="https://brincdrones.com">brincdrones.com</a>  |  
-                            <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a>  |  
+                            <a href="https://brincdrones.com">brincdrones.com</a> &nbsp;|&nbsp; 
+                            <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> &nbsp;|&nbsp; 
                             +1 (855) 950-0226
                         </div>
                         <div style="margin-top: 8px; font-size: 12px;">
-                            <a href="https://www.linkedin.com/company/brinc-drones">LinkedIn</a>  •  
-                            <a href="https://twitter.com/brincdrones">Twitter / X</a>  •  
+                            <a href="https://www.linkedin.com/company/brinc-drones">LinkedIn</a> &nbsp;&bull;&nbsp; 
+                            <a href="https://twitter.com/brincdrones">Twitter / X</a> &nbsp;&bull;&nbsp; 
                             <a href="https://www.youtube.com/c/BRINCDrones">YouTube</a>
                         </div>
                     </div>
