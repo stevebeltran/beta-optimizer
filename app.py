@@ -77,8 +77,6 @@ KNOWN_POPULATIONS = {
     "Wichita": 402263, "Cleveland": 900000, "Tampa": 449514, "Orlando": 316081
 }
 
-# Official FAA Unique Value Renderer — 6 discrete ceiling values, colors matched to the
-# ArcGIS viewer at https://www.arcgis.com/apps/webappviewer/index.html?id=9c2e4406710048e19806ebf6a06754ad
 FAA_CEILING_COLORS = {
     0:   {"line": "rgba(255,  20,  20, 0.95)", "fill": "rgba(255,  20,  20, 0.20)"},
     50:  {"line": "rgba(255, 120,   0, 0.95)", "fill": "rgba(255, 120,   0, 0.18)"},
@@ -214,7 +212,6 @@ div[role="radiogroup"] {{ gap: 0.5rem !important; }}
 </style>
 """, unsafe_allow_html=True)
 
-# UX: Beforeunload warning to prevent accidental session loss
 components.html("""
 <script>
 window.addEventListener('beforeunload', function(e) {
@@ -235,11 +232,9 @@ SHAPEFILE_DIR = "jurisdiction_data"
 if not os.path.exists(SHAPEFILE_DIR):
     os.makedirs(SHAPEFILE_DIR)
 
-
 # ============================================================
 # CACHED DATA FUNCTIONS
 # ============================================================
-
 @st.cache_data
 def reverse_geocode_state(lat, lon):
     url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&addressdetails=1"
@@ -253,7 +248,6 @@ def reverse_geocode_state(lat, lon):
             return state, city
     except Exception:
         return None, None
-
 
 @st.cache_data
 def fetch_census_population(state_fips, place_name):
@@ -270,7 +264,6 @@ def fetch_census_population(state_fips, place_name):
     except Exception:
         pass
     return None
-
 
 @st.cache_data
 def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
@@ -299,9 +292,7 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         return False, None
     return False, None
 
-
 def generate_mock_faa_grid(minx, miny, maxx, maxy):
-    """Mock LAANC grid using only the 6 official FAA ceiling values with correct concentric ring pattern."""
     features = []
     x_steps = np.linspace(minx, maxx, 20)
     y_steps = np.linspace(miny, maxy, 20)
@@ -335,17 +326,9 @@ def generate_mock_faa_grid(minx, miny, maxx, maxy):
                 })
     return {"type": "FeatureCollection", "features": features}
 
-
 @st.cache_data
 def load_faa_local(minx, miny, maxx, maxy):
-    """
-    Load FAA UASFM data from the pre-filtered local file.
-    Zero network calls, instant, never fails.
-    Supports both plain .geojson and gzipped .geojson.gz.
-    """
     import gzip as _gzip
-
-    # Try plain file first, then gzipped
     for path, use_gz in [("faa_uasfm.geojson", False), ("faa_uasfm.geojson.gz", True)]:
         if not os.path.exists(path):
             continue
@@ -356,8 +339,6 @@ def load_faa_local(minx, miny, maxx, maxy):
             else:
                 with open(path, "r", encoding="utf-8") as f:
                     full = json.load(f)
-
-            # Spatial filter to current map view (with small pad)
             pad = 0.05
             filtered = []
             for feat in full.get("features", []):
@@ -377,12 +358,9 @@ def load_faa_local(minx, miny, maxx, maxy):
         except Exception as e:
             print(f"FAA local load error ({path}): {e}")
             continue
-
-    return None  # caller will fall back to mock grid
-
+    return None
 
 def add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=True):
-    """Render FAA LAANC grid with official 6-value color scheme matching the ArcGIS viewer."""
     if not faa_geojson or not faa_geojson.get("features"):
         return
     text_lons, text_lats, text_strings, text_hovers = [], [], [], []
@@ -420,7 +398,6 @@ def add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=True):
             showlegend=False, name="LAANC Labels"
         ))
 
-
 def get_station_faa_ceiling(lat, lon, faa_geojson):
     if not faa_geojson or 'features' not in faa_geojson:
         return "400 ft (Class G)"
@@ -436,7 +413,6 @@ def get_station_faa_ceiling(lat, lon, faa_geojson):
             except Exception:
                 pass
     return "400 ft (Class G)"
-
 
 @st.cache_data
 def fetch_airfields(minx, miny, maxx, maxy):
@@ -461,7 +437,6 @@ def fetch_airfields(minx, miny, maxx, maxy):
     except Exception:
         return []
 
-
 def get_nearest_airfield(lat, lon, airfields):
     if not airfields:
         return "No data"
@@ -483,7 +458,6 @@ def get_nearest_airfield(lat, lon, airfields):
         return f"{best[1]:.1f}mi {best[2]} ({n})"
     return "No data"
 
-
 def generate_random_points_in_polygon(polygon, num_points):
     points = []
     minx, miny, maxx, maxy = polygon.bounds
@@ -496,7 +470,6 @@ def generate_random_points_in_polygon(polygon, num_points):
             if polygon.contains(Point(x, y)):
                 points.append((y, x))
     return points
-
 
 def generate_clustered_calls(polygon, num_points):
     points = []
@@ -519,7 +492,6 @@ def generate_clustered_calls(polygon, num_points):
     np.random.shuffle(points)
     return points
 
-
 def estimate_grants(population):
     if population > 1000000: return "$1.5M - $3.0M+"
     elif population > 500000: return "$500k - $1.5M"
@@ -527,13 +499,11 @@ def estimate_grants(population):
     elif population > 100000: return "$100k - $250k"
     else: return "$25k - $100k"
 
-
 def get_circle_coords(lat, lon, r_mi=2.0):
     angles = np.linspace(0, 2*np.pi, 100)
     c_lats = lat + (r_mi/69.172) * np.sin(angles)
     c_lons = lon + (r_mi/(69.172 * np.cos(np.radians(lat)))) * np.cos(angles)
     return c_lats, c_lons
-
 
 def format_3_lines(name_str):
     match = re.search(r'\s(\d{1,5}\s+[A-Za-z])', name_str)
@@ -551,18 +521,15 @@ def format_3_lines(name_str):
             return f"{parts[0].strip()},<br>{parts[1].strip()},<br>{','.join(parts[2:]).strip()}"
     return name_str
 
-
 def to_kml_color(hex_str):
     h = hex_str.lstrip('#')
     return f"ff{h[4:6]}{h[2:4]}{h[0:2]}" if len(h) == 6 else "ff0000ff"
-
 
 def calculate_zoom(min_lon, max_lon, min_lat, max_lat):
     lon_diff = max_lon - min_lon
     lat_diff = max_lat - min_lat
     if lon_diff <= 0 or lat_diff <= 0: return 12
     return min(max(min(np.log2(360/lon_diff), np.log2(180/lat_diff)) + 1.6, 5), 18)
-
 
 def generate_kml(active_gdf, active_drones, calls_gdf):
     kml = simplekml.Kml()
@@ -600,7 +567,6 @@ def generate_kml(active_gdf, active_drones, calls_gdf):
         pnt.style.iconstyle.scale = 0.5
         pnt.style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
     return kml.kml()
-
 
 @st.cache_data
 def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
@@ -641,7 +607,6 @@ def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
         mask.iloc[0] = True
         return master_gdf[mask]
     return master_gdf
-
 
 @st.cache_resource
 def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash):
@@ -689,7 +654,6 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_
                 'centrality': 1.0 - (dist_c / max_dist)
             })
     return calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls
-
 
 def solve_mclp(resp_matrix, guard_matrix, dist_r, dist_g, num_resp, num_guard, allow_redundancy, incremental=True):
     n_stations, n_calls = resp_matrix.shape
@@ -743,7 +707,6 @@ def solve_mclp(resp_matrix, guard_matrix, dist_r, dist_g, num_resp, num_guard, a
         chrono_r.extend([x for x in next_r if x not in curr_r])
         curr_r, curr_g = next_r, next_g
     return curr_r, curr_g, chrono_r, chrono_g
-
 
 @st.cache_resource
 def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash):
@@ -845,9 +808,8 @@ if not st.session_state['csvs_ready']:
                 st.error("Failed to load file — it may be corrupted or incorrectly formatted.")
                 st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
 
-
 # ============================================================
-# ONBOARDING / LANDING PAGE  (UX: simulation is primary CTA)
+# ONBOARDING / LANDING PAGE 
 # ============================================================
 if not st.session_state['csvs_ready']:
 
@@ -858,7 +820,6 @@ if not st.session_state['csvs_ready']:
     </div>
     """, unsafe_allow_html=True)
 
-    # UX: 3-step onboarding banner
     if not st.session_state.get('onboarding_done'):
         st.markdown(f"""
         <div style="background:{card_bg}; border:1px solid {accent_color}; border-radius:8px; padding:18px 24px; margin-bottom:20px;">
@@ -886,7 +847,6 @@ if not st.session_state['csvs_ready']:
             st.session_state['onboarding_done'] = True
             st.rerun()
 
-    # UX: Swarm simulation teaser above fold
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #0a0a0a 0%, #001a22 100%);
          border:1px solid {card_border}; border-left: 4px solid {accent_color};
@@ -902,7 +862,6 @@ if not st.session_state['csvs_ready']:
     </div>
     """, unsafe_allow_html=True)
 
-    # ── PRIMARY CTA: Synthetic simulation ──────────────────────────────
     st.markdown(f"<h3 style='color:{text_main}; margin-bottom:4px;'>🚀 Simulate Any US City</h3>", unsafe_allow_html=True)
     st.markdown(f"<div style='font-size:0.85rem; color:{text_muted}; margin-bottom:14px;'>No data needed — we fetch the real Census boundary, population, and generate a realistic 911 call distribution automatically.</div>", unsafe_allow_html=True)
 
@@ -920,14 +879,12 @@ if not st.session_state['csvs_ready']:
             st.session_state['active_state'] = input_state
             st.session_state['active_city'] = input_city
 
-        # UX: staged progress feedback
         prog = st.progress(0, text="Starting simulation…")
         prog.progress(10, text=f"📡 Fetching Census boundary for {input_city}, {input_state}…")
         success, active_city_gdf = fetch_tiger_city_shapefile(STATE_FIPS[input_state], input_city, SHAPEFILE_DIR)
 
         if not success:
             prog.empty()
-            # UX: error recovery with suggestions
             st.error(f"❌ Could not find a Census boundary for **'{input_city}'** in **{input_state}**.")
             st.markdown(f"""
             <div style="background:{card_bg}; border:1px solid #ff4444; border-radius:6px; padding:14px; margin-top:8px;">
@@ -985,7 +942,6 @@ if not st.session_state['csvs_ready']:
             st.session_state['csvs_ready'] = True
             st.rerun()
 
-    # ── SECONDARY CTA: Upload real data ────────────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     with st.expander("📁 Have real data? Upload calls.csv + stations.csv", expanded=False):
         st.markdown(f"""
@@ -1047,7 +1003,6 @@ if not st.session_state['csvs_ready']:
 # MAIN MAP INTERFACE
 # ============================================================
 if st.session_state['csvs_ready']:
-    # Signal JS that data is loaded so beforeunload fires
     components.html("<script>window._brincHasData = true;</script>", height=0)
 
     df_calls = st.session_state['df_calls'].copy()
@@ -1064,9 +1019,6 @@ if st.session_state['csvs_ready']:
         poly = box(min_lon-lon_pad, min_lat-lat_pad, max_lon+lon_pad, max_lat+lat_pad)
         master_gdf = gpd.GeoDataFrame({'DISPLAY_NAME':['Auto-Generated Boundary'],'data_count':[len(df_calls)]}, geometry=[poly], crs="EPSG:4326")
 
-    # ── SIDEBAR ────────────────────────────────────────────────────────
-    # UX: 3 clear sections — Configure / Optimize / Export
-
     # ── SECTION 1: CONFIGURE ──────────────────────────────────────────
     st.sidebar.markdown('<div class="sidebar-section-header">① Configure</div>', unsafe_allow_html=True)
 
@@ -1075,7 +1027,7 @@ if st.session_state['csvs_ready']:
     options_map = dict(zip(master_gdf['LABEL'], master_gdf['DISPLAY_NAME']))
     all_options = master_gdf['LABEL'].tolist()
     selected_labels = st.sidebar.multiselect("Jurisdictions", options=all_options, default=all_options,
-                                              help="Select which geographic areas to include in coverage analysis.")
+                                             help="Select which geographic areas to include in coverage analysis.")
     if not selected_labels:
         st.warning("Please select at least one jurisdiction from the sidebar.")
         st.stop()
@@ -1124,19 +1076,19 @@ if st.session_state['csvs_ready']:
         simulate_traffic = st.toggle("Simulate Ground Traffic", value=False)
         traffic_level = st.slider("Traffic Congestion", 0, 100, 40) if simulate_traffic else 40
 
-    # ── SECTION 2: OPTIMIZE ───────────────────────────────────────────
-    st.sidebar.markdown('<div class="sidebar-section-header">② Optimize Fleet</div>', unsafe_allow_html=True)
-
-    opt_strategy_raw = st.sidebar.radio("Optimization Goal", ("Call Coverage", "Land Coverage"), horizontal=True,
-                                        help="Prioritize covering the most 911 incidents (Call) or the most land area (Land).")
-    opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
-
     strat_expander = st.sidebar.expander("⚙️ Deployment Strategy", expanded=False)
     with strat_expander:
         incremental_build = st.toggle("Phased Rollout", value=True,
                                       help="Locks previously deployed stations in place as new drones are added — mirrors real procurement phases.")
         allow_redundancy = st.toggle("Allow Coverage Overlap", value=True,
                                      help="Permits rings to overlap in high-density areas. Disable to force maximum geographic spread.")
+
+    # ── SECTION 2: OPTIMIZE ───────────────────────────────────────────
+    st.sidebar.markdown('<div class="sidebar-section-header">② Optimize Fleet</div>', unsafe_allow_html=True)
+
+    opt_strategy_raw = st.sidebar.radio("Optimization Goal", ("Call Coverage", "Land Coverage"), horizontal=True,
+                                        help="Prioritize covering the most 911 incidents (Call) or the most land area (Land).")
+    opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
 
     minx, miny, maxx, maxy = active_gdf.to_crs(epsg=4326).total_bounds
     center_lon = (minx + maxx) / 2
@@ -1160,7 +1112,6 @@ if st.session_state['csvs_ready']:
     n = len(df_stations_all)
     bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}"
 
-    # UX: staged progress for spatial precompute
     prog2 = st.sidebar.empty()
     prog2.caption("⚡ Precomputing spatial matrices…")
     calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls = precompute_spatial_data(
@@ -1193,7 +1144,6 @@ if st.session_state['csvs_ready']:
     guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (mi)", 1, 8, int(st.session_state.get('r_guard', 8)))
     st.session_state.update({'k_resp': k_responder, 'k_guard': k_guardian, 'r_resp': resp_radius_mi, 'r_guard': guard_radius_mi})
 
-    # Re-run precompute if radii changed
     bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}_{resp_radius_mi}_{guard_radius_mi}"
     calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls = precompute_spatial_data(
         df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash
@@ -1205,7 +1155,6 @@ if st.session_state['csvs_ready']:
         city_m.area if city_m else 1.0, bounds_hash
     )
 
-    # FAA data — loaded from local pre-filtered file, no network call needed
     faa_geojson = load_faa_local(minx, miny, maxx, maxy)
     if not faa_geojson:
         faa_geojson = generate_mock_faa_grid(minx, miny, maxx, maxy)
@@ -1219,7 +1168,6 @@ if st.session_state['csvs_ready']:
     calls_per_day = st.sidebar.slider("Total Daily Calls (citywide)", 1, max(100, inferred_daily*3), inferred_daily,
                                        help="Total 911 calls dispatched per day across the entire city.")
 
-    # UX: renamed slider labels + helper text
     st.sidebar.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>DFR Dispatch Rate (%)</div>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>What % of in-range calls will the drone be sent to?</div>", unsafe_allow_html=True)
     dfr_dispatch_rate = st.sidebar.slider("DFR Dispatch Rate", 1, 100, st.session_state.get('dfr_rate',25), label_visibility="collapsed") / 100.0
@@ -1240,7 +1188,6 @@ if st.session_state['csvs_ready']:
         st.error("⚠️ Over-Deployment: Total drones exceed available stations.")
     elif k_responder > 0 or k_guardian > 0:
         if opt_strategy == "Maximize Call Coverage":
-            # UX: staged toast feedback during MCLP
             stage_bar = st.empty()
             stage_bar.info("🧠 Running MCLP optimizer… this may take 10-20 seconds for large fleets.")
             r_best, g_best, chrono_r, chrono_g = solve_mclp(
@@ -1485,7 +1432,7 @@ if st.session_state['csvs_ready']:
         avg_time_saved = ((sum((d['radius_m']/1609.34*1.4/avg_ground_speed)*60 for d in active_drones)/len(active_drones)) - avg_resp_time) if active_drones and avg_ground_speed > 0 else 0.0
 
         # Build export HTML
-        fig_for_export = go.Figure()  # minimal version for export
+        fig_for_export = go.Figure()  
         for d in active_drones:
             clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
             fig_for_export.add_trace(go.Scattermapbox(
@@ -1515,7 +1462,7 @@ if st.session_state['csvs_ready']:
         th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid #ddd;}}
         th{{background:#f1f1f1;font-size:12px;text-transform:uppercase;color:#555;}}
         .map-container{{border:1px solid #ddd;border-radius:8px;overflow:hidden;margin-top:10px;}}
-        .footer{{margin-top:40px;padding-top:20px;border-top:2px solid #eee;text-align:center;font-size:13px;color:#555;}}
+        .footer{{margin-top:40px;padding-top:20px;border-top:2px solid #eee;text-align:center;font-size:13px;color:#555; line-height:1.6;}}
         .footer a{{color:#00D2FF;text-decoration:none;font-weight:bold;}}
         .kpi-grid{{display:flex;gap:20px;margin-bottom:30px;}}
         .kpi-box{{flex:1;border:1px solid #eaeaea;border-radius:8px;padding:20px;background:#fafafa;}}
@@ -1553,9 +1500,23 @@ if st.session_state['csvs_ready']:
         <p><strong>Need:</strong> {prop_city} respectfully requests DOJ Byrne JAG funding to deploy {actual_k_responder+actual_k_guardian} BRINC drone systems covering {calls_covered_perc:.1f}% of {st.session_state.get('total_original_calls',total_calls):,} annual incidents for a population of {pop_metric:,}.</p>
         <p><strong>Design:</strong> {actual_k_responder} Responder and {actual_k_guardian} Guardian drones will achieve {avg_resp_time:.1f}-minute average response — {avg_time_saved:.1f} minutes faster than vehicular patrol — with all sites pre-cleared against FAA LAANC facility maps.</p>
         <p><strong>ROI:</strong> A ${fleet_capex:,.0f} investment yields ${annual_savings:,.0f} annual capacity value by deflecting {daily_drone_only_calls:.1f} dispatches/day, breaking even in {break_even_text.lower()}.</p>
+        <p><strong>Potential Grant Funding Sources:</strong> 
+          <a href="https://bja.ojp.gov/program/jag/overview" target="_blank">DOJ Byrne JAG</a> &bull; 
+          <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank">FEMA HSGP</a>
+        </p>
         <div class="footer">
-          <div style="font-size:20px;font-weight:900;letter-spacing:2px;color:#111;margin-bottom:8px;">BRINC</div>
-          <a href="https://brincdrones.com">brincdrones.com</a> | <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> | +1 (855) 950-0226
+          <div style="font-size:20px;font-weight:900;letter-spacing:2px;color:#111;margin-bottom:4px;">BRINC</div>
+          <div style="font-weight:bold;margin-bottom:4px;">BRINC Drones, Inc.</div>
+          <div style="margin-bottom:8px;">Leading the world in purpose-built Drone as a First Responder technology.</div>
+          <div style="margin-bottom:8px;font-weight:bold;">Prepared by: {prop_name} | <a href="mailto:{prop_email}">{prop_email}</a></div>
+          <div style="margin-bottom:8px;">
+            <a href="https://brincdrones.com" target="_blank">brincdrones.com</a> | <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> | +1 (855) 950-0226
+          </div>
+          <div>
+            <a href="https://www.linkedin.com/company/brincdrones" target="_blank">LinkedIn</a> &bull; 
+            <a href="https://twitter.com/brincdrones" target="_blank">Twitter / X</a> &bull; 
+            <a href="https://www.youtube.com/c/brincdrones" target="_blank">YouTube</a>
+          </div>
         </div></div></body></html>"""
 
         st.sidebar.download_button("📄 Executive Summary (HTML)", data=export_html,
@@ -1718,11 +1679,9 @@ if st.session_state['csvs_ready']:
             )
             st.plotly_chart(fig_curve, use_container_width=True, config={'displayModeBar':False})
 
-        # UX: unit economics cards with improved two-column grid layout
         if show_cards:
             st.markdown(f"<h4 style='margin-top:8px; border-bottom:1px solid {card_border}; padding-bottom:8px; color:{text_main};'>Unit Economics</h4>", unsafe_allow_html=True)
             if not active_drones:
-                # UX: empty state with explicit sidebar CTA
                 st.markdown(f"""
                 <div style="background:{card_bg}; border:1px dashed {card_border}; border-radius:6px;
                      padding:24px; text-align:center; margin-top:10px;">
