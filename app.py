@@ -348,10 +348,11 @@ def generate_mock_faa_grid(minx, miny, maxx, maxy):
                 })
     return {"type": "FeatureCollection", "features": features}
 
+# FIXED FAA QUERY WITH inSR and outSR appended
 @st.cache_data
 def fetch_faa_airspace_grids(minx, miny, maxx, maxy):
     pad = 0.15 
-    url = f"https://services6.arcgis.com/ssFJjBXIUyZDrSYZ/arcgis/rest/services/UAS_Facility_Map_Data_V2/FeatureServer/0/query?f=geojson&where=1=1&geometry={minx-pad},{miny-pad},{maxx+pad},{maxy+pad}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&outFields=CEILING"
+    url = f"https://services6.arcgis.com/ssFJjBXIUyZDrSYZ/arcgis/rest/services/UAS_Facility_Map_Data_V2/FeatureServer/0/query?f=geojson&where=1=1&geometry={minx-pad},{miny-pad},{maxx+pad},{maxy+pad}&geometryType=esriGeometryEnvelope&inSR=4326&outSR=4326&spatialRel=esriSpatialRelIntersects&outFields=CEILING"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
         with urllib.request.urlopen(req, timeout=15) as response:
@@ -376,6 +377,60 @@ def get_station_faa_ceiling(lat, lon, faa_geojson):
             except:
                 pass
     return "400 ft (Class G)"
+
+# ADDED OVERPASS API CALL FOR AIRFIELDS
+@st.cache_data
+def fetch_airfields(minx, miny, maxx, maxy):
+    pad = 0.2
+    query = f"""
+    [out:json];
+    (
+      node["aeroway"~"aerodrome|heliport"]({miny-pad},{minx-pad},{maxy+pad},{maxx+pad});
+      way["aeroway"~"aerodrome|heliport"]({miny-pad},{minx-pad},{maxy+pad},{maxx+pad});
+    );
+    out center;
+    """
+    url = "https://overpass-api.de/api/interpreter"
+    try:
+        req = urllib.request.Request(url, data=query.encode('utf-8'), headers={'User-Agent': 'BRINC_Optimizer'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            airfields = []
+            for el in data.get('elements', []):
+                lat = el.get('lat') or el.get('center', {}).get('lat')
+                lon = el.get('lon') or el.get('center', {}).get('lon')
+                name = el.get('tags', {}).get('name', 'Unknown Airfield')
+                if lat and lon:
+                    airfields.append({'name': name, 'lat': lat, 'lon': lon})
+            return airfields
+    except Exception:
+        return []
+
+def get_nearest_airfield(lat, lon, airfields):
+    if not airfields: return "No data"
+    min_dist = float('inf')
+    best = None
+    for af in airfields:
+        # Haversine formula
+        lat1, lon1, lat2, lon2 = map(math.radians, [lat, lon, af['lat'], af['lon']])
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        dist = 3958.8 * c
+        
+        if dist < min_dist:
+            y = math.sin(dlon) * math.cos(lat2)
+            x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+            bearing = (math.degrees(math.atan2(y, x)) + 360) % 360
+            dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
+            ix = int((bearing + 11.25)/22.5) % 16
+            min_dist = dist
+            best = (af['name'], dist, dirs[ix])
+            
+    if best:
+        return f"{best[1]:.1f}mi {best[2]} ({best[0][:18]}...)" if len(best[0]) > 18 else f"{best[1]:.1f}mi {best[2]} ({best[0]})"
+    return "No data"
 
 def generate_random_points_in_polygon(polygon, num_points):
     points = []
@@ -841,6 +896,7 @@ def solve_mclp(resp_matrix, guard_matrix, dist_r, dist_g, num_resp, num_guard, a
             curr_r, curr_g = next_r, next_g
         return curr_r, curr_g, chrono_r, chrono_g
 
+# UPDATED: SMART ELBOW CURVE LOGIC
 @st.cache_resource
 def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash):
     n_st = _resp_matrix.shape[0]
@@ -849,13 +905,15 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         uncovered = np.ones(n_calls, dtype=bool)
         curve = [0.0]
         cov_count = 0
-        min_gain = max(1, n_calls * 0.001) 
         for _ in range(n_st):
             best_s, best_cov = -1, -1
             for s in range(n_st):
                 cov = (matrix[s] & uncovered).sum()
                 if cov > best_cov: best_cov, best_s = cov, s
-            if best_s != -1 and best_cov >= min_gain:
+            
+            # SMART ELBOW logic: Stop plotting if marginal gain drops below 1%
+            improvement = best_cov / max(1, n_calls)
+            if best_s != -1 and improvement >= 0.01:
                 uncovered = uncovered & ~matrix[best_s]
                 cov_count += best_cov
                 curve.append((cov_count / max(1, n_calls)) * 100)
@@ -869,14 +927,16 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         current_union = Polygon()
         curve = [0.0]
         available = list(range(n_st))
-        min_gain = total_area * 0.001 
         for _ in range(n_st):
             best_s, best_poly, best_area = -1, None, -1
             for s in available:
                 cand = current_union.union(geos[s])
                 if cand.area > best_area:
                     best_area, best_poly, best_s = cand.area, cand, s
-            if best_s != -1 and (best_area - current_union.area) >= min_gain:
+            
+            # SMART ELBOW logic: Stop plotting if marginal gain drops below 1%
+            improvement = (best_area - current_union.area) / total_area
+            if best_s != -1 and improvement >= 0.01:
                 current_union = best_poly
                 available.remove(best_s)
                 curve.append((current_union.area / total_area) * 100)
@@ -1025,9 +1085,9 @@ if st.session_state['csvs_ready']:
         st.session_state['k_resp'] = k_responder
         st.session_state['k_guard'] = k_guardian
 
-    # Fetch FAA Data once for both map UI and card details
-    with st.spinner("Checking FAA Airspace Data..."):
+    with st.spinner("Checking FAA Airspace & Local Airports..."):
         faa_geojson = fetch_faa_airspace_grids(minx, miny, maxx, maxy)
+        airfields = fetch_airfields(minx, miny, maxx, maxy)
 
     strat_expander = st.sidebar.expander("⚙️ Deployment Strategy", expanded=False)
     disp_expander = st.sidebar.expander("👁️ Display Options", expanded=False)
@@ -1367,6 +1427,7 @@ if st.session_state['csvs_ready']:
                 d_lat = station_metadata[idx]['lat']
                 d_lon = station_metadata[idx]['lon']
                 faa_ceiling_text = get_station_faa_ceiling(d_lat, d_lon, faa_geojson)
+                nearest_airport_text = get_nearest_airfield(d_lat, d_lon, airfields)
 
                 d = {
                     'idx': idx,
@@ -1381,7 +1442,8 @@ if st.session_state['csvs_ready']:
                     'avg_time_min': avg_time_min,
                     'speed_mph': speed_mph,
                     'radius_m': radius_m,
-                    'faa_ceiling': faa_ceiling_text
+                    'faa_ceiling': faa_ceiling_text,
+                    'nearest_airport': nearest_airport_text
                 }
                 
                 if total_calls > 0:
@@ -1742,7 +1804,7 @@ if st.session_state['csvs_ready']:
                                 f'<div style="background-color: {card_bg}; color: {card_text}; border-top: 4px solid {d["color"]}; '
                                 f'border-left: 1px solid {card_border}; border-right: 1px solid {card_border}; border-bottom: 1px solid {card_border}; '
                                 f'padding: 12px; border-radius: 4px; margin-bottom: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); line-height: 1.2; '
-                                f'min-height: 275px; display: flex; flex-direction: column; justify-content: space-between;">'
+                                f'min-height: 295px; display: flex; flex-direction: column; justify-content: space-between;">'
                                 f'<div>'
                                 f'<div style="font-weight: 700; font-size: 0.75rem; margin-bottom: 6px; min-height: 2.5em; color: {card_title};">{formatted_name}</div>'
                                 f'<div style="font-size: 0.6rem; color: #888; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">{d["type"]} • PH: #{d["deploy_step"]}</div>'
@@ -1753,6 +1815,7 @@ if st.session_state['csvs_ready']:
                                 f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 8px;">Deflected: <span style="font-weight: 600; float: right; color:{card_title};">{d["marginal_deflected"]:.1f}/d</span></div>'
                                 f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 8px;">Avg Resp Time: <span style="font-weight: 600; float: right; color:{card_title};">{d["avg_time_min"]:.1f} min</span></div>'
                                 f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 8px;">FAA Limit: <span style="font-weight: 600; float: right; color:{card_title};">{d["faa_ceiling"]}</span></div>'
+                                f'<div style="font-size: 0.65rem; color: {text_muted}; margin-bottom: 8px;">Nearest Airfield: <span style="font-weight: 600; float: right; color:{card_title};">{d["nearest_airport"]}</span></div>'
                                 f'</div>'
                                 f'<div style="border-top: 1px dashed {card_border}; padding-top: 6px; font-size: 0.65rem; color: {text_muted};">'
                                 f'CapEx: <strong style="float:right; color:{card_title};">${d["cost"]:,.0f}</strong><br>'
