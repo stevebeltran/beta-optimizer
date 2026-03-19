@@ -337,36 +337,48 @@ def generate_mock_faa_grid(minx, miny, maxx, maxy):
 
 
 @st.cache_data
-def fetch_faa_airspace_grids(minx, miny, maxx, maxy):
+def load_faa_local(minx, miny, maxx, maxy):
     """
-    Queries the official FAA UAS Facility Map FeatureServer — the same service backing
-    https://www.arcgis.com/apps/webappviewer/index.html?id=9c2e4406710048e19806ebf6a06754ad
-    Single spatial bbox query; no fragile two-step AIRSPACE IN logic.
+    Load FAA UASFM data from the pre-filtered local file.
+    Zero network calls, instant, never fails.
+    Supports both plain .geojson and gzipped .geojson.gz.
     """
-    base = (
-        "https://services6.arcgis.com/ssFJjBXIUyZDrSYZ/arcgis/rest/services"
-        "/FAA_UAS_FacilityMap_Data/FeatureServer/0/query"
-    )
-    params = urllib.parse.urlencode({
-        "f": "geojson",
-        "where": "CEILING IS NOT NULL",
-        "geometry": f"{minx},{miny},{maxx},{maxy}",
-        "geometryType": "esriGeometryEnvelope",
-        "inSR": "4326",
-        "spatialRel": "esriSpatialRelIntersects",
-        "outFields": "CEILING,ARPT_Name,AIRSPACE",
-        "outSR": "4326",
-        "resultRecordCount": 2000
-    })
-    try:
-        req = urllib.request.Request(f"{base}?{params}", headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if data and "features" in data and len(data["features"]) > 0:
-                return data
-    except Exception:
-        pass
-    return None
+    import gzip as _gzip
+
+    # Try plain file first, then gzipped
+    for path, use_gz in [("faa_uasfm.geojson", False), ("faa_uasfm.geojson.gz", True)]:
+        if not os.path.exists(path):
+            continue
+        try:
+            if use_gz:
+                with _gzip.open(path, "rt", encoding="utf-8") as f:
+                    full = json.load(f)
+            else:
+                with open(path, "r", encoding="utf-8") as f:
+                    full = json.load(f)
+
+            # Spatial filter to current map view (with small pad)
+            pad = 0.05
+            filtered = []
+            for feat in full.get("features", []):
+                geom = feat.get("geometry")
+                if geom and geom.get("type") == "Polygon":
+                    coords = geom["coordinates"][0]
+                    lons = [c[0] for c in coords]
+                    lats = [c[1] for c in coords]
+                    cx = sum(lons) / len(lons)
+                    cy = sum(lats) / len(lats)
+                    if (minx - pad <= cx <= maxx + pad and
+                            miny - pad <= cy <= maxy + pad):
+                        filtered.append(feat)
+
+            if filtered:
+                return {"type": "FeatureCollection", "features": filtered}
+        except Exception as e:
+            print(f"FAA local load error ({path}): {e}")
+            continue
+
+    return None  # caller will fall back to mock grid
 
 
 def add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=True):
@@ -1193,17 +1205,12 @@ if st.session_state['csvs_ready']:
         city_m.area if city_m else 1.0, bounds_hash
     )
 
-    # FAA data fetch
-    with st.sidebar.container():
-        faa_status = st.empty()
-        faa_status.caption("📡 Fetching FAA airspace data…")
-        faa_geojson = fetch_faa_airspace_grids(minx, miny, maxx, maxy)
-        if not faa_geojson:
-            faa_geojson = generate_mock_faa_grid(minx, miny, maxx, maxy)
-            faa_status.caption("⚠️ FAA API offline — using mock LAANC preview")
-        else:
-            faa_status.empty()
-        airfields = fetch_airfields(minx, miny, maxx, maxy)
+    # FAA data — loaded from local pre-filtered file, no network call needed
+    faa_geojson = load_faa_local(minx, miny, maxx, maxy)
+    if not faa_geojson:
+        faa_geojson = generate_mock_faa_grid(minx, miny, maxx, maxy)
+        st.sidebar.caption("⚠️ faa_uasfm.geojson not found — using mock LAANC preview")
+    airfields = fetch_airfields(minx, miny, maxx, maxy)
 
     # ── SECTION 3: BUDGET & EXPORT ────────────────────────────────────
     st.sidebar.markdown('<div class="sidebar-section-header">③ Budget & Export</div>', unsafe_allow_html=True)
