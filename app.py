@@ -398,8 +398,8 @@ def fetch_faa_airspace_grids(minx, miny, maxx, maxy):
             if not airspaces:
                 return None
                 
-            # Step 2: Fetch full grids ONLY for those identified airspaces, assuring we get the whole grid
-            in_clause = ",".join([f"'{a.replace(''''''','''''')}'" for a in airspaces])
+            # FIX applied here: String concatenation for the IN clause to avoid parsing errors
+            in_clause = ",".join(["'" + a.replace("'", "''") + "'" for a in airspaces])
             where_clause = urllib.parse.quote(f"AIRSPACE IN ({in_clause}) AND CEILING IS NOT NULL")
             
             q2_url = f"{base_url}?f=geojson&where={where_clause}&outFields=CEILING&outSR=4326"
@@ -1163,13 +1163,7 @@ if st.session_state['csvs_ready']:
         st.session_state['k_guard'] = k_guardian
 
     with st.spinner("Checking FAA Airspace & Local Airports..."):
-        # The fetch function now uses a pad and filters for restrictions.
         faa_geojson = fetch_faa_airspace_grids(minx, miny, maxx, maxy)
-        # Use mock data if API fails to populate the map like the image
-        if not faa_geojson:
-            st.toast("⚠️ FAA API connection failed. Using mock airspace data.", icon="⚠️")
-            faa_geojson = generate_mock_faa_grid(minx, miny, maxx, maxy)
-            
         airfields = fetch_airfields(minx, miny, maxx, maxy)
 
     strat_expander = st.sidebar.expander("⚙️ Deployment Strategy", expanded=False)
@@ -1662,61 +1656,8 @@ if st.session_state['csvs_ready']:
                 hoverinfo='skip'
             ))
 
-        # --- FAA LAANC AIRSPACE OVERLAY ---
-        if show_faa and faa_geojson and 'features' in faa_geojson:
-            lats_0, lons_0 = [], []
-            lats_n, lons_n = [], []
-            text_lats, text_lons, texts, text_colors = [], [], [], []
-            
-            for f in faa_geojson['features']:
-                geom = f.get('geometry')
-                props = f.get('properties', {})
-                ceil = props.get('CEILING')
-                
-                if ceil is None: continue
-                
-                if geom and geom['type'] == 'Polygon':
-                    coords = geom['coordinates'][0]
-                    lon_list, lat_list = zip(*coords)
-                    
-                    if ceil == 0:
-                        lats_0.extend(lat_list + (None,))
-                        lons_0.extend(lon_list + (None,))
-                        text_color = "#ff4b4b" if is_dark else "#d32f2f"
-                    else:
-                        lats_n.extend(lat_list + (None,))
-                        lons_n.extend(lon_list + (None,))
-                        text_color = "#39FF14" if is_dark else "#28a745"
-                        
-                    try:
-                        s = shape(geom)
-                        c = s.centroid
-                        text_lats.append(c.y)
-                        text_lons.append(c.x)
-                        texts.append(str(ceil))
-                        text_colors.append(text_color)
-                    except:
-                        pass
-
-            if lats_0:
-                fig.add_trace(go.Scattermapbox(
-                    lat=lats_0, lon=lons_0, mode='lines',
-                    line=dict(color="#ff4b4b" if is_dark else "#d32f2f", width=2),
-                    name='0ft Ceiling', hoverinfo='skip'
-                ))
-            if lats_n:
-                fig.add_trace(go.Scattermapbox(
-                    lat=lats_n, lon=lons_n, mode='lines',
-                    line=dict(color="#39FF14" if is_dark else "#28a745", width=1.5),
-                    name='>0ft Ceiling', hoverinfo='skip'
-                ))
-            if text_lats:
-                fig.add_trace(go.Scattermapbox(
-                    lat=text_lats, lon=text_lons, mode='text',
-                    text=texts,
-                    textfont=dict(size=11, color=text_colors, family="Arial Black"),
-                    name='FAA Ceilings', hoverinfo='skip', showlegend=False
-                ))
+        if show_faa and faa_geojson:
+            add_faa_laanc_layer_to_plotly(fig, faa_geojson)
 
         for d in active_drones:
             clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m'] / 1609.34)
