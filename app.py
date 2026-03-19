@@ -11,6 +11,7 @@ import itertools
 import glob
 import math
 import simplekml
+import heapq
 from concurrent.futures import ThreadPoolExecutor
 import pulp
 import re
@@ -901,11 +902,25 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         uncovered = np.ones(n_calls, dtype=bool)
         curve = [0.0]
         cov_count = 0
+        
+        pq = []
+        for i in range(n_st):
+            heapq.heappush(pq, (-matrix[i].sum(), i))
+            
         for _ in range(n_st):
+            if not pq: break
             best_s, best_cov = -1, -1
-            for s in range(n_st):
-                cov = (matrix[s] & uncovered).sum()
-                if cov > best_cov: best_cov, best_s = cov, s
+            
+            while pq:
+                neg_gain, idx = heapq.heappop(pq)
+                actual_gain = (matrix[idx] & uncovered).sum()
+                
+                if not pq or actual_gain >= -pq[0][0]:
+                    best_s = idx
+                    best_cov = actual_gain
+                    break
+                else:
+                    heapq.heappush(pq, (-actual_gain, idx))
             
             improvement = best_cov / max(1, n_calls)
             if best_s != -1 and improvement >= 0.01:
@@ -921,28 +936,45 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         if total_area <= 0: return [0.0]
         current_union = Polygon()
         curve = [0.0]
-        available = list(range(n_st))
-        for _ in range(n_st):
-            best_s, best_poly, best_area = -1, None, -1
-            for s in available:
-                cand = current_union.union(geos[s])
-                if cand.area > best_area:
-                    best_area, best_poly, best_s = cand.area, cand, s
+        
+        pq = []
+        for i in range(n_st):
+            heapq.heappush(pq, (-geos[i].area, i))
             
-            improvement = (best_area - current_union.area) / total_area
+        for _ in range(n_st):
+            if not pq: break
+            best_s, best_poly, best_gain = -1, None, -1
+            
+            while pq:
+                neg_gain, idx = heapq.heappop(pq)
+                
+                cand = current_union.union(geos[idx])
+                actual_gain = cand.area - current_union.area
+                
+                if not pq or actual_gain >= -pq[0][0]:
+                    best_s = idx
+                    best_poly = cand
+                    best_gain = actual_gain
+                    break
+                else:
+                    heapq.heappush(pq, (-actual_gain, idx))
+            
+            improvement = best_gain / total_area
             if best_s != -1 and improvement >= 0.01:
                 current_union = best_poly
-                available.remove(best_s)
                 curve.append((current_union.area / total_area) * 100)
             else:
                 break
         return curve
 
-    c_r = greedy_calls(_resp_matrix) if n_calls > 0 else [0.0]
-    c_g = greedy_calls(_guard_matrix) if n_calls > 0 else [0.0]
-    a_r = greedy_area(_geos_r)
-    a_g = greedy_area(_geos_g)
-    
+    with ThreadPoolExecutor() as executor:
+        f_cr = executor.submit(greedy_calls, _resp_matrix)
+        f_cg = executor.submit(greedy_calls, _guard_matrix)
+        f_ar = executor.submit(greedy_area, _geos_r)
+        f_ag = executor.submit(greedy_area, _geos_g)
+
+        c_r, c_g, a_r, a_g = f_cr.result(), f_cg.result(), f_ar.result(), f_ag.result()
+
     max_len = max(len(c_r), len(c_g), len(a_r), len(a_g))
     
     def pad(c):
