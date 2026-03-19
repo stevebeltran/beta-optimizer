@@ -186,22 +186,39 @@ div[data-testid="stExpander"] summary {{ background-color: #111111 !important; c
 div[data-testid="stExpander"] summary:hover {{ background-color: #222222 !important; }}
 div[data-testid="stForm"] {{ background-color: #111111 !important; border-color: #333333 !important; }}
 
-/* Fix for selectbox, multiselect, and text input styling */
+/* Fix for selectbox, multiselect */
 div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
 div[data-baseweb="select"] > div input {{ color: #ffffff !important; }}
 div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #333333 !important; color: #ffffff !important; font-weight: normal; border: 1px solid #555555 !important; }}
 div[data-baseweb="select"] span[data-baseweb="tag"] span {{ color: #ffffff !important; }}
 div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
 div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
-div[data-baseweb="input"] {{ background-color: #222222 !important; border-color: #444444 !important; }}
-div[data-baseweb="input"] > div > input {{ color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; }}
 
-/* Fix for standard Streamlit buttons & icons rendering washed out in forced dark mode */
-button[kind="secondary"] {{ background-color: #222222 !important; border: 1px solid #444444 !important; }}
-button[kind="secondary"] p, button[kind="secondary"] span {{ color: #ffffff !important; }}
-button[kind="secondary"]:hover {{ background-color: #ffffff !important; border-color: #ffffff !important; }}
-button[kind="secondary"]:hover p, button[kind="secondary"]:hover span {{ color: #000000 !important; }}
-button[kind="secondary"]:hover svg {{ fill: #000000 !important; color: #000000 !important; }}
+/* Fix for Text Inputs (like Enter City) */
+div[data-testid="stTextInput"] div[data-baseweb="input"] {{ background-color: #222222 !important; border-color: #444444 !important; }}
+div[data-testid="stTextInput"] div[data-baseweb="input"] > div {{ background-color: transparent !important; }}
+div[data-testid="stTextInput"] div[data-baseweb="input"] input {{ color: #ffffff !important; background-color: transparent !important; -webkit-text-fill-color: #ffffff !important; caret-color: #ffffff !important; }}
+
+/* Fix for standard Streamlit buttons & icons rendering washed out */
+div[data-testid="stButton"] button, div[data-testid="stFormSubmitButton"] button, div[data-testid="stDownloadButton"] button {{
+    background-color: #222222 !important; 
+    border: 1px solid #444444 !important; 
+    color: #ffffff !important;
+}}
+div[data-testid="stButton"] button p, div[data-testid="stFormSubmitButton"] button p, div[data-testid="stDownloadButton"] button p {{
+    color: #ffffff !important; 
+}}
+div[data-testid="stButton"] button:hover, div[data-testid="stFormSubmitButton"] button:hover, div[data-testid="stDownloadButton"] button:hover {{
+    background-color: #ffffff !important; 
+    border-color: #ffffff !important; 
+}}
+div[data-testid="stButton"] button:hover p, div[data-testid="stFormSubmitButton"] button:hover p, div[data-testid="stDownloadButton"] button:hover p {{
+    color: #000000 !important; 
+}}
+div[data-testid="stButton"] button:hover svg, div[data-testid="stFormSubmitButton"] button:hover svg, div[data-testid="stDownloadButton"] button:hover svg {{
+    fill: #000000 !important; 
+    color: #000000 !important; 
+}}
 """
 
 # --- INJECT CSS ---
