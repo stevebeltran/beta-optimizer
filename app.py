@@ -1063,7 +1063,7 @@ if st.session_state['csvs_ready']:
     if len(df_calls) == 0:
         st.error("No calls match the selected filters."); st.stop()
 
-    disp_expander = st.sidebar.expander("👁️ Display Options", expanded=False)
+ disp_expander = st.sidebar.expander("👁️ Display Options", expanded=False)
     with disp_expander:
         show_boundaries = st.toggle("Jurisdiction Boundaries", value=True)
         show_heatmap = st.toggle("911 Call Heatmap", value=False)
