@@ -1823,11 +1823,31 @@ if st.session_state['csvs_ready']:
                     lon1,lat1 = calls_coords[ci]
                     lon0,lat0 = d['lon'],d['lat']
                     dist_mi = math.sqrt((lon1-lon0)**2+(lat1-lat0)**2)*69.172
-                    vis_time = max((dist_mi/d['speed_mph'])*3600*3, 120)
+                    vis_time = max((dist_mi/d['speed_mph'])*3600*8, 240)
                     launch = random.randint(0,86400)
-                    arc_h = min(max(dist_mi*40,50),200)
-                    flights_json.append({"path":[[lon0,lat0,0],[(lon0+lon1)/2,(lat0+lat1)/2,arc_h],[lon1,lat1,0]],
-                                         "timestamps":[launch,launch+vis_time/2,launch+vis_time],"color":rgb})
+                    arc_h = min(max(dist_mi*90, 80), 400)
+                    t0 = launch
+                    t1 = launch + vis_time * 0.15
+                    t2 = launch + vis_time * 0.40
+                    t3 = launch + vis_time * 0.75
+                    t4 = launch + vis_time * 0.90
+                    t5 = launch + vis_time
+                    mx1 = lon0 + 0.15*(lon1-lon0);  my1 = lat0 + 0.15*(lat1-lat0)
+                    mx2 = lon0 + 0.35*(lon1-lon0);  my2 = lat0 + 0.35*(lat1-lat0)
+                    mx3 = lon0 + 0.65*(lon1-lon0);  my3 = lat0 + 0.65*(lat1-lat0)
+                    mx4 = lon0 + 0.85*(lon1-lon0);  my4 = lat0 + 0.85*(lat1-lat0)
+                    flights_json.append({
+                        "path": [
+                            [lon0, lat0, 0],
+                            [mx1,  my1,  arc_h*0.75],
+                            [mx2,  my2,  arc_h],
+                            [mx3,  my3,  arc_h],
+                            [mx4,  my4,  arc_h*0.75],
+                            [lon1, lat1, 0]
+                        ],
+                        "timestamps": [t0, t1, t2, t3, t4, t5],
+                        "color": rgb
+                    })
 
             warn_html_sim = ""
             if len(flights_json) > 3000:
@@ -1894,7 +1914,7 @@ if st.session_state['csvs_ready']:
                     getPosition:d=>[d.lon,d.lat],getSize:36,sizeScale:1}}),
                   new deck.TripsLayer({{id:'flights',data:flights,getPath:d=>d.path,
                     getTimestamps:d=>d.timestamps,getColor:d=>d.color,
-                    opacity:0.85,widthMinPixels:5,trailLength:2500,currentTime:time,rounded:true}}),
+                    opacity:0.85,widthMinPixels:5,trailLength:4500,currentTime:time,rounded:true}}),
                   new deck.ScatterplotLayer({{id:'landed',data:flights,getPosition:d=>d.path[2],
                     getFillColor:d=>time>=d.timestamps[2]?[d.color[0],d.color[1],d.color[2],255]:[0,0,0,0],
                     getRadius:25,radiusMinPixels:3,updateTriggers:{{getFillColor:time}}}})
@@ -1907,7 +1927,7 @@ if st.session_state['csvs_ready']:
                 let now=performance.now();
                 let dt=Math.min(now-lastTime,100);
                 lastTime=now;
-                time+=dt/1000*2880*parseFloat(speedSlider.value);
+                time+=dt/1000*1440*parseFloat(speedSlider.value);
                 render();
                 if(time<86400){{timer=requestAnimationFrame(animate);}}
                 else{{
