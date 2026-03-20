@@ -837,11 +837,11 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
             try:
                 cand = current_union.union(geos_sub[idx])
                 gain = cand.area - current_union.area
-                if gain / total_area >= 0.005:
+                if gain / total_area >= 0.0001:
                     current_union = cand
                     curve.append((current_union.area / total_area) * 100)
                 else:
-                    break
+                    continue
             except Exception:
                 continue
         return curve
