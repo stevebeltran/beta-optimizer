@@ -190,6 +190,15 @@ div[data-testid="stTooltipIcon"] svg {{
 div[data-testid="stTooltipHoverTarget"] {{
     color: {accent_color} !important;
 }}
+div[data-testid="stTooltipContent"] {{
+    background-color: #222222 !important;
+    border: 1px solid {accent_color} !important;
+    border-radius: 4px !important;
+}}
+div[data-testid="stTooltipContent"] * {{
+    color: #ffffff !important;
+    font-size: 0.8rem !important;
+}}
 /* UX: improved card grid layout */
 .card-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }}
 .econ-card {{
@@ -342,40 +351,6 @@ def generate_mock_faa_grid(minx, miny, maxx, maxy):
                     "properties": {"CEILING": ceiling, "ARPT_Name": arpt_name}
                 })
     return {"type": "FeatureCollection", "features": features}
-
-@st.cache_data
-def load_faa_local(minx, miny, maxx, maxy):
-    import gzip as _gzip
-    for path, use_gz in [("faa_uasfm.geojson", False), ("faa_uasfm.geojson.gz", True)]:
-        if not os.path.exists(path):
-            continue
-        try:
-            if use_gz:
-                with _gzip.open(path, "rt", encoding="utf-8") as f:
-                    full = json.load(f)
-            else:
-                with open(path, "r", encoding="utf-8") as f:
-                    full = json.load(f)
-            pad = 0.05
-            filtered = []
-            for feat in full.get("features", []):
-                geom = feat.get("geometry")
-                if geom and geom.get("type") == "Polygon":
-                    coords = geom["coordinates"][0]
-                    lons = [c[0] for c in coords]
-                    lats = [c[1] for c in coords]
-                    cx = sum(lons) / len(lons)
-                    cy = sum(lats) / len(lats)
-                    if (minx - pad <= cx <= maxx + pad and
-                            miny - pad <= cy <= maxy + pad):
-                        filtered.append(feat)
-
-            if filtered:
-                return {"type": "FeatureCollection", "features": filtered}
-        except Exception as e:
-            print(f"FAA local load error ({path}): {e}")
-            continue
-    return None
 
 def add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=True):
     if not faa_geojson or not faa_geojson.get("features"):
@@ -863,9 +838,9 @@ if not st.session_state['csvs_ready']:
             c_val = st.session_state['target_cities'][i]['city'] if i < len(st.session_state['target_cities']) else ""
             s_val = st.session_state['target_cities'][i]['state'] if i < len(st.session_state['target_cities']) else "FL"
             
-            c_name = c1.text_input(f"City/Town {i+1}", value=c_val, key=f"c_{i}")
+            c_name = c1.text_input(f"City/Town {i+1}", value=c_val, key=f"c_{i}", help="Enter the official name of the municipality to fetch its boundary.")
             state_idx = list(STATE_FIPS.keys()).index(s_val) if s_val in STATE_FIPS else 8
-            s_name = c2.selectbox(f"State {i+1}", list(STATE_FIPS.keys()), index=state_idx, key=f"s_{i}", label_visibility="collapsed" if i>0 else "visible")
+            s_name = c2.selectbox(f"State {i+1}", list(STATE_FIPS.keys()), index=state_idx, key=f"s_{i}", label_visibility="collapsed" if i>0 else "visible", help="Select the state abbreviation.")
             
             if i < len(st.session_state['target_cities']):
                 st.session_state['target_cities'][i] = {"city": c_name, "state": s_name}
@@ -1090,15 +1065,14 @@ if st.session_state['csvs_ready']:
 
     disp_expander = st.sidebar.expander("👁️ Display Options", expanded=False)
     with disp_expander:
-        show_boundaries = st.toggle("Jurisdiction Boundaries", value=True)
-        show_heatmap = st.toggle("911 Call Heatmap", value=False)
-        show_health = st.toggle("Health Score", value=False)
-        show_satellite = st.toggle("Satellite Imagery", value=False)
-        show_cards = st.toggle("Unit Economics Cards", value=True)
-        show_faa = st.toggle("FAA LAANC Airspace", value=False,
-                             help="Overlay official FAA UAS Facility Map ceiling grids. Red=0ft, Orange=50ft, Yellow=100ft, Yellow-Green=200ft, Green=300ft, Teal=400ft.")
-        simulate_traffic = st.toggle("Simulate Ground Traffic", value=False)
-        traffic_level = st.slider("Traffic Congestion", 0, 100, 40) if simulate_traffic else 40
+        show_boundaries = st.toggle("Jurisdiction Boundaries", value=True, help="Toggle the display of the official city/county borders.")
+        show_heatmap = st.toggle("911 Call Heatmap", value=False, help="Overlay a density heatmap of historic 911 incidents.")
+        show_health = st.toggle("Health Score", value=False, help="Display the overall department operational health metric.")
+        show_satellite = st.toggle("Satellite Imagery", value=False, help="Switch the basemap to high-resolution satellite imagery.")
+        show_cards = st.toggle("Unit Economics Cards", value=True, help="Show detailed financial and operational breakdowns for each deployed drone.")
+        show_faa = st.toggle("FAA LAANC Airspace", value=False, help="Overlay FAA UAS Facility Map ceiling grids (Procedural estimation for speed).")
+        simulate_traffic = st.toggle("Simulate Ground Traffic", value=False, help="Calculate vehicular patrol response times based on traffic congestion.")
+        traffic_level = st.slider("Traffic Congestion", 0, 100, 40, help="Adjust ground traffic severity. 0=Empty roads, 100=Gridlock.") if simulate_traffic else 40
 
     strat_expander = st.sidebar.expander("⚙️ Deployment Strategy", expanded=False)
     with strat_expander:
@@ -1164,8 +1138,10 @@ if st.session_state['csvs_ready']:
                                     help="Short-range tactical drones (2-3mi radius).")
     k_guardian  = st.sidebar.slider("🦅 Guardian Count",  0, max_g, min(st.session_state.get('k_guard',0), max_g),
                                     help="Long-range heavy-lift drones (up to 8mi radius).")
-    resp_radius_mi = st.sidebar.slider("🚁 Responder Range (mi)", 2.0, 3.0, st.session_state.get('r_resp', 2.0), step=0.5)
-    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (mi)", 1, 8, int(st.session_state.get('r_guard', 8)))
+    resp_radius_mi = st.sidebar.slider("🚁 Responder Range (mi)", 2.0, 3.0, st.session_state.get('r_resp', 2.0), step=0.5,
+                                       help="Adjust the operational radius for Responder drones.")
+    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (mi)", 1, 8, int(st.session_state.get('r_guard', 8)),
+                                        help="Adjust the operational radius for Guardian drones.")
     st.session_state.update({'k_resp': k_responder, 'k_guard': k_guardian, 'r_resp': resp_radius_mi, 'r_guard': guard_radius_mi})
 
     bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}_{resp_radius_mi}_{guard_radius_mi}"
@@ -1179,10 +1155,7 @@ if st.session_state['csvs_ready']:
         city_m.area if city_m else 1.0, bounds_hash
     )
 
-    faa_geojson = load_faa_local(minx, miny, maxx, maxy)
-    if not faa_geojson:
-        faa_geojson = generate_mock_faa_grid(minx, miny, maxx, maxy)
-        st.sidebar.caption("⚠️ faa_uasfm.geojson not found — using mock LAANC preview")
+    faa_geojson = generate_mock_faa_grid(minx, miny, maxx, maxy)
     airfields = fetch_airfields(minx, miny, maxx, maxy)
 
     # ── SECTION 3: BUDGET & EXPORT ────────────────────────────────────
@@ -1190,15 +1163,15 @@ if st.session_state['csvs_ready']:
 
     inferred_daily = st.session_state.get('inferred_daily_calls_override', max(1, int(total_calls/365)))
     calls_per_day = st.sidebar.slider("Total Daily Calls (citywide)", 1, max(100, inferred_daily*3), inferred_daily,
-                                       help="Total 911 calls dispatched per day across the entire city.")
+                                       help="Total 911 calls dispatched per day across the entire mapped region.")
 
     st.sidebar.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>DFR Dispatch Rate (%)</div>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>What % of in-range calls will the drone be sent to?</div>", unsafe_allow_html=True)
-    dfr_dispatch_rate = st.sidebar.slider("DFR Dispatch Rate", 1, 100, st.session_state.get('dfr_rate',25), label_visibility="collapsed") / 100.0
+    dfr_dispatch_rate = st.sidebar.slider("DFR Dispatch Rate", 1, 100, st.session_state.get('dfr_rate',25), label_visibility="collapsed", help="Percentage of total 911 calls within the drone's radius that warrant a drone response.") / 100.0
 
     st.sidebar.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>Calls Resolved Without Officer Dispatch (%)</div>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>Of drone-attended calls, what % close without a patrol car?</div>", unsafe_allow_html=True)
-    deflection_rate = st.sidebar.slider("Resolution Rate", 0, 100, st.session_state.get('deflect_rate',30), label_visibility="collapsed") / 100.0
+    deflection_rate = st.sidebar.slider("Resolution Rate", 0, 100, st.session_state.get('deflect_rate',30), label_visibility="collapsed", help="Percentage of drone responses that eliminate the need for ground units to be dispatched.") / 100.0
 
     st.session_state['dfr_rate'] = int(dfr_dispatch_rate * 100)
     st.session_state['deflect_rate'] = int(deflection_rate * 100)
@@ -1428,8 +1401,8 @@ if st.session_state['csvs_ready']:
     if fleet_capex > 0:
         st.sidebar.markdown("---")
         col_n, col_e = st.sidebar.columns(2)
-        prop_name  = col_n.text_input("Your Name",  value=st.session_state.get('user_name', 'John Doe'), key='user_name')
-        prop_email = col_e.text_input("Your Email", value=st.session_state.get('user_email', 'john.doe@example.com'), key='user_email')
+        prop_name  = col_n.text_input("Your Name",  value=st.session_state.get('user_name', 'John Doe'), key='user_name', help="This name will appear on your exported proposal.")
+        prop_email = col_e.text_input("Your Email", value=st.session_state.get('user_email', 'john.doe@example.com'), key='user_email', help="This email will appear on your exported proposal.")
         st.sidebar.caption("*(Press **Enter** after typing to apply changes to your document)*")
 
         prop_city  = st.session_state.get('active_city', 'City')
