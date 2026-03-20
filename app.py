@@ -2234,8 +2234,8 @@ if st.session_state['csvs_ready']:
                   new deck.TripsLayer({{id:'flights',data:flights,getPath:d=>d.path,
                     getTimestamps:d=>d.timestamps,getColor:d=>d.color,
                     opacity:0.85,widthMinPixels:5,trailLength:13500,currentTime:time,rounded:true}}),
-                  new deck.ScatterplotLayer({{id:'landed',data:flights,getPosition:d=>d.path[2],
-                    getFillColor:d=>time>=d.timestamps[2]?[d.color[0],d.color[1],d.color[2],255]:[0,0,0,0],
+                  new deck.ScatterplotLayer({{id:'landed',data:flights,getPosition:d=>d.path[5],
+                    getFillColor:d=>time>=d.timestamps[5]?[d.color[0],d.color[1],d.color[2],255]:[0,0,0,0],
                     getRadius:25,radiusMinPixels:3,updateTriggers:{{getFillColor:time}}}})
                 ]}});
                 let day=Math.floor(time/86400)+1;
