@@ -201,7 +201,18 @@ DEMO_CITIES = [
     ("Tacoma", "WA"), ("Shreveport", "LA"), ("Akron", "OH"),
     ("Grand Rapids", "MI"), ("Huntington Beach", "CA"), ("Little Rock", "AR")
 ]
-
+FAST_DEMO_CITIES = [
+    ("Henderson", "NV"), ("Lincoln", "NE"), ("Boise", "ID"),
+    ("Des Moines", "IA"), ("Madison", "WI"), ("Colorado Springs", "CO"),
+    ("Richmond", "VA"), ("Raleigh", "NC"), ("Durham", "NC"),
+    ("Fort Wayne", "IN"), ("Omaha", "NE"), ("Wichita", "KS"),
+    ("Tulsa", "OK"), ("Spokane", "WA"), ("Tacoma", "WA"),
+    ("Aurora", "CO"), ("Las Vegas", "NV"), ("Nashville", "TN"),
+    ("Columbus", "OH"), ("Charlotte", "NC"), ("Louisville", "KY"),
+    ("Indianapolis", "IN"), ("Memphis", "TN"), ("Detroit", "MI"),
+    ("Milwaukee", "WI"), ("Minneapolis", "MN"), ("Seattle", "WA"),
+    ("Denver", "CO"), ("Portland", "OR"), ("Austin", "TX")
+]
 FAA_CEILING_COLORS = {
     0:   {"line": "rgba(255,  20,  20, 0.95)", "fill": "rgba(255,  20,  20, 0.20)"},
     50:  {"line": "rgba(255, 120,   0, 0.95)", "fill": "rgba(255, 120,   0, 0.18)"},
@@ -1222,7 +1233,7 @@ if not st.session_state['csvs_ready']:
         if st.button("⚡ Launch Random Demo City", use_container_width=True, key="demo_btn"):
             random.seed(datetime.datetime.now().microsecond + os.getpid())
             already_used = st.session_state.get('_last_demo_city', '')
-            candidates = [c for c in DEMO_CITIES if c[0] != already_used]
+            candidates = [c for c in FAST_DEMO_CITIES if c[0] != already_used]
             rcity, rstate = random.choice(candidates)
             st.session_state['_last_demo_city'] = rcity
             st.session_state['target_cities'] = [{"city": rcity, "state": rstate}]
