@@ -1395,10 +1395,13 @@ if st.session_state['csvs_ready']:
 
     # ── EXPORT BUTTONS ────────────────────────────────────────────────
     if fleet_capex > 0:
-        st.sidebar.markdown("---")
         col_n, col_e = st.sidebar.columns(2)
-        prop_name  = col_n.text_input("Your Name",  value="John Doe")
-        prop_email = col_e.text_input("Your Email", value="john.doe@example.com")
+        # Bind to session_state with keys so the app explicitly remembers the newest text
+        prop_name  = col_n.text_input("Your Name",  value=st.session_state.get('user_name', 'John Doe'), key='user_name')
+        prop_email = col_e.text_input("Your Email", value=st.session_state.get('user_email', 'john.doe@example.com'), key='user_email')
+        
+        # Add a helper caption so users know to lock in their input
+        st.sidebar.caption("*(Press **Enter** after typing to apply changes to your document)*")
 
         prop_city  = st.session_state.get('active_city', 'City')
         prop_state = st.session_state.get('active_state', 'FL')
