@@ -810,7 +810,7 @@ def solve_mclp(resp_matrix, guard_matrix, dist_r, dist_g, num_resp, num_guard, a
     return curr_r, curr_g, chrono_r, chrono_g
 
 @st.cache_resource
-def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash):
+def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash, max_stations=30):
     n_st = _resp_matrix.shape[0]
 
     def greedy_calls(matrix):
