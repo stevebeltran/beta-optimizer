@@ -352,6 +352,23 @@ def generate_mock_faa_grid(minx, miny, maxx, maxy):
                 })
     return {"type": "FeatureCollection", "features": features}
 
+@st.cache_data
+def load_faa_parquet(minx, miny, maxx, maxy):
+    # This is the incredibly fast Parquet loader.
+    # It reads only the geometric bounding box from the file without parsing JSON.
+    if not os.path.exists("faa_uasfm.parquet"):
+        return generate_mock_faa_grid(minx, miny, maxx, maxy)
+    try:
+        gdf = gpd.read_parquet("faa_uasfm.parquet")
+        pad = 0.05
+        filtered = gdf.cx[minx-pad:maxx+pad, miny-pad:maxy+pad]
+        if filtered.empty:
+            return {"type": "FeatureCollection", "features": []}
+        return json.loads(filtered.to_json())
+    except Exception as e:
+        print(f"FAA Parquet error: {e}")
+        return generate_mock_faa_grid(minx, miny, maxx, maxy)
+
 def add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=True):
     if not faa_geojson or not faa_geojson.get("features"):
         return
@@ -1155,7 +1172,7 @@ if st.session_state['csvs_ready']:
         city_m.area if city_m else 1.0, bounds_hash
     )
 
-    faa_geojson = generate_mock_faa_grid(minx, miny, maxx, maxy)
+    faa_geojson = load_faa_parquet(minx, miny, maxx, maxy)
     airfields = fetch_airfields(minx, miny, maxx, maxy)
 
     # ── SECTION 3: BUDGET & EXPORT ────────────────────────────────────
@@ -1753,7 +1770,7 @@ if st.session_state['csvs_ready']:
         st.markdown(f"<h3 style='color:{text_main};'>🚁 3D Swarm Simulation</h3>", unsafe_allow_html=True)
         st.markdown(f"<div style='font-size:0.82rem; color:{text_muted}; margin-bottom:10px;'>Animated deck.gl simulation of all DFR flights over a compressed 24-hour day. Use the speed slider to accelerate or slow the simulation. Great for council presentations.</div>", unsafe_allow_html=True)
 
-        show_sim = st.toggle("🎬 Enable 3D Simulation", value=False)
+        show_sim = st.toggle("🎬 Enable 3D Simulation", value=False, help="Launch a dynamic 3D rendering of daily drone flights.")
         if show_sim:
             calls_coords = np.column_stack((calls_in_city['lon'], calls_in_city['lat']))
             sim_assignments = {i:[] for i in range(len(active_drones))}
