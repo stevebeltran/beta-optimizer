@@ -1465,7 +1465,7 @@ if st.session_state['csvs_ready']:
         st.session_state.get('r_resp', 2.0), st.session_state.get('r_guard', 8.0),
         center_lat, center_lon, bounds_hash
     )
-    @st.cache_resource
+@st.cache_resource
 def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash, max_stations=30):
     n_st = min(_resp_matrix.shape[0], max_stations)
 
