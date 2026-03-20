@@ -115,11 +115,14 @@ defaults = {
     'active_city': "Orlando", 'active_state': "FL", 'estimated_pop': 316081,
     'k_resp': 0, 'k_guard': 0, 'r_resp': 2.0, 'r_guard': 8.0,
     'dfr_rate': 25, 'deflect_rate': 30, 'total_original_calls': 0,
-    'onboarding_done': False, 'trigger_sim': False
+    'onboarding_done': False, 'trigger_sim': False, 'city_count': 1
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+if 'target_cities' not in st.session_state:
+    st.session_state['target_cities'] = [{"city": st.session_state.get('active_city', 'Orlando'), "state": st.session_state.get('active_state', 'FL')}]
 
 # --- THEME ---
 bg_main = "#000000"
@@ -842,7 +845,7 @@ if not st.session_state['csvs_ready']:
         <div>
             <div style="font-weight:800; color:{accent_color}; font-size:0.9rem;">3D SWARM SIMULATION INCLUDED</div>
             <div style="font-size:0.78rem; color:{text_muted}; margin-top:2px;">
-                Deploy a fleet to unlock a live animated 3D simulation showing every DFR flight over a 24-hour day. Export grant-ready PDF proposals directly from your simulated operations.
+                Deploy a fleet to unlock a live animated 3D simulation showing every DFR flight over a 24-hour day. Export grant-ready HTML proposals directly from your simulated operations.
             </div>
         </div>
     </div>
@@ -851,21 +854,38 @@ if not st.session_state['csvs_ready']:
     col_left, col_right = st.columns(2)
 
     with col_left:
-        st.markdown(f"<h3 style='color:{text_main}; margin-bottom:4px;'>🚀 Simulate Any US City</h3>", unsafe_allow_html=True)
-        st.markdown(f"<div style='font-size:0.8rem; color:{text_muted}; margin-bottom:14px;'>No data needed — we fetch the real Census boundary and generate a highly realistic 911 call distribution automatically.</div>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{text_main}; margin-bottom:4px;'>🚀 Simulate Any US Region</h3>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:0.8rem; color:{text_muted}; margin-bottom:14px;'>No data needed — we fetch the real Census boundaries and generate a highly realistic 911 call distribution automatically. Combine multiple towns!</div>", unsafe_allow_html=True)
 
-        with st.form("demo_city_form"):
+        st.markdown(f"<div style='border:1px solid {card_border}; padding:15px; border-radius:8px;'>", unsafe_allow_html=True)
+        for i in range(st.session_state.city_count):
             c1, c2 = st.columns([3, 1])
-            input_city = c1.text_input("City Name", value=st.session_state['active_city'], placeholder="e.g. Orlando")
-            state_idx = list(STATE_FIPS.keys()).index(st.session_state['active_state']) if st.session_state['active_state'] in STATE_FIPS else 8
-            input_state = c2.selectbox("State", list(STATE_FIPS.keys()), index=state_idx)
-            submit_demo = st.form_submit_button("🚀 Run Simulation", use_container_width=True)
+            c_val = st.session_state['target_cities'][i]['city'] if i < len(st.session_state['target_cities']) else ""
+            s_val = st.session_state['target_cities'][i]['state'] if i < len(st.session_state['target_cities']) else "FL"
+            
+            c_name = c1.text_input(f"City/Town {i+1}", value=c_val, key=f"c_{i}")
+            state_idx = list(STATE_FIPS.keys()).index(s_val) if s_val in STATE_FIPS else 8
+            s_name = c2.selectbox(f"State {i+1}", list(STATE_FIPS.keys()), index=state_idx, key=f"s_{i}", label_visibility="collapsed" if i>0 else "visible")
+            
+            if i < len(st.session_state['target_cities']):
+                st.session_state['target_cities'][i] = {"city": c_name, "state": s_name}
+            else:
+                st.session_state['target_cities'].append({"city": c_name, "state": s_name})
+
+        if st.session_state.city_count < 10:
+            if st.button("➕ Add another city/town", use_container_width=True):
+                st.session_state.city_count += 1
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        submit_demo = st.button("🚀 Run Simulation", use_container_width=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("🎲 1-Click Demo (Random Large City)", use_container_width=True):
             rcity, rstate = random.choice(DEMO_CITIES)
-            st.session_state['active_city'] = rcity
-            st.session_state['active_state'] = rstate
+            st.session_state['target_cities'] = [{"city": rcity, "state": rstate}]
+            st.session_state.city_count = 1
             st.session_state['trigger_sim'] = True
             st.rerun()
 
@@ -926,72 +946,83 @@ if not st.session_state['csvs_ready']:
     if submit_demo or st.session_state.get('trigger_sim', False):
         if st.session_state.get('trigger_sim', False):
             st.session_state['trigger_sim'] = False
-        
-        # Override with session values in case 1-Click demo triggered
-        input_city = st.session_state['active_city']
-        input_state = st.session_state['active_state']
+            
+        active_targets = [loc for loc in st.session_state['target_cities'] if loc['city'].strip()]
+        if not active_targets:
+            st.error("Please enter at least one valid city name.")
+            st.stop()
+
+        if len(active_targets) == 1:
+            st.session_state['active_city'] = active_targets[0]['city']
+            st.session_state['active_state'] = active_targets[0]['state']
+        else:
+            st.session_state['active_city'] = f"{active_targets[0]['city']} & {len(active_targets)-1} others"
+            st.session_state['active_state'] = active_targets[0]['state'] 
 
         prog = st.progress(0, text="Starting simulation…")
-        prog.progress(10, text=f"📡 Fetching Census boundary for {input_city}, {input_state}…")
-        success, active_city_gdf = fetch_tiger_city_shapefile(STATE_FIPS[input_state], input_city, SHAPEFILE_DIR)
+        all_gdfs = []
+        total_estimated_pop = 0
 
-        if not success:
-            prog.empty()
-            st.error(f"❌ Could not find a Census boundary for **'{input_city}'** in **{input_state}**.")
-            st.markdown(f"""
-            <div style="background:{card_bg}; border:1px solid #ff4444; border-radius:6px; padding:14px; margin-top:8px;">
-                <div style="font-weight:700; color:#ff6666; margin-bottom:8px;">💡 Try one of these fixes:</div>
-                <ul style="color:{text_muted}; font-size:0.85rem; margin:0; padding-left:18px; line-height:2;">
-                    <li>Check spelling — use the official Census name (e.g. <b>Saint Paul</b> not <b>St. Paul</b>)</li>
-                    <li>Try the county name instead (e.g. <b>Miami-Dade</b> instead of <b>Miami</b>)</li>
-                    <li>Use a nearby larger city and adjust the jurisdiction boundary in the sidebar</li>
-                </ul>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            prog.progress(30, text="✅ Boundary loaded. Querying Census population…")
-            city_poly = active_city_gdf.geometry.union_all()
-            pop = fetch_census_population(STATE_FIPS[input_state], input_city)
-            if pop:
-                estimated_pop = pop
-                st.toast(f"✅ Census population verified: {estimated_pop:,}", icon="✅")
+        for i, loc in enumerate(active_targets):
+            c_name = loc['city'].strip()
+            s_name = loc['state']
+            
+            prog.progress(10 + int((i/len(active_targets))*20), text=f"📡 Fetching boundary for {c_name}, {s_name}…")
+            success, temp_gdf = fetch_tiger_city_shapefile(STATE_FIPS[s_name], c_name, SHAPEFILE_DIR)
+
+            if success:
+                all_gdfs.append(temp_gdf)
+                pop = fetch_census_population(STATE_FIPS[s_name], c_name)
+                if pop:
+                    total_estimated_pop += pop
+                    st.toast(f"✅ {c_name} population verified: {pop:,}")
+                else:
+                    gdf_proj = temp_gdf.to_crs(epsg=3857)
+                    area_sq_mi = gdf_proj.geometry.area.sum() / 2589988.11
+                    est = KNOWN_POPULATIONS.get(c_name, int(area_sq_mi * 3500))
+                    total_estimated_pop += est
+                    st.toast(f"⚠️ {c_name} population estimated: {est:,}")
             else:
-                gdf_proj = active_city_gdf.to_crs(epsg=3857)
-                area_sq_mi = gdf_proj.geometry.area.sum() / 2589988.11
-                estimated_pop = KNOWN_POPULATIONS.get(input_city, int(area_sq_mi * 3500))
-                st.toast(f"⚠️ Census API unavailable. Using estimate: {estimated_pop:,}", icon="⚠️")
+                st.warning(f"⚠️ Could not find a boundary for {c_name}, {s_name}. Skipping.")
 
-            st.session_state['estimated_pop'] = estimated_pop
-            st.session_state['active_city'] = input_city
-            st.session_state['active_state'] = input_state
+        if not all_gdfs:
+            prog.empty()
+            st.error("❌ Could not find Census boundaries for any of the entered locations. Check spelling.")
+            st.stop()
 
-            annual_cfs = int(estimated_pop * 0.6)
-            st.session_state['total_original_calls'] = annual_cfs
-            simulated_points_count = min(int(annual_cfs / 12), 25000)
+        prog.progress(35, text="✅ Boundaries loaded. Combining regions…")
+        active_city_gdf = pd.concat(all_gdfs, ignore_index=True)
+        city_poly = active_city_gdf.geometry.union_all()
+        
+        st.session_state['estimated_pop'] = total_estimated_pop
 
-            prog.progress(55, text="📍 Generating clustered 911 call distribution…")
-            np.random.seed(42)
-            call_points = generate_clustered_calls(city_poly, simulated_points_count)
-            st.session_state['df_calls'] = pd.DataFrame({
-                'lat': [p[0] for p in call_points],
-                'lon': [p[1] for p in call_points],
-                'priority': np.random.choice(['High','Medium','Low'], simulated_points_count)
-            })
+        annual_cfs = int(total_estimated_pop * 0.6)
+        st.session_state['total_original_calls'] = annual_cfs
+        simulated_points_count = min(int(annual_cfs / 12), 25000)
 
-            prog.progress(80, text="🏢 Distributing municipal infrastructure…")
-            station_points = generate_random_points_in_polygon(city_poly, 100)
-            types = ['Police','Fire','EMS'] * 34
-            st.session_state['df_stations'] = pd.DataFrame({
-                'name': [f'Station {i+1}' for i in range(len(station_points))],
-                'lat': [p[0] for p in station_points],
-                'lon': [p[1] for p in station_points],
-                'type': types[:len(station_points)]
-            })
+        prog.progress(55, text="📍 Generating clustered 911 call distribution…")
+        np.random.seed(42)
+        call_points = generate_clustered_calls(city_poly, simulated_points_count)
+        st.session_state['df_calls'] = pd.DataFrame({
+            'lat': [p[0] for p in call_points],
+            'lon': [p[1] for p in call_points],
+            'priority': np.random.choice(['High','Medium','Low'], simulated_points_count)
+        })
 
-            prog.progress(100, text="✅ Simulation complete!")
-            st.session_state['inferred_daily_calls_override'] = int(annual_cfs / 365)
-            st.session_state['csvs_ready'] = True
-            st.rerun()
+        prog.progress(80, text="🏢 Distributing municipal infrastructure…")
+        station_points = generate_random_points_in_polygon(city_poly, 100)
+        types = ['Police','Fire','EMS'] * 34
+        st.session_state['df_stations'] = pd.DataFrame({
+            'name': [f'Station {i+1}' for i in range(len(station_points))],
+            'lat': [p[0] for p in station_points],
+            'lon': [p[1] for p in station_points],
+            'type': types[:len(station_points)]
+        })
+
+        prog.progress(100, text="✅ Simulation complete!")
+        st.session_state['inferred_daily_calls_override'] = int(annual_cfs / 365)
+        st.session_state['csvs_ready'] = True
+        st.rerun()
 
 # ============================================================
 # MAIN MAP INTERFACE
@@ -1395,12 +1426,10 @@ if st.session_state['csvs_ready']:
 
     # ── EXPORT BUTTONS ────────────────────────────────────────────────
     if fleet_capex > 0:
+        st.sidebar.markdown("---")
         col_n, col_e = st.sidebar.columns(2)
-        # Bind to session_state with keys so the app explicitly remembers the newest text
         prop_name  = col_n.text_input("Your Name",  value=st.session_state.get('user_name', 'John Doe'), key='user_name')
         prop_email = col_e.text_input("Your Email", value=st.session_state.get('user_email', 'john.doe@example.com'), key='user_email')
-        
-        # Add a helper caption so users know to lock in their input
         st.sidebar.caption("*(Press **Enter** after typing to apply changes to your document)*")
 
         prop_city  = st.session_state.get('active_city', 'City')
