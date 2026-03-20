@@ -2021,6 +2021,22 @@ if st.session_state['csvs_ready']:
                 line=dict(color=d['color'], width=4.5),
                 fill='toself', fillcolor='rgba(0,0,0,0)', name=lbl, hoverinfo='name'))
 
+            # ── Guardian 5-mile rapid response focus ring ─────────────
+            if d['type'] == 'GUARDIAN' and d['radius_m']/1609.34 > 5.0:
+                f_lats, f_lons = get_circle_coords(d['lat'], d['lon'], r_mi=5.0)
+                fig.add_trace(go.Scattermapbox(
+                    lat=list(f_lats), lon=list(f_lons),
+                    mode='lines',
+                    line=dict(color=d['color'], width=1.5, dash='dot' if False else None),
+                    opacity=0.5,
+                    fill='toself',
+                    fillcolor=f"rgba({int(d['color'][1:3],16)},{int(d['color'][3:5],16)},{int(d['color'][5:7],16)},0.06)",
+                    name=f"Focus Zone 5mi · {d['name'].split(',')[0]}",
+                    hoverinfo='text',
+                    text=f"⚡ Rapid Response Focus Zone — 5mi<br>{d['name'].split(',')[0]}",
+                    showlegend=False
+                ))
+
             if simulate_traffic:
                 t_color = "#28a745" if traffic_level<35 else "#ffc107" if traffic_level<75 else "#dc3545"
                 t_fill  = f"rgba({'40,167,69' if traffic_level<35 else '255,193,7' if traffic_level<75 else '220,53,69'}, 0.15)"
