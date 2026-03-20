@@ -173,7 +173,33 @@ KNOWN_POPULATIONS = {
 DEMO_CITIES = [
     ("Las Vegas", "NV"), ("Austin", "TX"), ("Seattle", "WA"),
     ("Denver", "CO"), ("Nashville", "TN"), ("Columbus", "OH"),
-    ("Detroit", "MI"), ("San Diego", "CA"), ("Charlotte", "NC")
+    ("Detroit", "MI"), ("San Diego", "CA"), ("Charlotte", "NC"),
+    ("Portland", "OR"), ("Memphis", "TN"), ("Louisville", "KY"),
+    ("Baltimore", "MD"), ("Milwaukee", "WI"), ("Albuquerque", "NM"),
+    ("Tucson", "AZ"), ("Fresno", "CA"), ("Sacramento", "CA"),
+    ("Kansas City", "MO"), ("Mesa", "AZ"), ("Atlanta", "GA"),
+    ("Omaha", "NE"), ("Colorado Springs", "CO"), ("Raleigh", "NC"),
+    ("Miami", "FL"), ("Minneapolis", "MN"), ("Tulsa", "OK"),
+    ("Arlington", "TX"), ("Tampa", "FL"), ("New Orleans", "LA"),
+    ("Wichita", "KS"), ("Cleveland", "OH"), ("Virginia Beach", "VA"),
+    ("Oakland", "CA"), ("Indianapolis", "IN"), ("Jacksonville", "FL"),
+    ("Fort Worth", "TX"), ("Boston", "MA"), ("El Paso", "TX"),
+    ("Oklahoma City", "OK"), ("Louisville", "KY"), ("Boise", "ID"),
+    ("Richmond", "VA"), ("Spokane", "WA"), ("Tacoma", "WA"),
+    ("Aurora", "CO"), ("Anaheim", "CA"), ("Bakersfield", "CA"),
+    ("Riverside", "CA"), ("Stockton", "CA"), ("Corpus Christi", "TX"),
+    ("Lexington", "KY"), ("Henderson", "NV"), ("Saint Paul", "MN"),
+    ("Anchorage", "AK"), ("Plano", "TX"), ("Lincoln", "NE"),
+    ("Buffalo", "NY"), ("Fort Wayne", "IN"), ("Jersey City", "NJ"),
+    ("Chula Vista", "CA"), ("Orlando", "FL"), ("St. Louis", "MO"),
+    ("Madison", "WI"), ("Durham", "NC"), ("Lubbock", "TX"),
+    ("Winston-Salem", "NC"), ("Garland", "TX"), ("Glendale", "AZ"),
+    ("Hialeah", "FL"), ("Scottsdale", "AZ"), ("Irving", "TX"),
+    ("Fremont", "CA"), ("Baton Rouge", "LA"), ("Birmingham", "AL"),
+    ("Rochester", "NY"), ("Spokane", "WA"), ("Des Moines", "IA"),
+    ("Montgomery", "AL"), ("Modesto", "CA"), ("Fayetteville", "NC"),
+    ("Tacoma", "WA"), ("Shreveport", "LA"), ("Akron", "OH"),
+    ("Grand Rapids", "MI"), ("Huntington Beach", "CA"), ("Little Rock", "AR")
 ]
 
 FAA_CEILING_COLORS = {
@@ -1201,7 +1227,7 @@ if not st.session_state['csvs_ready']:
             st.session_state['trigger_sim'] = True
             st.rerun()
 
-        city_chips = "  ·  ".join([f"{c}" for c, _ in DEMO_CITIES])
+        city_chips = "  ·  ".join([f"{c}" for c, _ in DEMO_CITIES[:12]]) + "  · and more…"
         st.markdown(f"""
         <div class="demo-cities">
             <b>Available Cities</b><br>
