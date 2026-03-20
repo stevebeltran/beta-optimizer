@@ -2238,11 +2238,6 @@ if st.session_state['csvs_ready']:
                     getFillColor:d=>time>=d.timestamps[2]?[d.color[0],d.color[1],d.color[2],255]:[0,0,0,0],
                     getRadius:25,radiusMinPixels:3,updateTriggers:{{getFillColor:time}}}})
                 ]}});
-                let h=Math.floor(time/3600).toString().padStart(2,'0');
-                let m=Math.floor((time%3600)/60).toString().padStart(2,'0');
-                document.getElementById('timeDisplay').innerText=`${{h}}:${{m}}`;
-              }}
-              const animate=()=>{{
                 let day=Math.floor(time/86400)+1;
                 let h=Math.floor((time%86400)/3600).toString().padStart(2,'0');
                 let m=Math.floor((time%3600)/60).toString().padStart(2,'0');
