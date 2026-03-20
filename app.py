@@ -841,7 +841,7 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         import heapq as hq
         pq = [(-matrix[i].sum(), i) for i in range(n_st_calls)]
         hq.heapify(pq)
-        for _ in range(n_st):
+        for _ in range(n_st_calls):
             if not pq: break
             best_s, best_cov = -1, -1
             while pq:
