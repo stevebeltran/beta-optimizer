@@ -1800,8 +1800,6 @@ if st.session_state['csvs_ready']:
                                "KML", k_responder, k_guardian, calls_covered_perc,
                                st.session_state.get('user_name',''), st.session_state.get('user_email',''))
 
----
-
 
     # Grant eligibility
     pop_metric = st.session_state.get('estimated_pop', 250000)
