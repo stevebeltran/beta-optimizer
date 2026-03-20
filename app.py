@@ -1221,7 +1221,11 @@ if not st.session_state['csvs_ready']:
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
         if st.button("⚡ Launch Random Demo City", use_container_width=True, key="demo_btn"):
-            rcity, rstate = random.choice(DEMO_CITIES)
+            random.seed(datetime.datetime.now().microsecond + os.getpid())
+            already_used = st.session_state.get('_last_demo_city', '')
+            candidates = [c for c in DEMO_CITIES if c[0] != already_used]
+            rcity, rstate = random.choice(candidates)
+            st.session_state['_last_demo_city'] = rcity
             st.session_state['target_cities'] = [{"city": rcity, "state": rstate}]
             st.session_state.city_count = 1
             st.session_state['trigger_sim'] = True
