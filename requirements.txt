@@ -8,3 +8,4 @@ simplekml
 pulp
 fpdf
 kaleido
+pyarrow
