@@ -1799,16 +1799,10 @@ if st.session_state['csvs_ready']:
                 _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
                                "KML", k_responder, k_guardian, calls_covered_perc,
                                st.session_state.get('user_name',''), st.session_state.get('user_email',''))
-```
 
 ---
 
-## Change 3 — requirements.txt
 
-Add these two lines:
-```
-gspread
-google-auth
     # Grant eligibility
     pop_metric = st.session_state.get('estimated_pop', 250000)
     grant_bracket = estimate_grants(pop_metric)
