@@ -1477,78 +1477,104 @@ if st.session_state['csvs_ready']:
     chrono_r, chrono_g = [], []
     best_combo = None
 
+    # ── OPTIMIZATION CACHE KEY ────────────────────────────────────────
+    opt_cache_key = f"{k_responder}_{k_guardian}_{resp_radius_mi}_{guard_radius_mi}_{opt_strategy}_{allow_redundancy}_{incremental_build}_{bounds_hash}"
+
     if k_responder + k_guardian > n:
         st.error("⚠️ Over-Deployment: Total drones exceed available stations.")
-    elif k_responder > 0 or k_guardian > 0:
-        if opt_strategy == "Maximize Call Coverage":
-            stage_bar = st.empty()
-            stage_bar.info("🧠 Running MCLP optimizer… this may take 10-20 seconds for large fleets.")
-            r_best, g_best, chrono_r, chrono_g = solve_mclp(
-                resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g,
-                k_responder, k_guardian, allow_redundancy, incremental=incremental_build
-            )
-            best_combo = (tuple(r_best), tuple(g_best))
-            stage_bar.empty()
-            st.toast("✅ Optimization complete!", icon="✅")
-        else:
-            def evaluate_combo(rg_combo):
-                r_combo, g_combo = rg_combo
-                if allow_redundancy:
-                    score_area = (unary_union([station_metadata[i]['clipped_2m'] for i in r_combo]).area if r_combo else 0.0) + \
-                                 (unary_union([station_metadata[i]['clipped_guard'] for i in g_combo]).area if g_combo else 0.0)
-                else:
-                    geos = [station_metadata[i]['clipped_2m'] for i in r_combo] + [station_metadata[i]['clipped_guard'] for i in g_combo]
-                    score_area = unary_union(geos).area if geos else 0.0
-                cov_r = resp_matrix[list(r_combo)].any(axis=0) if r_combo else np.zeros(total_calls, bool)
-                cov_g = guard_matrix[list(g_combo)].any(axis=0) if g_combo else np.zeros(total_calls, bool)
-                score_calls = np.logical_or(cov_r, cov_g).sum() if total_calls > 0 else 0
-                score_cent  = sum(station_metadata[i]['centrality'] for i in list(r_combo)+list(g_combo))
-                return (score_area, score_calls, score_cent, rg_combo)
-
-            stage_bar = st.empty()
-            stage_bar.info("🗺️ Optimizing for land area coverage…")
-            if incremental_build:
-                locked_r, locked_g = (), ()
-                for _ in range(k_guardian):
-                    best_pick = max(
-                        [s for s in range(n) if s not in locked_g and (allow_redundancy or s not in locked_r)],
-                        key=lambda s: evaluate_combo((locked_r, tuple(sorted(list(locked_g)+[s])))),
-                        default=None
-                    )
-                    if best_pick is not None:
-                        locked_g = tuple(sorted(list(locked_g)+[best_pick]))
-                        chrono_g.append(best_pick)
-                for _ in range(k_responder):
-                    best_pick = max(
-                        [s for s in range(n) if s not in locked_r and (allow_redundancy or s not in locked_g)],
-                        key=lambda s: evaluate_combo((tuple(sorted(list(locked_r)+[s])), locked_g)),
-                        default=None
-                    )
-                    if best_pick is not None:
-                        locked_r = tuple(sorted(list(locked_r)+[best_pick]))
-                        chrono_r.append(best_pick)
-                best_combo = (locked_r, locked_g)
+        active_resp_names, active_guard_names = [], []
+        chrono_r, chrono_g = [], []
+        best_combo = None
+    elif k_responder == 0 and k_guardian == 0:
+        active_resp_names, active_guard_names = [], []
+        chrono_r, chrono_g = [], []
+        best_combo = None
+    else:
+        # Only re-run optimizer if parameters actually changed
+        if st.session_state.get('_opt_cache_key') != opt_cache_key:
+            if opt_strategy == "Maximize Call Coverage":
+                stage_bar = st.empty()
+                stage_bar.info("🧠 Running MCLP optimizer… this may take 10-20 seconds for large fleets.")
+                r_best, g_best, chrono_r, chrono_g = solve_mclp(
+                    resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g,
+                    k_responder, k_guardian, allow_redundancy, incremental=incremental_build
+                )
+                best_combo = (tuple(r_best), tuple(g_best))
+                stage_bar.empty()
+                st.toast("✅ Optimization complete!", icon="✅")
             else:
-                total_possible = math.comb(n, k_responder) * (math.comb(n-k_responder, k_guardian) if n >= k_responder else 1)
-                if total_possible > 3000:
-                    combos = list(set(
-                        (tuple(sorted(c[:k_responder])), tuple(sorted(c[k_responder:])))
-                        for c in [np.random.choice(range(n), k_responder+k_guardian, replace=False) for _ in range(3000)]
-                    ))
+                def evaluate_combo(rg_combo):
+                    r_combo, g_combo = rg_combo
+                    if allow_redundancy:
+                        score_area = (unary_union([station_metadata[i]['clipped_2m'] for i in r_combo]).area if r_combo else 0.0) + \
+                                     (unary_union([station_metadata[i]['clipped_guard'] for i in g_combo]).area if g_combo else 0.0)
+                    else:
+                        geos = [station_metadata[i]['clipped_2m'] for i in r_combo] + [station_metadata[i]['clipped_guard'] for i in g_combo]
+                        score_area = unary_union(geos).area if geos else 0.0
+                    cov_r = resp_matrix[list(r_combo)].any(axis=0) if r_combo else np.zeros(total_calls, bool)
+                    cov_g = guard_matrix[list(g_combo)].any(axis=0) if g_combo else np.zeros(total_calls, bool)
+                    score_calls = np.logical_or(cov_r, cov_g).sum() if total_calls > 0 else 0
+                    score_cent  = sum(station_metadata[i]['centrality'] for i in list(r_combo)+list(g_combo))
+                    return (score_area, score_calls, score_cent, rg_combo)
+
+                stage_bar = st.empty()
+                stage_bar.info("🗺️ Optimizing for land area coverage…")
+                if incremental_build:
+                    locked_r, locked_g = (), ()
+                    chrono_r, chrono_g = [], []
+                    for _ in range(k_guardian):
+                        best_pick = max(
+                            [s for s in range(n) if s not in locked_g and (allow_redundancy or s not in locked_r)],
+                            key=lambda s: evaluate_combo((locked_r, tuple(sorted(list(locked_g)+[s])))),
+                            default=None
+                        )
+                        if best_pick is not None:
+                            locked_g = tuple(sorted(list(locked_g)+[best_pick]))
+                            chrono_g.append(best_pick)
+                    for _ in range(k_responder):
+                        best_pick = max(
+                            [s for s in range(n) if s not in locked_r and (allow_redundancy or s not in locked_g)],
+                            key=lambda s: evaluate_combo((tuple(sorted(list(locked_r)+[s])), locked_g)),
+                            default=None
+                        )
+                        if best_pick is not None:
+                            locked_r = tuple(sorted(list(locked_r)+[best_pick]))
+                            chrono_r.append(best_pick)
+                    best_combo = (locked_r, locked_g)
                 else:
-                    combos = [(r_c, g_c) for r_c in itertools.combinations(range(n), k_responder)
-                              for g_c in (itertools.combinations([x for x in range(n) if x not in r_c], k_guardian) if k_guardian > 0 else [()])]
-                with ThreadPoolExecutor() as ex:
-                    results = list(ex.map(evaluate_combo, combos))
-                best_combo = max(results, key=lambda x: x[:3])[3]
-                chrono_r, chrono_g = list(best_combo[0]), list(best_combo[1])
-            stage_bar.empty()
-            st.toast("✅ Optimization complete!", icon="✅")
+                    total_possible = math.comb(n, k_responder) * (math.comb(n-k_responder, k_guardian) if n >= k_responder else 1)
+                    if total_possible > 3000:
+                        combos = list(set(
+                            (tuple(sorted(c[:k_responder])), tuple(sorted(c[k_responder:])))
+                            for c in [np.random.choice(range(n), k_responder+k_guardian, replace=False) for _ in range(3000)]
+                        ))
+                    else:
+                        combos = [(r_c, g_c) for r_c in itertools.combinations(range(n), k_responder)
+                                  for g_c in (itertools.combinations([x for x in range(n) if x not in r_c], k_guardian) if k_guardian > 0 else [()])]
+                    with ThreadPoolExecutor() as ex:
+                        results = list(ex.map(evaluate_combo, combos))
+                    best_combo = max(results, key=lambda x: x[:3])[3]
+                    chrono_r, chrono_g = list(best_combo[0]), list(best_combo[1])
+                stage_bar.empty()
+                st.toast("✅ Optimization complete!", icon="✅")
+
+            # Save result to session state
+            st.session_state['_opt_cache_key']  = opt_cache_key
+            st.session_state['_opt_best_combo'] = best_combo
+            st.session_state['_opt_chrono_r']   = chrono_r
+            st.session_state['_opt_chrono_g']   = chrono_g
+        else:
+            # Parameters unchanged — reuse cached result instantly
+            best_combo = st.session_state.get('_opt_best_combo')
+            chrono_r   = st.session_state.get('_opt_chrono_r', [])
+            chrono_g   = st.session_state.get('_opt_chrono_g', [])
 
         if best_combo is not None:
             r_best, g_best = best_combo
             active_resp_names  = [station_metadata[i]['name'] for i in r_best]
             active_guard_names = [station_metadata[i]['name'] for i in g_best]
+        else:
+            active_resp_names, active_guard_names = [], []
 
     # ── METRICS ───────────────────────────────────────────────────────
     area_covered_perc = overlap_perc = calls_covered_perc = 0.0
