@@ -1228,6 +1228,10 @@ if not st.session_state['csvs_ready']:
             st.session_state['_last_demo_city'] = rcity
             st.session_state['target_cities'] = [{"city": rcity, "state": rstate}]
             st.session_state.city_count = 1
+            # Clear the text input widget state so it doesn't override the random pick
+            for i in range(10):
+                st.session_state.pop(f"c_{i}", None)
+                st.session_state.pop(f"s_{i}", None)
             st.session_state['trigger_sim'] = True
             st.rerun()
 
