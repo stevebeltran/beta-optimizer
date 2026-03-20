@@ -1388,8 +1388,8 @@ if st.session_state['csvs_ready']:
         idx_99 = series[series >= 99.0].first_valid_index()
         return int(df_curve.loc[idx_99 if idx_99 is not None else series.last_valid_index(), 'Drones'])
 
-    max_r = min(max(1, get_max_drones('Responder (Calls)')), n)
-    max_g = min(max(1, get_max_drones('Guardian (Calls)')), n)
+    max_r = min(max(1, get_max_drones('Responder (Calls)') + 4), n)
+    max_g = min(max(1, get_max_drones('Guardian (Calls)') + 4), n)
 
     k_responder = st.sidebar.slider("🚁 Responder Count", 0, max_r, min(st.session_state.get('k_resp',0), max_r),
                                     help="Short-range tactical drones (2-3mi radius).")
