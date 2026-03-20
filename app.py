@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
@@ -96,7 +95,7 @@ def _notify_email(city, state, file_type, k_resp, k_guard, coverage, name, email
 
 def _log_to_sheets(city, state, file_type, k_resp, k_guard, coverage, name, email):
     try:
-        sheet_id  = st.secrets.get("GOOGLE_SHEET_ID", "")
+        sheet_id   = st.secrets.get("GOOGLE_SHEET_ID", "")
         creds_dict = st.secrets.get("gcp_service_account", {})
         if not sheet_id or not creds_dict:
             return
@@ -116,6 +115,8 @@ def _log_to_sheets(city, state, file_type, k_resp, k_guard, coverage, name, emai
         ])
     except Exception:
         pass
+
+
 # --- GLOBAL CONFIGURATION ---
 CONFIG = {
     "RESPONDER_COST": 80000,
@@ -170,8 +171,8 @@ KNOWN_POPULATIONS = {
 }
 
 DEMO_CITIES = [
-    ("Las Vegas", "NV"), ("Austin", "TX"), ("Seattle", "WA"), 
-    ("Denver", "CO"), ("Nashville", "TN"), ("Columbus", "OH"), 
+    ("Las Vegas", "NV"), ("Austin", "TX"), ("Seattle", "WA"),
+    ("Denver", "CO"), ("Nashville", "TN"), ("Columbus", "OH"),
     ("Detroit", "MI"), ("San Diego", "CA"), ("Charlotte", "NC")
 ]
 
@@ -268,30 +269,15 @@ div[data-testid="stButton"] button:hover p, div[data-testid="stFormSubmitButton"
 div[data-testid="stButton"] button:hover svg, div[data-testid="stFormSubmitButton"] button:hover svg, div[data-testid="stDownloadButton"] button:hover svg {{ fill: #000000 !important; color: #000000 !important; }}
 div[data-testid="stToast"] {{ background-color: #222222 !important; border-color: #444444 !important; }}
 div[data-testid="stToast"] span, div[data-testid="stToast"] div {{ color: #ffffff !important; }}
-/* Sidebar section headers */
 .sidebar-section-header {{
     font-size: 0.65rem !important; font-weight: 800 !important; letter-spacing: 1.5px !important;
     text-transform: uppercase !important; color: {accent_color} !important;
     border-top: 1px solid {card_border}; padding-top: 12px; margin-top: 4px; margin-bottom: 8px;
 }}
-/* Tooltip Fixes */
-div[data-testid="stTooltipIcon"] svg {{
-    stroke: {accent_color} !important;
-    fill: transparent !important;
-}}
-div[data-testid="stTooltipHoverTarget"] {{
-    color: {accent_color} !important;
-}}
-div[data-testid="stTooltipContent"] {{
-    background-color: #222222 !important;
-    border: 1px solid {accent_color} !important;
-    border-radius: 4px !important;
-}}
-div[data-testid="stTooltipContent"] * {{
-    color: #ffffff !important;
-    font-size: 0.8rem !important;
-}}
-/* UX: improved card grid layout */
+div[data-testid="stTooltipIcon"] svg {{ stroke: {accent_color} !important; fill: transparent !important; }}
+div[data-testid="stTooltipHoverTarget"] {{ color: {accent_color} !important; }}
+div[data-testid="stTooltipContent"] {{ background-color: #222222 !important; border: 1px solid {accent_color} !important; border-radius: 4px !important; }}
+div[data-testid="stTooltipContent"] * {{ color: #ffffff !important; font-size: 0.8rem !important; }}
 .card-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }}
 .econ-card {{
     background: {card_bg}; border-radius: 6px; padding: 12px;
@@ -304,7 +290,6 @@ div[data-testid="stTooltipContent"] * {{
 .econ-card .kv .k {{ color: {text_muted}; }}
 .econ-card .kv .v {{ font-weight: 700; color: {card_title}; }}
 .econ-card .kv .v-accent {{ font-weight: 700; color: {accent_color}; }}
-/* Responsive: stack map/stats on narrow */
 @media (max-width: 900px) {{
     div[data-testid="stHorizontalBlock"] {{ flex-direction: column !important; }}
     div[data-testid="stColumn"] {{ width: 100% !important; max-width: 100% !important; }}
@@ -446,8 +431,6 @@ def generate_mock_faa_grid(minx, miny, maxx, maxy):
 
 @st.cache_data
 def load_faa_parquet(minx, miny, maxx, maxy):
-    # This is the incredibly fast Parquet loader.
-    # It reads only the geometric bounding box from the file without parsing JSON.
     if not os.path.exists("faa_uasfm.parquet"):
         return generate_mock_faa_grid(minx, miny, maxx, maxy)
     try:
@@ -882,6 +865,8 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         'Guardian (Calls)':  pad(c_g),
         'Guardian (Area)':   pad(a_g)
     })
+
+
 # ============================================================
 # SCENARIO LOADER (sidebar, pre-map)
 # ============================================================
@@ -912,25 +897,10 @@ if not st.session_state['csvs_ready']:
                 st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
 
 # ============================================================
-# ONBOARDING / LANDING PAGE 
-# ============================================================
-# ============================================================
-# ONBOARDING / LANDING PAGE  — drop-in replacement
-# Replace everything between the two comment blocks:
-#   # ============================================================
-#   # ONBOARDING / LANDING PAGE
-#   # ============================================================
-#   if not st.session_state['csvs_ready']:
-#       ...
-#   (through the end of the if-block, ending before the "submit_demo or trigger_sim" logic)
-# ============================================================
-
-# ============================================================
 # ONBOARDING / LANDING PAGE
 # ============================================================
 if not st.session_state['csvs_ready']:
 
-    # ── HERO ──────────────────────────────────────────────────────────
     st.markdown(f"""
     <style>
     @keyframes pulseGlow {{
@@ -953,7 +923,7 @@ if not st.session_state['csvs_ready']:
         overflow: hidden;
         animation: fadeUp 0.5s ease both;
     }}
-    .brinc-hero::before {{          /* subtle grid texture */
+    .brinc-hero::before {{
         content: '';
         position: absolute; inset: 0;
         background:
@@ -1021,14 +991,6 @@ if not st.session_state['csvs_ready']:
     .brinc-badge.pulse {{
         animation: pulseGlow 3s ease-in-out infinite;
     }}
-
-    /* ── Three-path cards ──────────────────────────────── */
-    .path-grid {{
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 16px;
-        margin-bottom: 32px;
-    }}
     .path-card {{
         background: #080808;
         border: 1px solid #1c1c1c;
@@ -1038,7 +1000,7 @@ if not st.session_state['csvs_ready']:
         overflow: hidden;
         transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }}
-    .path-card::after {{          /* top accent bar */
+    .path-card::after {{
         content: '';
         position: absolute;
         top: 0; left: 0; right: 0;
@@ -1097,7 +1059,6 @@ if not st.session_state['csvs_ready']:
     </div>
     """, unsafe_allow_html=True)
 
-    # ── THREE PATH CARD HEADERS (pure HTML, no widgets) ───────────────
     path_sim_col, path_upload_col, path_demo_col = st.columns(3, gap="medium")
 
     with path_sim_col:
@@ -1193,7 +1154,6 @@ if not st.session_state['csvs_ready']:
                     df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
                     st.toast("⚠️ Sampled to 25,000 calls for performance.")
                 st.session_state['df_calls'] = df_c
-
                 df_s = pd.read_csv(station_file)
                 df_s.columns = [str(c).lower().strip() for c in df_s.columns]
                 df_s = df_s.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
@@ -1207,7 +1167,6 @@ if not st.session_state['csvs_ready']:
                 if len(df_s) > 100:
                     df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
                 st.session_state['df_stations'] = df_s
-
                 with st.spinner("🌍 Auto-detecting jurisdiction…"):
                     detected_state_full, detected_city = reverse_geocode_state(
                         df_c['lat'].iloc[0], df_c['lon'].iloc[0]
@@ -1217,10 +1176,8 @@ if not st.session_state['csvs_ready']:
                         if detected_city and detected_city != 'Unknown City':
                             st.session_state['active_city'] = detected_city
                         st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
-
                 st.session_state['csvs_ready'] = True
                 st.rerun()
-
             elif call_file or station_file:
                 missing = "stations.csv" if call_file else "calls.csv"
                 st.warning(f"⚠️ Also upload **{missing}** to continue.")
@@ -1258,7 +1215,6 @@ if not st.session_state['csvs_ready']:
         </div>
         """, unsafe_allow_html=True)
 
-    # ── FOOTER NOTE ───────────────────────────────────────────────────
     st.markdown(f"""
     <div style="text-align:center; margin-top:8px; font-size:0.63rem; color:#2a2a2a;">
         BRINC Drones, Inc. · <a href="https://brincdrones.com" target="_blank"
@@ -1267,7 +1223,6 @@ if not st.session_state['csvs_ready']:
     </div>
     """, unsafe_allow_html=True)
 
-    # ── SIMULATION TRIGGER LOGIC (unchanged from original) ────────────
     if submit_demo or st.session_state.get('trigger_sim', False):
         if st.session_state.get('trigger_sim', False):
             st.session_state['trigger_sim'] = False
@@ -1291,11 +1246,9 @@ if not st.session_state['csvs_ready']:
         for i, loc in enumerate(active_targets):
             c_name = loc['city'].strip()
             s_name = loc['state']
-
             prog.progress(10 + int((i / len(active_targets)) * 20),
                           text=f"📡 Fetching boundary for {c_name}, {s_name}…")
             success, temp_gdf = fetch_tiger_city_shapefile(STATE_FIPS[s_name], c_name, SHAPEFILE_DIR)
-
             if success:
                 all_gdfs.append(temp_gdf)
                 pop = fetch_census_population(STATE_FIPS[s_name], c_name)
@@ -1303,7 +1256,7 @@ if not st.session_state['csvs_ready']:
                     total_estimated_pop += pop
                     st.toast(f"✅ {c_name} population verified: {pop:,}")
                 else:
-                    gdf_proj  = temp_gdf.to_crs(epsg=3857)
+                    gdf_proj   = temp_gdf.to_crs(epsg=3857)
                     area_sq_mi = gdf_proj.geometry.area.sum() / 2589988.11
                     est = KNOWN_POPULATIONS.get(c_name, int(area_sq_mi * 3500))
                     total_estimated_pop += est
@@ -1369,7 +1322,6 @@ if st.session_state['csvs_ready']:
         poly = box(min_lon-lon_pad, min_lat-lat_pad, max_lon+lon_pad, max_lat+lat_pad)
         master_gdf = gpd.GeoDataFrame({'DISPLAY_NAME':['Auto-Generated Boundary'],'data_count':[len(df_calls)]}, geometry=[poly], crs="EPSG:4326")
 
-    # ── SECTION 1: CONFIGURE ──────────────────────────────────────────
     st.sidebar.markdown('<div class="sidebar-section-header">① Configure</div>', unsafe_allow_html=True)
 
     total_pts = master_gdf['data_count'].sum()
@@ -1415,27 +1367,23 @@ if st.session_state['csvs_ready']:
 
     disp_expander = st.sidebar.expander("👁️ Display Options", expanded=False)
     with disp_expander:
-        show_boundaries = st.toggle("Jurisdiction Boundaries", value=True, help="Toggle the display of the official city/county borders.")
-        show_heatmap = st.toggle("911 Call Heatmap", value=False, help="Overlay a density heatmap of historic 911 incidents.")
-        show_health = st.toggle("Health Score", value=False, help="Display the overall department operational health metric.")
-        show_satellite = st.toggle("Satellite Imagery", value=False, help="Switch the basemap to high-resolution satellite imagery.")
-        show_cards = st.toggle("Unit Economics Cards", value=True, help="Show detailed financial and operational breakdowns for each deployed drone.")
-        show_faa = st.toggle("FAA LAANC Airspace", value=False, help="Overlay FAA UAS Facility Map ceiling grids (Procedural estimation for speed).")
-        simulate_traffic = st.toggle("Simulate Ground Traffic", value=False, help="Calculate vehicular patrol response times based on traffic congestion.")
-        traffic_level = st.slider("Traffic Congestion", 0, 100, 40, help="Adjust ground traffic severity. 0=Empty roads, 100=Gridlock.") if simulate_traffic else 40
+        show_boundaries = st.toggle("Jurisdiction Boundaries", value=True)
+        show_heatmap    = st.toggle("911 Call Heatmap", value=False)
+        show_health     = st.toggle("Health Score", value=False)
+        show_satellite  = st.toggle("Satellite Imagery", value=False)
+        show_cards      = st.toggle("Unit Economics Cards", value=True)
+        show_faa        = st.toggle("FAA LAANC Airspace", value=False)
+        simulate_traffic = st.toggle("Simulate Ground Traffic", value=False)
+        traffic_level   = st.slider("Traffic Congestion", 0, 100, 40) if simulate_traffic else 40
 
     strat_expander = st.sidebar.expander("⚙️ Deployment Strategy", expanded=False)
     with strat_expander:
-        incremental_build = st.toggle("Phased Rollout", value=True,
-                                      help="Locks previously deployed stations in place as new drones are added — mirrors real procurement phases.")
-        allow_redundancy = st.toggle("Allow Coverage Overlap", value=True,
-                                     help="Permits rings to overlap in high-density areas. Disable to force maximum geographic spread.")
+        incremental_build = st.toggle("Phased Rollout", value=True)
+        allow_redundancy  = st.toggle("Allow Coverage Overlap", value=True)
 
-    # ── SECTION 2: OPTIMIZE ───────────────────────────────────────────
     st.sidebar.markdown('<div class="sidebar-section-header">② Optimize Fleet</div>', unsafe_allow_html=True)
 
-    opt_strategy_raw = st.sidebar.radio("Optimization Goal", ("Call Coverage", "Land Coverage"), horizontal=True,
-                                        help="Prioritize covering the most 911 incidents (Call) or the most land area (Land).")
+    opt_strategy_raw = st.sidebar.radio("Optimization Goal", ("Call Coverage", "Land Coverage"), horizontal=True)
     opt_strategy = "Maximize Call Coverage" if opt_strategy_raw == "Call Coverage" else "Maximize Land Coverage"
 
     minx, miny, maxx, maxy = active_gdf.to_crs(epsg=4326).total_bounds
@@ -1467,79 +1415,13 @@ if st.session_state['csvs_ready']:
         st.session_state.get('r_resp', 2.0), st.session_state.get('r_guard', 8.0),
         center_lat, center_lon, bounds_hash
     )
-@st.cache_resource
-def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash, max_stations=30):
-    n_st = min(_resp_matrix.shape[0], max_stations)
-
-    def greedy_calls(matrix):
-        uncovered = np.ones(n_calls, dtype=bool)
-        curve = [0.0]
-        cov_count = 0
-        import heapq as hq
-        pq = [(-matrix[i].sum(), i) for i in range(n_st)]
-        hq.heapify(pq)
-        for _ in range(n_st):
-            if not pq: break
-            best_s, best_cov = -1, -1
-            while pq:
-                neg_gain, idx = hq.heappop(pq)
-                actual_gain = (matrix[idx] & uncovered).sum()
-                if not pq or actual_gain >= -pq[0][0]:
-                    best_s, best_cov = idx, actual_gain
-                    break
-                else:
-                    hq.heappush(pq, (-actual_gain, idx))
-            if best_s != -1 and best_cov / max(1, n_calls) >= 0.005:
-                uncovered = uncovered & ~matrix[best_s]
-                cov_count += best_cov
-                curve.append((cov_count / max(1, n_calls)) * 100)
-                if cov_count == n_calls: break
-            else:
-                break
-        return curve
-
-    def greedy_area(geos):
-        if total_area <= 0: return [0.0]
-        current_union = Polygon()
-        curve = [0.0]
-        import heapq as hq
-        geos_sub = geos[:n_st]
-        pq = [(-geos_sub[i].area, i) for i in range(len(geos_sub))]
-        hq.heapify(pq)
-        for _ in range(len(geos_sub)):
-            if not pq: break
-            _, idx = hq.heappop(pq)
-            try:
-                cand = current_union.union(geos_sub[idx])
-                gain = cand.area - current_union.area
-                if gain / total_area >= 0.005:
-                    current_union = cand
-                    curve.append((current_union.area / total_area) * 100)
-                else:
-                    break
-            except Exception:
-                continue
-        return curve
-
-    with ThreadPoolExecutor() as executor:
-        f_cr = executor.submit(greedy_calls, _resp_matrix[:n_st])
-        f_cg = executor.submit(greedy_calls, _guard_matrix[:n_st])
-        f_ar = executor.submit(greedy_area, _geos_r)
-        f_ag = executor.submit(greedy_area, _geos_g)
-        c_r, c_g, a_r, a_g = f_cr.result(), f_cg.result(), f_ar.result(), f_ag.result()
-
-    max_len = max(len(c_r), len(c_g), len(a_r), len(a_g))
-    def pad(c):
-        r = list(c)
-        while len(r) < max_len: r.append(np.nan)
-        return r
-    return pd.DataFrame({
-        'Drones': range(max_len),
-        'Responder (Calls)': pad(c_r),
-        'Responder (Area)':  pad(a_r),
-        'Guardian (Calls)':  pad(c_g),
-        'Guardian (Area)':   pad(a_g)
-    })
+    df_curve = compute_all_elbow_curves(
+        total_calls, resp_matrix, guard_matrix,
+        [s['clipped_2m'] for s in station_metadata],
+        [s['clipped_guard'] for s in station_metadata],
+        city_m.area if city_m else 1.0, bounds_hash,
+        max_stations=30
+    )
     prog2.empty()
 
     def get_max_drones(col_name):
@@ -1555,109 +1437,39 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
                                     help="Short-range tactical drones (2-3mi radius).")
     k_guardian  = st.sidebar.slider("🦅 Guardian Count",  0, max_g, min(st.session_state.get('k_guard',0), max_g),
                                     help="Long-range heavy-lift drones (up to 8mi radius).")
-    resp_radius_mi = st.sidebar.slider("🚁 Responder Range (mi)", 2.0, 3.0, st.session_state.get('r_resp', 2.0), step=0.5,
-                                       help="Adjust the operational radius for Responder drones.")
-    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (mi)", 1, 8, int(st.session_state.get('r_guard', 8)),
-                                        help="Adjust the operational radius for Guardian drones.")
+    resp_radius_mi  = st.sidebar.slider("🚁 Responder Range (mi)", 2.0, 3.0, st.session_state.get('r_resp', 2.0), step=0.5)
+    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (mi)", 1, 8, int(st.session_state.get('r_guard', 8)))
     st.session_state.update({'k_resp': k_responder, 'k_guard': k_guardian, 'r_resp': resp_radius_mi, 'r_guard': guard_radius_mi})
 
     bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}_{resp_radius_mi}_{guard_radius_mi}"
     calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls = precompute_spatial_data(
         df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash
     )
-@st.cache_resource
-def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash, max_stations=30):
-    n_st = min(_resp_matrix.shape[0], max_stations)
-
-    def greedy_calls(matrix):
-        uncovered = np.ones(n_calls, dtype=bool)
-        curve = [0.0]
-        cov_count = 0
-        import heapq as hq
-        pq = [(-matrix[i].sum(), i) for i in range(n_st)]
-        hq.heapify(pq)
-        for _ in range(n_st):
-            if not pq: break
-            best_s, best_cov = -1, -1
-            while pq:
-                neg_gain, idx = hq.heappop(pq)
-                actual_gain = (matrix[idx] & uncovered).sum()
-                if not pq or actual_gain >= -pq[0][0]:
-                    best_s, best_cov = idx, actual_gain
-                    break
-                else:
-                    hq.heappush(pq, (-actual_gain, idx))
-            if best_s != -1 and best_cov / max(1, n_calls) >= 0.005:
-                uncovered = uncovered & ~matrix[best_s]
-                cov_count += best_cov
-                curve.append((cov_count / max(1, n_calls)) * 100)
-                if cov_count == n_calls: break
-            else:
-                break
-        return curve
-
-    def greedy_area(geos):
-        if total_area <= 0: return [0.0]
-        current_union = Polygon()
-        curve = [0.0]
-        import heapq as hq
-        geos_sub = geos[:n_st]
-        pq = [(-geos_sub[i].area, i) for i in range(len(geos_sub))]
-        hq.heapify(pq)
-        for _ in range(len(geos_sub)):
-            if not pq: break
-            _, idx = hq.heappop(pq)
-            try:
-                cand = current_union.union(geos_sub[idx])
-                gain = cand.area - current_union.area
-                if gain / total_area >= 0.005:
-                    current_union = cand
-                    curve.append((current_union.area / total_area) * 100)
-                else:
-                    break
-            except Exception:
-                continue
-        return curve
-
-    with ThreadPoolExecutor() as executor:
-        f_cr = executor.submit(greedy_calls, _resp_matrix[:n_st])
-        f_cg = executor.submit(greedy_calls, _guard_matrix[:n_st])
-        f_ar = executor.submit(greedy_area, _geos_r)
-        f_ag = executor.submit(greedy_area, _geos_g)
-        c_r, c_g, a_r, a_g = f_cr.result(), f_cg.result(), f_ar.result(), f_ag.result()
-
-    max_len = max(len(c_r), len(c_g), len(a_r), len(a_g))
-    def pad(c):
-        r = list(c)
-        while len(r) < max_len: r.append(np.nan)
-        return r
-    return pd.DataFrame({
-        'Drones': range(max_len),
-        'Responder (Calls)': pad(c_r),
-        'Responder (Area)':  pad(a_r),
-        'Guardian (Calls)':  pad(c_g),
-        'Guardian (Area)':   pad(a_g)
-    })
+    df_curve = compute_all_elbow_curves(
+        total_calls, resp_matrix, guard_matrix,
+        [s['clipped_2m'] for s in station_metadata],
+        [s['clipped_guard'] for s in station_metadata],
+        city_m.area if city_m else 1.0, bounds_hash,
+        max_stations=30
+    )
 
     faa_geojson = load_faa_parquet(minx, miny, maxx, maxy)
     airfields = fetch_airfields(minx, miny, maxx, maxy)
 
-    # ── SECTION 3: BUDGET & EXPORT ────────────────────────────────────
     st.sidebar.markdown('<div class="sidebar-section-header">③ Budget & Export</div>', unsafe_allow_html=True)
 
     inferred_daily = st.session_state.get('inferred_daily_calls_override', max(1, int(total_calls/365)))
-    calls_per_day = st.sidebar.slider("Total Daily Calls (citywide)", 1, max(100, inferred_daily*3), inferred_daily,
-                                       help="Total 911 calls dispatched per day across the entire mapped region.")
+    calls_per_day = st.sidebar.slider("Total Daily Calls (citywide)", 1, max(100, inferred_daily*3), inferred_daily)
 
     st.sidebar.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>DFR Dispatch Rate (%)</div>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>What % of in-range calls will the drone be sent to?</div>", unsafe_allow_html=True)
-    dfr_dispatch_rate = st.sidebar.slider("DFR Dispatch Rate", 1, 100, st.session_state.get('dfr_rate',25), label_visibility="collapsed", help="Percentage of total 911 calls within the drone's radius that warrant a drone response.") / 100.0
+    dfr_dispatch_rate = st.sidebar.slider("DFR Dispatch Rate", 1, 100, st.session_state.get('dfr_rate',25), label_visibility="collapsed") / 100.0
 
     st.sidebar.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>Calls Resolved Without Officer Dispatch (%)</div>", unsafe_allow_html=True)
     st.sidebar.markdown(f"<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>Of drone-attended calls, what % close without a patrol car?</div>", unsafe_allow_html=True)
-    deflection_rate = st.sidebar.slider("Resolution Rate", 0, 100, st.session_state.get('deflect_rate',30), label_visibility="collapsed", help="Percentage of drone responses that eliminate the need for ground units to be dispatched.") / 100.0
+    deflection_rate = st.sidebar.slider("Resolution Rate", 0, 100, st.session_state.get('deflect_rate',30), label_visibility="collapsed") / 100.0
 
-    st.session_state['dfr_rate'] = int(dfr_dispatch_rate * 100)
+    st.session_state['dfr_rate']    = int(dfr_dispatch_rate * 100)
     st.session_state['deflect_rate'] = int(deflection_rate * 100)
 
     # ── OPTIMIZATION ──────────────────────────────────────────────────
@@ -1690,7 +1502,7 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
                 cov_r = resp_matrix[list(r_combo)].any(axis=0) if r_combo else np.zeros(total_calls, bool)
                 cov_g = guard_matrix[list(g_combo)].any(axis=0) if g_combo else np.zeros(total_calls, bool)
                 score_calls = np.logical_or(cov_r, cov_g).sum() if total_calls > 0 else 0
-                score_cent = sum(station_metadata[i]['centrality'] for i in list(r_combo)+list(g_combo))
+                score_cent  = sum(station_metadata[i]['centrality'] for i in list(r_combo)+list(g_combo))
                 return (score_area, score_calls, score_cent, rg_combo)
 
             stage_bar = st.empty()
@@ -1735,7 +1547,7 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
 
         if best_combo is not None:
             r_best, g_best = best_combo
-            active_resp_names = [station_metadata[i]['name'] for i in r_best]
+            active_resp_names  = [station_metadata[i]['name'] for i in r_best]
             active_guard_names = [station_metadata[i]['name'] for i in g_best]
 
     # ── METRICS ───────────────────────────────────────────────────────
@@ -1799,7 +1611,6 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
             annual_savings  = monthly_savings * 12
             break_even_text = f"{fleet_capex / monthly_savings:.1f} MONTHS"
 
-    # ── BUDGET BOX in sidebar ─────────────────────────────────────────
     if fleet_capex > 0:
         st.sidebar.markdown(f"""
         <div style="background:{budget_box_bg}; border:1px solid {budget_box_border}; padding:12px; border-radius:4px;
@@ -1841,12 +1652,12 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         if d_type == 'RESPONDER':
             cov_array = resp_matrix[idx]; cost = CONFIG["RESPONDER_COST"]
             speed_mph = CONFIG["RESPONDER_SPEED"]; avg_dist = station_metadata[idx]['avg_dist_r']
-            radius_m = resp_radius_mi * 1609.34
+            radius_m  = resp_radius_mi * 1609.34
         else:
             cov_array = guard_matrix[idx]; cost = CONFIG["GUARDIAN_COST"]
             speed_mph = CONFIG["GUARDIAN_SPEED"]; avg_dist = station_metadata[idx]['avg_dist_g']
-            radius_m = guard_radius_mi * 1609.34
-        map_color = active_color_map[f"{station_metadata[idx]['name']}_{d_type}"]
+            radius_m  = guard_radius_mi * 1609.34
+        map_color    = active_color_map[f"{station_metadata[idx]['name']}_{d_type}"]
         avg_time_min = (avg_dist / speed_mph) * 60
         d_lat = station_metadata[idx]['lat']; d_lon = station_metadata[idx]['lon']
 
@@ -1861,17 +1672,17 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         }
 
         if total_calls > 0 and cumulative_mask is not None:
-            marginal_mask = cov_array & ~cumulative_mask
+            marginal_mask    = cov_array & ~cumulative_mask
             marginal_historic = np.sum(marginal_mask)
             d['assigned_indices'] = np.where(marginal_mask)[0]
-            cumulative_mask = cumulative_mask | cov_array
+            cumulative_mask  = cumulative_mask | cov_array
             d['marginal_perc'] = marginal_historic / total_calls
-            marginal_daily = calls_per_day * d['marginal_perc']
+            marginal_daily   = calls_per_day * d['marginal_perc']
             d['marginal_flights']   = marginal_daily * dfr_dispatch_rate
             d['marginal_deflected'] = d['marginal_flights'] * deflection_rate
             all_cov = np.vstack([resp_matrix[i] for i in active_resp_idx] + [guard_matrix[i] for i in active_guard_idx]) if (active_resp_idx or active_guard_idx) else np.zeros((1, total_calls), dtype=bool)
             shared_mask = d['cov_array'] & (all_cov.sum(axis=0) > 1)
-            d['shared_flights'] = (np.sum(shared_mask) / total_calls) * calls_per_day * dfr_dispatch_rate
+            d['shared_flights']  = (np.sum(shared_mask) / total_calls) * calls_per_day * dfr_dispatch_rate
             d['monthly_savings'] = (CONFIG["OFFICER_COST_PER_CALL"] - CONFIG["DRONE_COST_PER_CALL"]) * d['marginal_deflected'] * 30.4
             d['annual_savings']  = d['monthly_savings'] * 12
             d['be_text'] = f"{d['cost']/d['monthly_savings']:.1f} MO" if d['monthly_savings'] > 0 else "N/A"
@@ -1885,8 +1696,8 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
     if fleet_capex > 0:
         st.sidebar.markdown("---")
         col_n, col_e = st.sidebar.columns(2)
-        prop_name  = col_n.text_input("Your Name",  value=st.session_state.get('user_name', 'John Doe'), key='user_name', help="This name will appear on your exported proposal.")
-        prop_email = col_e.text_input("Your Email", value=st.session_state.get('user_email', 'john.doe@example.com'), key='user_email', help="This email will appear on your exported proposal.")
+        prop_name  = col_n.text_input("Your Name",  value=st.session_state.get('user_name', 'John Doe'), key='user_name')
+        prop_email = col_e.text_input("Your Email", value=st.session_state.get('user_email', 'john.doe@example.com'), key='user_email')
         st.sidebar.caption("*(Press **Enter** after typing to apply changes to your document)*")
 
         prop_city  = st.session_state.get('active_city', 'City')
@@ -1904,6 +1715,97 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
             "stations_data": json.loads(st.session_state['df_stations'].replace({np.nan:None}).to_json(orient='records')) if st.session_state.get('df_stations') is not None else None,
             "faa_geojson": faa_geojson
         }
+
+        avg_resp_time  = sum(d['avg_time_min'] for d in active_drones)/len(active_drones) if active_drones else 0.0
+        avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level/100)
+        avg_time_saved = ((sum((d['radius_m']/1609.34*1.4/avg_ground_speed)*60 for d in active_drones)/len(active_drones)) - avg_resp_time) if active_drones and avg_ground_speed > 0 else 0.0
+
+        fig_for_export = go.Figure()
+        for d in active_drones:
+            clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
+            fig_for_export.add_trace(go.Scattermapbox(
+                lat=list(clats)+[None,d['lat']], lon=list(clons)+[None,d['lon']],
+                mode='lines+markers', line=dict(color=d['color'], width=3),
+                marker=dict(size=[0]*len(clats)+[0,16], color=d['color']),
+                fill='toself', fillcolor='rgba(0,0,0,0)', name=d['name'][:30]
+            ))
+        fig_for_export.update_layout(
+            mapbox=dict(center=dict(lat=center_lat, lon=center_lon), zoom=dynamic_zoom, style="carto-darkmatter"),
+            margin=dict(l=0,r=0,t=0,b=0), height=500, showlegend=True,
+            legend=dict(bgcolor=legend_bg, font=dict(color=legend_text, size=11))
+        )
+        map_html_str = fig_for_export.to_html(full_html=False, include_plotlyjs='cdn', default_height='500px', default_width='100%')
+        station_rows = "".join(f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>{d['faa_ceiling']}</td><td>${d['cost']:,}</td></tr>" for d in active_drones)
+
+        logo_b64 = get_base64_of_bin_file("logo.png")
+        logo_html_str = f'<img src="data:image/png;base64,{logo_b64}" style="height:40px;">' if logo_b64 else '<div style="font-size:28px;font-weight:900;letter-spacing:3px;color:#111;">BRINC</div>'
+
+        export_html = f"""<html><head><title>BRINC DFR Proposal — {prop_city}</title>
+        <style>
+        body{{font-family:'Helvetica Neue',Arial,sans-serif;color:#333;margin:0;padding:40px;background:#f4f6f9;}}
+        .page{{max-width:1000px;margin:0 auto;background:#fff;padding:50px;border-radius:8px;box-shadow:0 4px 15px rgba(0,0,0,0.05);}}
+        .header{{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #00D2FF;padding-bottom:15px;margin-bottom:30px;}}
+        h1{{color:#000;margin:0;font-size:24px;}} h2{{color:#444;margin-top:30px;font-size:18px;border-bottom:1px solid #ddd;padding-bottom:5px;}}
+        table{{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}}
+        th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid #ddd;}}
+        th{{background:#f1f1f1;font-size:12px;text-transform:uppercase;color:#555;}}
+        .map-container{{border:1px solid #ddd;border-radius:8px;overflow:hidden;margin-top:10px;}}
+        .footer{{margin-top:40px;padding-top:20px;border-top:2px solid #eee;text-align:center;font-size:13px;color:#555;line-height:1.6;}}
+        .footer a{{color:#00D2FF;text-decoration:none;font-weight:bold;}}
+        .kpi-grid{{display:flex;gap:20px;margin-bottom:30px;}}
+        .kpi-box{{flex:1;border:1px solid #eaeaea;border-radius:8px;padding:20px;background:#fafafa;}}
+        .kpi-box h2{{margin-top:0;}}
+        .kpi-val{{font-size:22px;font-weight:bold;color:#00D2FF;}}
+        .kpi-lbl{{font-size:11px;font-weight:bold;color:#888;text-transform:uppercase;}}
+        .disclaimer{{background:#fff3cd;border-left:4px solid #ffeeba;padding:12px;margin-bottom:16px;font-size:12px;color:#856404;}}
+        </style></head><body><div class="page">
+        <div class="header"><div>{logo_html_str}</div>
+        <div style="text-align:right;"><h1>DFR Deployment Proposal</h1>
+        <div style="font-size:14px;color:#666;margin-top:5px;">For: {prop_city}, {prop_state} | Pop: {pop_metric:,}</div>
+        <div style="font-size:14px;color:#666;margin-top:3px;">By: {prop_name} | {prop_email}</div></div></div>
+        <div class="kpi-grid">
+        <div class="kpi-box"><h2>Financial</h2>
+          <div class="kpi-lbl">Fleet CapEx</div><div class="kpi-val">${fleet_capex:,.0f}</div>
+          <div class="kpi-lbl" style="margin-top:12px;">Annual Savings Capacity</div><div class="kpi-val">${annual_savings:,.0f}</div>
+          <div class="kpi-lbl" style="margin-top:12px;">Break-Even</div><div class="kpi-val">{break_even_text}</div>
+        </div>
+        <div class="kpi-box"><h2>Operational</h2>
+          <div class="kpi-lbl">911 Call Coverage</div><div class="kpi-val">{calls_covered_perc:.1f}%</div>
+          <div class="kpi-lbl" style="margin-top:12px;">Avg Response Time</div><div class="kpi-val">{avg_resp_time:.1f} min</div>
+          <div class="kpi-lbl" style="margin-top:12px;">Time Saved vs Patrol</div><div class="kpi-val">{avg_time_saved:.1f} min</div>
+        </div></div>
+        <h2>Proposed Fleet</h2>
+        <table><tr><th>Type</th><th>Qty</th><th>Range</th><th>Unit Cost</th></tr>
+        <tr><td>BRINC Responder</td><td>{actual_k_responder}</td><td>{resp_radius_mi} mi</td><td>${CONFIG['RESPONDER_COST']:,}</td></tr>
+        <tr><td>BRINC Guardian</td><td>{actual_k_guardian}</td><td>{guard_radius_mi} mi</td><td>${CONFIG['GUARDIAN_COST']:,}</td></tr></table>
+        <h2>Coverage Map</h2>
+        <div class="map-container">{map_html_str}</div>
+        <h2>Deployment Locations</h2>
+        <table><tr><th>Station</th><th>Type</th><th>Avg Response</th><th>FAA Ceiling</th><th>CapEx</th></tr>{station_rows}</table>
+        <h2>Grant Narrative (AI Draft)</h2>
+        <div class="disclaimer"><strong>DISCLAIMER:</strong> AI-generated draft. Must be reviewed and fact-checked before submission.</div>
+        <p><strong>Project Title:</strong> BRINC DRONES DFR Program for {prop_city}</p>
+        <p><strong>Need:</strong> {prop_city} respectfully requests DOJ Byrne JAG funding to deploy {actual_k_responder+actual_k_guardian} BRINC DRONES systems covering {calls_covered_perc:.1f}% of {st.session_state.get('total_original_calls',total_calls):,} annual incidents for a population of {pop_metric:,}.</p>
+        <p><strong>Design:</strong> {actual_k_responder} Responder and {actual_k_guardian} Guardian drones will achieve {avg_resp_time:.1f}-minute average response — {avg_time_saved:.1f} minutes faster than vehicular patrol — with all sites pre-cleared against FAA LAANC facility maps.</p>
+        <p><strong>ROI:</strong> A ${fleet_capex:,.0f} investment yields ${annual_savings:,.0f} annual capacity value by deflecting {daily_drone_only_calls:.1f} dispatches/day, breaking even in {break_even_text.lower()}.</p>
+        <p><strong>Potential Grant Funding Sources:</strong>
+          <a href="https://bja.ojp.gov/program/jag/overview" target="_blank">DOJ Byrne JAG</a> •
+          <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank">FEMA HSGP</a>
+        </p>
+        <div class="footer">
+          <div style="font-size:20px;font-weight:900;letter-spacing:2px;color:#111;margin-bottom:4px;">BRINC</div>
+          <div style="font-weight:bold;margin-bottom:4px;">BRINC Drones, Inc.</div>
+          <div style="margin-bottom:8px;">Leading the world in purpose-built Drone as a First Responder technology.</div>
+          <div style="margin-bottom:8px;font-weight:bold;">Prepared by: {prop_name} | <a href="mailto:{prop_email}">{prop_email}</a></div>
+          <div style="margin-bottom:8px;">
+            <a href="https://brincdrones.com" target="_blank">brincdrones.com</a> | <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> | +1 (855) 950-0226
+          </div>
+          <div>
+            <a href="https://www.linkedin.com/company/brincdrones" target="_blank">LinkedIn</a> •
+            <a href="https://twitter.com/brincdrones" target="_blank">Twitter / X</a> •
+            <a href="https://www.youtube.com/c/brincdrones" target="_blank">YouTube</a>
+          </div>
+        </div></div></body></html>"""
 
         if st.sidebar.download_button("💾 Save Deployment Plan", data=json.dumps(export_dict),
                                       file_name=f"Brinc_{safe_city}_{current_time_str}.brinc",
@@ -1936,8 +1838,6 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
                                "KML", k_responder, k_guardian, calls_covered_perc,
                                st.session_state.get('user_name',''), st.session_state.get('user_email',''))
 
-
-    # Grant eligibility
     pop_metric = st.session_state.get('estimated_pop', 250000)
     grant_bracket = estimate_grants(pop_metric)
     st.sidebar.markdown(f"""
@@ -1951,10 +1851,8 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
     </div>
     """, unsafe_allow_html=True)
 
-    # ── MAIN CONTENT ──────────────────────────────────────────────────
     st.markdown("---")
 
-    # Health score
     if show_health:
         norm_redundancy = min(overlap_perc/35.0, 1.0)*100
         health_score = (calls_covered_perc*0.50) + (area_covered_perc*0.35) + (norm_redundancy*0.15)
@@ -1966,10 +1864,9 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
             <span style="font-size:1.2em; background:rgba(128,128,128,0.15); padding:2px 10px; border-radius:4px;">{h_label}</span>
             </div>""", unsafe_allow_html=True)
 
-    # KPI bar
     if simulate_traffic:
         avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level/100)
-        eval_dist = guard_radius_mi if active_guard_names else resp_radius_mi
+        eval_dist  = guard_radius_mi if active_guard_names else resp_radius_mi
         eval_speed = CONFIG["GUARDIAN_SPEED"] if active_guard_names else CONFIG["RESPONDER_SPEED"]
         if (active_resp_names or active_guard_names) and avg_ground_speed > 0:
             time_saved = ((eval_dist*1.4/avg_ground_speed) - (eval_dist/eval_speed)) * 60
@@ -1988,12 +1885,10 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
     """
     if gain_val is not None:
         kpi_html += f"""<div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Time Saved ({eval_dist:.0f}mi)</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{gain_val}</div></div>"""
-    
     kpi_html += "</div>"
     st.markdown(kpi_html, unsafe_allow_html=True)
     st.markdown(f"<div style='font-size:0.65rem;color:gray;margin-top:-12px;margin-bottom:12px;text-align:center;'>(Optimized via {total_calls:,} representative sample)</div>", unsafe_allow_html=True)
 
-    # ── MAP + STATS COLUMNS ───────────────────────────────────────────
     map_col, stats_col = st.columns([4.2, 1.8])
 
     with map_col:
@@ -2110,19 +2005,19 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
                     for j in range(2):
                         if i + j < len(active_drones):
                             d = active_drones[i + j]
-                            short_name = format_3_lines(d['name'])
-                            d_color = d['color']
-                            d_type = d['type']
-                            d_step = d['deploy_step']
-                            d_savings = d['annual_savings']
-                            d_flights = d['marginal_flights']
-                            d_shared = d['shared_flights']
+                            short_name  = format_3_lines(d['name'])
+                            d_color     = d['color']
+                            d_type      = d['type']
+                            d_step      = d['deploy_step']
+                            d_savings   = d['annual_savings']
+                            d_flights   = d['marginal_flights']
+                            d_shared    = d['shared_flights']
                             d_deflected = d['marginal_deflected']
-                            d_time = d['avg_time_min']
-                            d_faa = d['faa_ceiling']
-                            d_airport = d['nearest_airport']
-                            d_cost = d['cost']
-                            d_be = d['be_text']
+                            d_time      = d['avg_time_min']
+                            d_faa       = d['faa_ceiling']
+                            d_airport   = d['nearest_airport']
+                            d_cost      = d['cost']
+                            d_be        = d['be_text']
                             cols[j].markdown(f"""
 <div style="background:{card_bg}; border-top:4px solid {d_color};
      border-left:1px solid {card_border}; border-right:1px solid {card_border};
@@ -2164,7 +2059,7 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         st.markdown(f"<h3 style='color:{text_main};'>🚁 3D Swarm Simulation</h3>", unsafe_allow_html=True)
         st.markdown(f"<div style='font-size:0.82rem; color:{text_muted}; margin-bottom:10px;'>Animated deck.gl simulation of all DFR flights over a compressed 24-hour day. Use the speed slider to accelerate or slow the simulation. Great for council presentations.</div>", unsafe_allow_html=True)
 
-        show_sim = st.toggle("🎬 Enable 3D Simulation", value=False, help="Launch a dynamic 3D rendering of daily drone flights.")
+        show_sim = st.toggle("🎬 Enable 3D Simulation", value=False)
         if show_sim:
             calls_coords = np.column_stack((calls_in_city['lon'], calls_in_city['lat']))
             sim_assignments = {i:[] for i in range(len(active_drones))}
