@@ -383,7 +383,7 @@ def fetch_census_population(state_fips, place_name):
     url = f"https://api.census.gov/data/2020/dec/pl?get=P1_001N,NAME&for=place:*&in=state:{state_fips}"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             data = json.loads(response.read().decode('utf-8'))
             search_name = place_name.lower().strip()
             for row in data[1:]:
@@ -398,7 +398,7 @@ def fetch_census_population(state_fips, place_name):
 def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
     url = f"https://www2.census.gov/geo/tiger/TIGER2023/PLACE/tl_2023_{state_fips}_place.zip"
     try:
-        req = urllib.request.urlopen(url)
+        req = urllib.request.urlopen(url, timeout=20)
         zip_file = zipfile.ZipFile(io.BytesIO(req.read()))
         temp_dir = os.path.join(output_dir, f"temp_tiger_{state_fips}")
         os.makedirs(temp_dir, exist_ok=True)
@@ -820,7 +820,8 @@ def solve_mclp(resp_matrix, guard_matrix, dist_r, dist_g, num_resp, num_guard, a
 
 @st.cache_resource
 def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash, max_stations=30):
-    n_st = min(_resp_matrix.shape[0], max_stations)
+    n_st_calls = min(_resp_matrix.shape[0], max_stations)
+    n_st_area  = min(_resp_matrix.shape[0], max_stations * 2)
 
     def greedy_calls(matrix):
         uncovered = np.ones(n_calls, dtype=bool)
@@ -854,7 +855,7 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         current_union = Polygon()
         curve = [0.0]
         import heapq as hq
-        geos_sub = geos[:n_st]
+        geos_sub = geos[:n_st_area]
         pq = [(-geos_sub[i].area, i) for i in range(len(geos_sub))]
         hq.heapify(pq)
         for _ in range(len(geos_sub)):
@@ -863,18 +864,16 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
             try:
                 cand = current_union.union(geos_sub[idx])
                 gain = cand.area - current_union.area
-                if gain / total_area >= 0.0001:
+                if gain > 0:
                     current_union = cand
                     curve.append((current_union.area / total_area) * 100)
-                else:
-                    continue
             except Exception:
                 continue
         return curve
 
     with ThreadPoolExecutor() as executor:
-        f_cr = executor.submit(greedy_calls, _resp_matrix[:n_st])
-        f_cg = executor.submit(greedy_calls, _guard_matrix[:n_st])
+        f_cr = executor.submit(greedy_calls, _resp_matrix[:n_st_calls])
+        f_cg = executor.submit(greedy_calls, _guard_matrix[:n_st_calls])
         f_ar = executor.submit(greedy_area, _geos_r)
         f_ag = executor.submit(greedy_area, _geos_g)
         c_r, c_g, a_r, a_g = f_cr.result(), f_cg.result(), f_ar.result(), f_ag.result()
@@ -1296,7 +1295,17 @@ if not st.session_state['csvs_ready']:
                     total_estimated_pop += est
                     st.toast(f"⚠️ {c_name} population estimated: {est:,}")
             else:
-                st.warning(f"⚠️ Could not find a boundary for {c_name}, {s_name}. Skipping.")
+                st.warning(f"⚠️ Could not find a boundary for {c_name}, {s_name}. Try another city.")
+                if st.session_state.get('_last_demo_city') == c_name:
+                    random.seed(datetime.datetime.now().microsecond + os.getpid())
+                    candidates = [c for c in DEMO_CITIES if c[0] != c_name]
+                    rcity, rstate = random.choice(candidates)
+                    st.session_state['_last_demo_city'] = rcity
+                    st.session_state['target_cities'] = [{"city": rcity, "state": rstate}]
+                    for i in range(10):
+                        st.session_state.pop(f"c_{i}", None)
+                        st.session_state.pop(f"s_{i}", None)
+                    st.rerun()
 
         if not all_gdfs:
             prog.empty()
