@@ -862,25 +862,47 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         return curve
 
     def greedy_area(geos):
-        if total_area <= 0: return [0.0]
-        current_union = Polygon()
-        curve = [0.0]
-        import heapq as hq
-        geos_sub = geos[:n_st_area]
-        pq = [(-geos_sub[i].area, i) for i in range(len(geos_sub))]
-        hq.heapify(pq)
-        for _ in range(len(geos_sub)):
-            if not pq: break
-            _, idx = hq.heappop(pq)
-            try:
-                cand = current_union.union(geos_sub[idx])
-                gain = cand.area - current_union.area
-                if gain > 0:
-                    current_union = cand
-                    curve.append((current_union.area / total_area) * 100)
-            except Exception:
+    if total_area <= 0:
+        return [0.0]
+
+    current_union = Polygon()
+    curve = [0.0]
+
+    used = set()
+
+    for _ in range(len(geos)):
+        best_gain = 0
+        best_idx = None
+        best_union = None
+
+        for i, g in enumerate(geos):
+            if i in used:
                 continue
-        return curve
+            try:
+                candidate = current_union.union(g)
+                gain = candidate.area - current_union.area
+                if gain > best_gain:
+                    best_gain = gain
+                    best_idx = i
+                    best_union = candidate
+            except:
+                continue
+
+        # 🔑 Stop ONLY if literally no gain
+        if best_idx is None or best_gain <= 0:
+            break
+
+        used.add(best_idx)
+        current_union = best_union
+
+        coverage_pct = (current_union.area / total_area) * 100
+        curve.append(coverage_pct)
+
+        # 🔑 Allow near-100 completion
+        if coverage_pct >= 99.5:
+            break
+
+    return curve
 
     with ThreadPoolExecutor() as executor:
         f_cr = executor.submit(greedy_calls, _resp_matrix[:n_st_calls])
