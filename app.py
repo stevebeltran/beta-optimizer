@@ -860,8 +860,7 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
             else:
                 break
         return curve
-
-    def greedy_area(geos):
+def greedy_area(geos):
     if total_area <= 0:
         return [0.0]
 
@@ -888,7 +887,7 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
             except:
                 continue
 
-        # 🔑 Stop ONLY if literally no gain
+        # Stop ONLY if no additional gain
         if best_idx is None or best_gain <= 0:
             break
 
@@ -898,11 +897,12 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         coverage_pct = (current_union.area / total_area) * 100
         curve.append(coverage_pct)
 
-        # 🔑 Allow near-100 completion
+        # Push toward full land coverage
         if coverage_pct >= 99.5:
             break
 
     return curve
+    
 
     with ThreadPoolExecutor() as executor:
         f_cr = executor.submit(greedy_calls, _resp_matrix[:n_st_calls])
