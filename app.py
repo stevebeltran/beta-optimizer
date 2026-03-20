@@ -2134,16 +2134,16 @@ if st.session_state['csvs_ready']:
                 stations_json.append({"name":d['name'].split(',')[0][:30],"lon":d['lon'],"lat":d['lat'],"color":rgb,"radius":d['radius_m']})
                 legend_html_sim += f'<div style="margin-bottom:3px;"><span style="display:inline-block;width:9px;height:9px;background:{d["color"]};margin-right:7px;border-radius:50%;"></span>{d["name"].split(",")[0][:28]} ({d["type"][:3]})</div>'
                 frac = len(sim_assignments[d_idx])/len(calls_coords) if calls_coords.shape[0]>0 else 0
-                daily_for_drone = int(frac * calls_per_day * dfr_dispatch_rate)
+                monthly_for_drone = int(frac * calls_per_day * 30 * dfr_dispatch_rate)
                 pool = sim_assignments[d_idx]
-                sim_calls = random.choices(pool, k=daily_for_drone) if daily_for_drone > len(pool) else random.sample(pool, min(daily_for_drone, len(pool)))
+                sim_calls = random.choices(pool, k=monthly_for_drone) if monthly_for_drone > len(pool) else random.sample(pool, min(monthly_for_drone, len(pool)))
                 total_sim_flights += len(sim_calls)
                 for ci in sim_calls:
                     lon1,lat1 = calls_coords[ci]
                     lon0,lat0 = d['lon'],d['lat']
                     dist_mi = math.sqrt((lon1-lon0)**2+(lat1-lat0)**2)*69.172
                     vis_time = max((dist_mi/d['speed_mph'])*3600*8, 240)
-                    launch = random.randint(0,86400)
+                    launch = random.randint(0, 2592000)
                     arc_h = min(max(dist_mi*90, 80), 400)
                     t0 = launch
                     t1 = launch + vis_time * 0.15
@@ -2193,7 +2193,7 @@ if st.session_state['csvs_ready']:
               <h3 style="margin:0 0 8px;color:#00D2FF;font-size:14px;">DFR SWARM SIMULATION</h3>
               {warn_html_sim}
               <div style="font-size:11px;color:#aaa;margin-bottom:10px;">
-                {total_sim_flights:,} flights over 24h at {int(dfr_dispatch_rate*100)}% dispatch rate
+                {total_sim_flights:,} flights over 30 days at {int(dfr_dispatch_rate*100)}% dispatch rate
               </div>
               <div style="margin-bottom:10px;">
                 <label style="font-size:11px;color:#ccc;">Speed: <span id="speedLabel">1</span>x</label>
@@ -2243,12 +2243,18 @@ if st.session_state['csvs_ready']:
                 document.getElementById('timeDisplay').innerText=`${{h}}:${{m}}`;
               }}
               const animate=()=>{{
+                let day=Math.floor(time/86400)+1;
+                let h=Math.floor((time%86400)/3600).toString().padStart(2,'0');
+                let m=Math.floor((time%3600)/60).toString().padStart(2,'0');
+                document.getElementById('timeDisplay').innerText=`Day ${{day}} · ${{h}}:${{m}}`;
+              }}
+              const animate=()=>{{
                 let now=performance.now();
                 let dt=Math.min(now-lastTime,100);
                 lastTime=now;
-                time+=dt/1000*1440*parseFloat(speedSlider.value);
+                time+=dt/1000*43200*parseFloat(speedSlider.value);
                 render();
-                if(time<86400){{timer=requestAnimationFrame(animate);}}
+                if(time<2592000){{timer=requestAnimationFrame(animate);}}
                 else{{
                   document.getElementById('runBtn').disabled=false;
                   document.getElementById('runBtn').innerText='↺ RESTART';
