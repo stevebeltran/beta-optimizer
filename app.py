@@ -24,7 +24,98 @@ import io
 import datetime
 import base64
 import streamlit.components.v1 as components
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import gspread
+from google.oauth2.service_account import Credentials
 
+def _notify_email(city, state, file_type, k_resp, k_guard, coverage, name, email):
+    try:
+        gmail_address  = st.secrets.get("GMAIL_ADDRESS", "")
+        app_password   = st.secrets.get("GMAIL_APP_PASSWORD", "")
+        notify_address = st.secrets.get("NOTIFY_EMAIL", gmail_address)
+        if not gmail_address or not app_password:
+            return
+        emoji = {"HTML": "📄", "KML": "🌏", "BRINC": "💾"}.get(file_type, "📥")
+        subject = f"{emoji} BRINC Download — {file_type} — {city}, {state}"
+        body = f"""
+        <html><body style="font-family:Arial,sans-serif;color:#333;padding:20px;">
+        <div style="max-width:500px;margin:0 auto;border:1px solid #ddd;border-radius:8px;overflow:hidden;">
+            <div style="background:#000;padding:16px 20px;border-bottom:3px solid #00D2FF;">
+                <span style="color:#00D2FF;font-size:18px;font-weight:900;letter-spacing:2px;">BRINC</span>
+                <span style="color:#888;font-size:12px;margin-left:8px;">Download Notification</span>
+            </div>
+            <div style="padding:20px;">
+                <table style="width:100%;border-collapse:collapse;font-size:14px;">
+                    <tr style="border-bottom:1px solid #f0f0f0;">
+                        <td style="padding:8px 4px;color:#888;width:40%;">File Type</td>
+                        <td style="padding:8px 4px;font-weight:bold;">{emoji} {file_type}</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #f0f0f0;">
+                        <td style="padding:8px 4px;color:#888;">City</td>
+                        <td style="padding:8px 4px;font-weight:bold;">{city}, {state}</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #f0f0f0;">
+                        <td style="padding:8px 4px;color:#888;">Fleet</td>
+                        <td style="padding:8px 4px;">{k_resp} Responder · {k_guard} Guardian</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #f0f0f0;">
+                        <td style="padding:8px 4px;color:#888;">Call Coverage</td>
+                        <td style="padding:8px 4px;">{coverage:.1f}%</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #f0f0f0;">
+                        <td style="padding:8px 4px;color:#888;">User Name</td>
+                        <td style="padding:8px 4px;">{name if name else '—'}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:8px 4px;color:#888;">User Email</td>
+                        <td style="padding:8px 4px;">
+                            {f'<a href="mailto:{email}">{email}</a>' if email else '—'}
+                        </td>
+                    </tr>
+                </table>
+                <div style="margin-top:16px;font-size:11px;color:#bbb;">
+                    {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC
+                </div>
+            </div>
+        </div>
+        </body></html>
+        """
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = gmail_address
+        msg["To"]      = notify_address
+        msg.attach(MIMEText(body, "html"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=8) as server:
+            server.login(gmail_address, app_password)
+            server.sendmail(gmail_address, notify_address, msg.as_string())
+    except Exception:
+        pass
+
+
+def _log_to_sheets(city, state, file_type, k_resp, k_guard, coverage, name, email):
+    try:
+        sheet_id  = st.secrets.get("GOOGLE_SHEET_ID", "")
+        creds_dict = st.secrets.get("gcp_service_account", {})
+        if not sheet_id or not creds_dict:
+            return
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds  = Credentials.from_service_account_info(dict(creds_dict), scopes=scopes)
+        client = gspread.authorize(creds)
+        sheet  = client.open_by_key(sheet_id).sheet1
+        sheet.append_row([
+            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            city, state, file_type,
+            k_resp, k_guard,
+            round(coverage, 1),
+            name, email
+        ])
+    except Exception:
+        pass
 # --- GLOBAL CONFIGURATION ---
 CONFIG = {
     "RESPONDER_COST": 80000,
@@ -1678,111 +1769,46 @@ if st.session_state['csvs_ready']:
             "faa_geojson": faa_geojson
         }
 
-        st.sidebar.download_button("💾 Save Deployment Plan", data=json.dumps(export_dict),
-                                   file_name=f"Brinc_{safe_city}_{current_time_str}.brinc",
-                                   mime="application/json", use_container_width=True)
+        if st.sidebar.download_button("💾 Save Deployment Plan", data=json.dumps(export_dict),
+                                      file_name=f"Brinc_{safe_city}_{current_time_str}.brinc",
+                                      mime="application/json", use_container_width=True):
+            _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                          "BRINC", k_responder, k_guardian, calls_covered_perc,
+                          st.session_state.get('user_name',''), st.session_state.get('user_email',''))
+            _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                           "BRINC", k_responder, k_guardian, calls_covered_perc,
+                           st.session_state.get('user_name',''), st.session_state.get('user_email',''))
 
-        avg_resp_time = sum(d['avg_time_min'] for d in active_drones)/len(active_drones) if active_drones else 0.0
-        avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level/100)
-        avg_time_saved = ((sum((d['radius_m']/1609.34*1.4/avg_ground_speed)*60 for d in active_drones)/len(active_drones)) - avg_resp_time) if active_drones and avg_ground_speed > 0 else 0.0
-
-        # Build export HTML
-        fig_for_export = go.Figure()  
-        for d in active_drones:
-            clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
-            fig_for_export.add_trace(go.Scattermapbox(
-                lat=list(clats)+[None,d['lat']], lon=list(clons)+[None,d['lon']],
-                mode='lines+markers', line=dict(color=d['color'], width=3),
-                marker=dict(size=[0]*len(clats)+[0,16], color=d['color']),
-                fill='toself', fillcolor='rgba(0,0,0,0)', name=d['name'][:30]
-            ))
-        fig_for_export.update_layout(
-            mapbox=dict(center=dict(lat=center_lat, lon=center_lon), zoom=dynamic_zoom, style="carto-darkmatter"),
-            margin=dict(l=0,r=0,t=0,b=0), height=500, showlegend=True,
-            legend=dict(bgcolor=legend_bg, font=dict(color=legend_text, size=11))
-        )
-        map_html_str = fig_for_export.to_html(full_html=False, include_plotlyjs='cdn', default_height='500px', default_width='100%')
-        station_rows = "".join(f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>{d['faa_ceiling']}</td><td>${d['cost']:,}</td></tr>" for d in active_drones)
-
-        logo_b64 = get_base64_of_bin_file("logo.png")
-        logo_html_str = f'<img src="data:image/png;base64,{logo_b64}" style="height:40px;">' if logo_b64 else '<div style="font-size:28px;font-weight:900;letter-spacing:3px;color:#111;">BRINC</div>'
-
-        export_html = f"""<html><head><title>BRINC DFR Proposal — {prop_city}</title>
-        <style>
-        body{{font-family:'Helvetica Neue',Arial,sans-serif;color:#333;margin:0;padding:40px;background:#f4f6f9;}}
-        .page{{max-width:1000px;margin:0 auto;background:#fff;padding:50px;border-radius:8px;box-shadow:0 4px 15px rgba(0,0,0,0.05);}}
-        .header{{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #00D2FF;padding-bottom:15px;margin-bottom:30px;}}
-        h1{{color:#000;margin:0;font-size:24px;}} h2{{color:#444;margin-top:30px;font-size:18px;border-bottom:1px solid #ddd;padding-bottom:5px;}}
-        table{{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}}
-        th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid #ddd;}}
-        th{{background:#f1f1f1;font-size:12px;text-transform:uppercase;color:#555;}}
-        .map-container{{border:1px solid #ddd;border-radius:8px;overflow:hidden;margin-top:10px;}}
-        .footer{{margin-top:40px;padding-top:20px;border-top:2px solid #eee;text-align:center;font-size:13px;color:#555; line-height:1.6;}}
-        .footer a{{color:#00D2FF;text-decoration:none;font-weight:bold;}}
-        .kpi-grid{{display:flex;gap:20px;margin-bottom:30px;}}
-        .kpi-box{{flex:1;border:1px solid #eaeaea;border-radius:8px;padding:20px;background:#fafafa;}}
-        .kpi-box h2{{margin-top:0;}}
-        .kpi-val{{font-size:22px;font-weight:bold;color:#00D2FF;}}
-        .kpi-lbl{{font-size:11px;font-weight:bold;color:#888;text-transform:uppercase;}}
-        .disclaimer{{background:#fff3cd;border-left:4px solid #ffeeba;padding:12px;margin-bottom:16px;font-size:12px;color:#856404;}}
-        </style></head><body><div class="page">
-        <div class="header"><div>{logo_html_str}</div>
-        <div style="text-align:right;"><h1>DFR Deployment Proposal</h1>
-        <div style="font-size:14px;color:#666;margin-top:5px;">For: {prop_city}, {prop_state} | Pop: {pop_metric:,}</div>
-        <div style="font-size:14px;color:#666;margin-top:3px;">By: {prop_name} | {prop_email}</div></div></div>
-        <div class="kpi-grid">
-        <div class="kpi-box"><h2>Financial</h2>
-          <div class="kpi-lbl">Fleet CapEx</div><div class="kpi-val">${fleet_capex:,.0f}</div>
-          <div class="kpi-lbl" style="margin-top:12px;">Annual Savings Capacity</div><div class="kpi-val">${annual_savings:,.0f}</div>
-          <div class="kpi-lbl" style="margin-top:12px;">Break-Even</div><div class="kpi-val">{break_even_text}</div>
-        </div>
-        <div class="kpi-box"><h2>Operational</h2>
-          <div class="kpi-lbl">911 Call Coverage</div><div class="kpi-val">{calls_covered_perc:.1f}%</div>
-          <div class="kpi-lbl" style="margin-top:12px;">Avg Response Time</div><div class="kpi-val">{avg_resp_time:.1f} min</div>
-          <div class="kpi-lbl" style="margin-top:12px;">Time Saved vs Patrol</div><div class="kpi-val">{avg_time_saved:.1f} min</div>
-        </div></div>
-        <h2>Proposed Fleet</h2>
-        <table><tr><th>Type</th><th>Qty</th><th>Range</th><th>Unit Cost</th></tr>
-        <tr><td>BRINC Responder</td><td>{actual_k_responder}</td><td>{resp_radius_mi} mi</td><td>${CONFIG['RESPONDER_COST']:,}</td></tr>
-        <tr><td>BRINC Guardian</td><td>{actual_k_guardian}</td><td>{guard_radius_mi} mi</td><td>${CONFIG['GUARDIAN_COST']:,}</td></tr></table>
-        <h2>Coverage Map</h2>
-        <div class="map-container">{map_html_str}</div>
-        <h2>Deployment Locations</h2>
-        <table><tr><th>Station</th><th>Type</th><th>Avg Response</th><th>FAA Ceiling</th><th>CapEx</th></tr>{station_rows}</table>
-        <h2>Grant Narrative (AI Draft)</h2>
-        <div class="disclaimer"><strong>DISCLAIMER:</strong> AI-generated draft. Must be reviewed and fact-checked before submission.</div>
-        <p><strong>Project Title:</strong> BRINC DRONES DFR Program for {prop_city}</p>
-        <p><strong>Need:</strong> {prop_city} respectfully requests DOJ Byrne JAG funding to deploy {actual_k_responder+actual_k_guardian} BRINC DRONES systems covering {calls_covered_perc:.1f}% of {st.session_state.get('total_original_calls',total_calls):,} annual incidents for a population of {pop_metric:,}.</p>
-        <p><strong>Design:</strong> {actual_k_responder} Responder and {actual_k_guardian} Guardian drones will achieve {avg_resp_time:.1f}-minute average response — {avg_time_saved:.1f} minutes faster than vehicular patrol — with all sites pre-cleared against FAA LAANC facility maps.</p>
-        <p><strong>ROI:</strong> A ${fleet_capex:,.0f} investment yields ${annual_savings:,.0f} annual capacity value by deflecting {daily_drone_only_calls:.1f} dispatches/day, breaking even in {break_even_text.lower()}.</p>
-        <p><strong>Potential Grant Funding Sources:</strong> 
-          <a href="https://bja.ojp.gov/program/jag/overview" target="_blank">DOJ Byrne JAG</a> • 
-          <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank">FEMA HSGP</a>
-        </p>
-        <div class="footer">
-          <div style="font-size:20px;font-weight:900;letter-spacing:2px;color:#111;margin-bottom:4px;">BRINC</div>
-          <div style="font-weight:bold;margin-bottom:4px;">BRINC Drones, Inc.</div>
-          <div style="margin-bottom:8px;">Leading the world in purpose-built Drone as a First Responder technology.</div>
-          <div style="margin-bottom:8px;font-weight:bold;">Prepared by: {prop_name} | <a href="mailto:{prop_email}">{prop_email}</a></div>
-          <div style="margin-bottom:8px;">
-            <a href="https://brincdrones.com" target="_blank">brincdrones.com</a> | <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> | +1 (855) 950-0226
-          </div>
-          <div>
-            <a href="https://www.linkedin.com/company/brincdrones" target="_blank">LinkedIn</a> • 
-            <a href="https://twitter.com/brincdrones" target="_blank">Twitter / X</a> • 
-            <a href="https://www.youtube.com/c/brincdrones" target="_blank">YouTube</a>
-          </div>
-        </div></div></body></html>"""
-
-        st.sidebar.download_button("📄 Executive Summary (HTML)", data=export_html,
-                                   file_name=f"Brinc_{safe_city}_Proposal_{current_time_str}.html",
-                                   mime="text/html", use_container_width=True)
+        if st.sidebar.download_button("📄 Executive Summary (HTML)", data=export_html,
+                                      file_name=f"Brinc_{safe_city}_Proposal_{current_time_str}.html",
+                                      mime="text/html", use_container_width=True):
+            _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                          "HTML", k_responder, k_guardian, calls_covered_perc,
+                          st.session_state.get('user_name',''), st.session_state.get('user_email',''))
+            _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                           "HTML", k_responder, k_guardian, calls_covered_perc,
+                           st.session_state.get('user_name',''), st.session_state.get('user_email',''))
 
         if active_drones:
-            st.sidebar.download_button("🌏 Google Earth Briefing File", data=generate_kml(active_gdf, active_drones, calls_in_city),
-                                       file_name="drone_deployment.kml", mime="application/vnd.google-earth.kml+xml",
-                                       use_container_width=True)
+            if st.sidebar.download_button("🌏 Google Earth Briefing File", data=generate_kml(active_gdf, active_drones, calls_in_city),
+                                          file_name="drone_deployment.kml", mime="application/vnd.google-earth.kml+xml",
+                                          use_container_width=True):
+                _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                              "KML", k_responder, k_guardian, calls_covered_perc,
+                              st.session_state.get('user_name',''), st.session_state.get('user_email',''))
+                _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                               "KML", k_responder, k_guardian, calls_covered_perc,
+                               st.session_state.get('user_name',''), st.session_state.get('user_email',''))
+```
 
+---
+
+## Change 3 — requirements.txt
+
+Add these two lines:
+```
+gspread
+google-auth
     # Grant eligibility
     pop_metric = st.session_state.get('estimated_pop', 250000)
     grant_bracket = estimate_grants(pop_metric)
