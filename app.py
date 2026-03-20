@@ -811,14 +811,14 @@ def solve_mclp(resp_matrix, guard_matrix, dist_r, dist_g, num_resp, num_guard, a
 
 @st.cache_resource
 def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash, max_stations=30):
-    n_st = _resp_matrix.shape[0]
+    n_st = min(_resp_matrix.shape[0], max_stations)
 
     def greedy_calls(matrix):
         uncovered = np.ones(n_calls, dtype=bool)
         curve = [0.0]
         cov_count = 0
-        pq = [(-matrix[i].sum(), i) for i in range(n_st)]
         import heapq as hq
+        pq = [(-matrix[i].sum(), i) for i in range(n_st)]
         hq.heapify(pq)
         for _ in range(n_st):
             if not pq: break
@@ -831,12 +831,13 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
                     break
                 else:
                     hq.heappush(pq, (-actual_gain, idx))
-            if best_s != -1 and best_cov/max(1,n_calls) >= 0.01:
+            if best_s != -1 and best_cov / max(1, n_calls) >= 0.005:
                 uncovered = uncovered & ~matrix[best_s]
                 cov_count += best_cov
-                curve.append((cov_count/max(1,n_calls))*100)
+                curve.append((cov_count / max(1, n_calls)) * 100)
                 if cov_count == n_calls: break
-            else: break
+            else:
+                break
         return curve
 
     def greedy_area(geos):
@@ -844,29 +845,27 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         current_union = Polygon()
         curve = [0.0]
         import heapq as hq
-        pq = [(-geos[i].area, i) for i in range(n_st)]
+        geos_sub = geos[:n_st]
+        pq = [(-geos_sub[i].area, i) for i in range(len(geos_sub))]
         hq.heapify(pq)
-        for _ in range(n_st):
+        for _ in range(len(geos_sub)):
             if not pq: break
-            best_s, best_poly, best_gain = -1, None, -1
-            while pq:
-                _, idx = hq.heappop(pq)
-                cand = current_union.union(geos[idx])
-                actual_gain = cand.area - current_union.area
-                if not pq or actual_gain >= -pq[0][0]:
-                    best_s, best_poly, best_gain = idx, cand, actual_gain
-                    break
+            _, idx = hq.heappop(pq)
+            try:
+                cand = current_union.union(geos_sub[idx])
+                gain = cand.area - current_union.area
+                if gain / total_area >= 0.005:
+                    current_union = cand
+                    curve.append((current_union.area / total_area) * 100)
                 else:
-                    hq.heappush(pq, (-actual_gain, idx))
-            if best_s != -1 and best_gain/total_area >= 0.01:
-                current_union = best_poly
-                curve.append((current_union.area/total_area)*100)
-            else: break
+                    break
+            except Exception:
+                continue
         return curve
 
     with ThreadPoolExecutor() as executor:
-        f_cr = executor.submit(greedy_calls, _resp_matrix)
-        f_cg = executor.submit(greedy_calls, _guard_matrix)
+        f_cr = executor.submit(greedy_calls, _resp_matrix[:n_st])
+        f_cg = executor.submit(greedy_calls, _guard_matrix[:n_st])
         f_ar = executor.submit(greedy_area, _geos_r)
         f_ag = executor.submit(greedy_area, _geos_g)
         c_r, c_g, a_r, a_g = f_cr.result(), f_cg.result(), f_ar.result(), f_ag.result()
@@ -876,10 +875,13 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         r = list(c)
         while len(r) < max_len: r.append(np.nan)
         return r
-    return pd.DataFrame({'Drones': range(max_len), 'Responder (Calls)': pad(c_r),
-                         'Responder (Area)': pad(a_r), 'Guardian (Calls)': pad(c_g), 'Guardian (Area)': pad(a_g)})
-
-
+    return pd.DataFrame({
+        'Drones': range(max_len),
+        'Responder (Calls)': pad(c_r),
+        'Responder (Area)':  pad(a_r),
+        'Guardian (Calls)':  pad(c_g),
+        'Guardian (Area)':   pad(a_g)
+    })
 # ============================================================
 # SCENARIO LOADER (sidebar, pre-map)
 # ============================================================
