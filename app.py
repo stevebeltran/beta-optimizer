@@ -821,136 +821,375 @@ if not st.session_state['csvs_ready']:
 # ============================================================
 # ONBOARDING / LANDING PAGE 
 # ============================================================
+# ============================================================
+# ONBOARDING / LANDING PAGE  — drop-in replacement
+# Replace everything between the two comment blocks:
+#   # ============================================================
+#   # ONBOARDING / LANDING PAGE
+#   # ============================================================
+#   if not st.session_state['csvs_ready']:
+#       ...
+#   (through the end of the if-block, ending before the "submit_demo or trigger_sim" logic)
+# ============================================================
+
+# ============================================================
+# ONBOARDING / LANDING PAGE
+# ============================================================
 if not st.session_state['csvs_ready']:
 
+    # ── HERO ──────────────────────────────────────────────────────────
     st.markdown(f"""
-    <div style="text-align:center; padding: 20px 0 10px 0;">
-        <div style="font-size:2.2rem; font-weight:900; letter-spacing:2px; color:{accent_color};">🛰️ BRINC COS</div>
-        <div style="font-size:1.1rem; color:{text_muted}; margin-top:4px;">Drone Optimizer — Coverage, Operations & Savings</div>
-    </div>
-    """, unsafe_allow_html=True)
+    <style>
+    @keyframes pulseGlow {{
+        0%, 100% {{ opacity: 0.55; }}
+        50%       {{ opacity: 1.0; }}
+    }}
+    @keyframes fadeUp {{
+        from {{ opacity:0; transform:translateY(14px); }}
+        to   {{ opacity:1; transform:translateY(0); }}
+    }}
+    .brinc-hero {{
+        position: relative;
+        text-align: center;
+        padding: 52px 24px 40px;
+        margin-bottom: 36px;
+        border-radius: 12px;
+        background: radial-gradient(ellipse at 50% 0%,
+            rgba(0,210,255,0.13) 0%, rgba(0,0,0,0) 68%);
+        border-bottom: 1px solid rgba(0,210,255,0.15);
+        overflow: hidden;
+        animation: fadeUp 0.5s ease both;
+    }}
+    .brinc-hero::before {{          /* subtle grid texture */
+        content: '';
+        position: absolute; inset: 0;
+        background:
+            repeating-linear-gradient(0deg,
+                transparent, transparent 39px,
+                rgba(0,210,255,0.025) 39px,
+                rgba(0,210,255,0.025) 40px),
+            repeating-linear-gradient(90deg,
+                transparent, transparent 79px,
+                rgba(0,210,255,0.025) 79px,
+                rgba(0,210,255,0.025) 80px);
+        pointer-events: none;
+    }}
+    .brinc-eyebrow {{
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.62rem;
+        font-weight: 700;
+        letter-spacing: 4px;
+        color: {accent_color};
+        text-transform: uppercase;
+        opacity: 0.7;
+        margin-bottom: 12px;
+    }}
+    .brinc-h1 {{
+        font-family: 'Manrope', sans-serif;
+        font-size: clamp(2rem, 4vw, 3rem);
+        font-weight: 900;
+        color: #ffffff;
+        letter-spacing: -0.5px;
+        line-height: 1.08;
+        margin-bottom: 12px;
+    }}
+    .brinc-h1 em {{
+        font-style: normal;
+        color: {accent_color};
+    }}
+    .brinc-tagline {{
+        font-size: 0.88rem;
+        color: #666;
+        max-width: 500px;
+        margin: 0 auto 22px;
+        line-height: 1.65;
+    }}
+    .brinc-badges {{
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 4px;
+    }}
+    .brinc-badge {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(0,210,255,0.07);
+        border: 1px solid rgba(0,210,255,0.2);
+        border-radius: 100px;
+        padding: 4px 13px;
+        font-size: 0.64rem;
+        font-weight: 700;
+        color: {accent_color};
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+    }}
+    .brinc-badge.pulse {{
+        animation: pulseGlow 3s ease-in-out infinite;
+    }}
 
-    st.markdown(f"""
-    <div style="background: linear-gradient(135deg, #0a0a0a 0%, #001a22 100%);
-         border:1px solid {card_border}; border-left: 4px solid {accent_color};
-         border-radius:8px; padding:14px 18px; margin-bottom:24px; display:flex; align-items:center; gap:16px;">
-        <div style="font-size:2.5rem;">🚁</div>
-        <div>
-            <div style="font-weight:800; color:{accent_color}; font-size:0.9rem;">3D SWARM SIMULATION INCLUDED</div>
-            <div style="font-size:0.78rem; color:{text_muted}; margin-top:2px;">
-                Deploy a fleet to unlock a live animated 3D simulation showing every DFR flight over a 24-hour day. Export grant-ready HTML proposals directly from your simulated operations.
-            </div>
+    /* ── Three-path cards ──────────────────────────────── */
+    .path-grid {{
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin-bottom: 32px;
+    }}
+    .path-card {{
+        background: #080808;
+        border: 1px solid #1c1c1c;
+        border-radius: 10px;
+        padding: 22px 18px 16px;
+        position: relative;
+        overflow: hidden;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }}
+    .path-card::after {{          /* top accent bar */
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 3px;
+        background: var(--accent);
+        border-radius: 10px 10px 0 0;
+    }}
+    .path-card:hover {{
+        border-color: rgba(255,255,255,0.12);
+        box-shadow: 0 0 28px rgba(0,210,255,0.05);
+    }}
+    .pc-icon  {{ font-size: 1.5rem; display:block; margin-bottom:9px; }}
+    .pc-tag   {{ font-size:0.55rem; font-weight:800; letter-spacing:2.5px;
+                 text-transform:uppercase; color:var(--accent); margin-bottom:5px; }}
+    .pc-title {{ font-size:1rem; font-weight:800; color:#fff;
+                 line-height:1.25; margin-bottom:7px; }}
+    .pc-desc  {{ font-size:0.7rem; color:#555; line-height:1.6; margin-bottom:0; }}
+    code.inline {{
+        background:#151515; border-radius:3px;
+        padding:1px 5px; font-size:0.68rem; color:#aaa;
+    }}
+    .field-footnote {{
+        font-size: 0.63rem; color: #3a3a3a; line-height: 1.75;
+        margin-top: 10px; border-top: 1px solid #141414;
+        padding-top: 10px;
+    }}
+    .demo-cities {{
+        font-size: 0.65rem; color: #444; line-height: 1.9;
+        margin-top: 10px;
+    }}
+    .demo-cities b {{ color: #555; }}
+    .demo-check {{
+        font-size: 0.63rem; color: #333; line-height: 1.8;
+        margin-top: 12px; border-top: 1px solid #141414;
+        padding-top: 10px;
+    }}
+    .demo-check span {{ color: {accent_color}; margin-right: 5px; }}
+    </style>
+
+    <div class="brinc-hero">
+        <div class="brinc-eyebrow">BRINC Drones · DFR Platform</div>
+        <div class="brinc-h1">
+            Coverage. Operations.<br><em>Savings.</em>
+        </div>
+        <div class="brinc-tagline">
+            Optimize drone-as-first-responder deployments for any US jurisdiction.
+            Model coverage, forecast ROI, and generate grant-ready proposals in minutes.
+        </div>
+        <div class="brinc-badges">
+            <div class="brinc-badge pulse">🛰 3D Swarm Simulation</div>
+            <div class="brinc-badge">🗺 Census Boundaries</div>
+            <div class="brinc-badge">📄 Grant Narrative Export</div>
+            <div class="brinc-badge">✈️ FAA LAANC Overlay</div>
+            <div class="brinc-badge">⚡ MCLP Optimizer</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    col_left, col_right = st.columns(2)
+    # ── THREE PATH CARD HEADERS (pure HTML, no widgets) ───────────────
+    path_sim_col, path_upload_col, path_demo_col = st.columns(3, gap="medium")
 
-    with col_left:
-        st.markdown(f"<h3 style='color:{text_main}; margin-bottom:4px;'>🚀 Simulate Any US Region</h3>", unsafe_allow_html=True)
-        st.markdown(f"<div style='font-size:0.8rem; color:{text_muted}; margin-bottom:14px;'>No data needed — we fetch the real Census boundaries and generate a highly realistic 911 call distribution automatically. Combine multiple towns!</div>", unsafe_allow_html=True)
+    with path_sim_col:
+        st.markdown(f"""
+        <div class="path-card" style="--accent:{accent_color};">
+            <span class="pc-icon">🗺</span>
+            <div class="pc-tag">Path 01</div>
+            <div class="pc-title">Simulate Any<br>US Region</div>
+            <div class="pc-desc">No data needed. Real Census boundaries + realistic 911 call distribution generated automatically. Stack multiple jurisdictions in one run.</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-        st.markdown(f"<div style='border:1px solid {card_border}; padding:15px; border-radius:8px;'>", unsafe_allow_html=True)
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
         for i in range(st.session_state.city_count):
             c1, c2 = st.columns([3, 1])
             c_val = st.session_state['target_cities'][i]['city'] if i < len(st.session_state['target_cities']) else ""
             s_val = st.session_state['target_cities'][i]['state'] if i < len(st.session_state['target_cities']) else "FL"
-            
-            c_name = c1.text_input(f"City/Town {i+1}", value=c_val, key=f"c_{i}", help="Enter the official name of the municipality to fetch its boundary.")
+            c_name = c1.text_input(
+                f"City / Town {i+1}", value=c_val, key=f"c_{i}",
+                placeholder="e.g. Orlando",
+                help="Official municipality name used to fetch the Census boundary."
+            )
             state_idx = list(STATE_FIPS.keys()).index(s_val) if s_val in STATE_FIPS else 8
-            s_name = c2.selectbox(f"State {i+1}", list(STATE_FIPS.keys()), index=state_idx, key=f"s_{i}", label_visibility="collapsed" if i>0 else "visible", help="Select the state abbreviation.")
-            
+            s_name = c2.selectbox(
+                f"State {i+1}", list(STATE_FIPS.keys()), index=state_idx,
+                key=f"s_{i}",
+                label_visibility="collapsed" if i > 0 else "visible"
+            )
             if i < len(st.session_state['target_cities']):
                 st.session_state['target_cities'][i] = {"city": c_name, "state": s_name}
             else:
                 st.session_state['target_cities'].append({"city": c_name, "state": s_name})
 
+        col_add, col_run = st.columns([1, 1])
         if st.session_state.city_count < 10:
-            if st.button("➕ Add another city/town", use_container_width=True):
+            if col_add.button("＋ City", use_container_width=True, key="add_city_btn"):
                 st.session_state.city_count += 1
                 st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        submit_demo = st.button("🚀 Run Simulation", use_container_width=True)
+        submit_demo = col_run.button("▶ Run", use_container_width=True, key="run_sim_btn",
+                                     help="Fetch boundaries and launch the simulation.")
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("🎲 1-Click Demo (Random Large City)", use_container_width=True):
+    with path_upload_col:
+        st.markdown(f"""
+        <div class="path-card" style="--accent:#39FF14;">
+            <span class="pc-icon">📂</span>
+            <div class="pc-tag">Path 02</div>
+            <div class="pc-title">Upload<br>Real CAD Data</div>
+            <div class="pc-desc">
+                Drop your own <code class="inline">calls.csv</code> and
+                <code class="inline">stations.csv</code> — both need
+                <code class="inline">lat</code> and <code class="inline">lon</code>
+                columns. Jurisdiction auto-detected from coordinates.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+        uploaded_files = st.file_uploader(
+            "Drop calls.csv & stations.csv",
+            accept_multiple_files=True,
+            label_visibility="collapsed",
+            help="Upload both files together. The uploader accepts multiple files at once."
+        )
+
+        st.markdown("""
+        <div class="field-footnote">
+            <b style='color:#555;'>calls.csv</b> — lat, lon, priority (optional)<br>
+            <b style='color:#555;'>stations.csv</b> — lat, lon, name, type (optional)<br>
+            Max 25,000 calls · 100 stations
+        </div>
+        """, unsafe_allow_html=True)
+
+        call_file, station_file = None, None
+        if uploaded_files:
+            for f in uploaded_files:
+                fname = f.name.lower()
+                if fname == "calls.csv":    call_file = f
+                elif fname == "stations.csv": station_file = f
+
+            if call_file and station_file:
+                df_c = pd.read_csv(call_file)
+                df_c.columns = [str(c).lower().strip() for c in df_c.columns]
+                df_c = df_c.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
+                if 'lat' not in df_c.columns or 'lon' not in df_c.columns:
+                    st.error(f"❌ calls.csv must have lat/lon columns. Found: {', '.join(df_c.columns)}")
+                    st.stop()
+                keep_c = ['lat', 'lon'] + (['priority'] if 'priority' in df_c.columns else [])
+                df_c = df_c[keep_c].dropna(subset=['lat', 'lon']).reset_index(drop=True)
+                st.session_state['total_original_calls'] = len(df_c)
+                if len(df_c) > 25000:
+                    df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
+                    st.toast("⚠️ Sampled to 25,000 calls for performance.")
+                st.session_state['df_calls'] = df_c
+
+                df_s = pd.read_csv(station_file)
+                df_s.columns = [str(c).lower().strip() for c in df_s.columns]
+                df_s = df_s.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
+                if 'lat' not in df_s.columns or 'lon' not in df_s.columns:
+                    st.error(f"❌ stations.csv must have lat/lon columns. Found: {', '.join(df_s.columns)}")
+                    st.stop()
+                keep_s = ['lat', 'lon'] + [c for c in ['name', 'type'] if c in df_s.columns]
+                df_s = df_s[keep_s].dropna(subset=['lat', 'lon']).reset_index(drop=True)
+                if 'name' not in df_s.columns:
+                    df_s['name'] = [f"Station {i+1}" for i in range(len(df_s))]
+                if len(df_s) > 100:
+                    df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
+                st.session_state['df_stations'] = df_s
+
+                with st.spinner("🌍 Auto-detecting jurisdiction…"):
+                    detected_state_full, detected_city = reverse_geocode_state(
+                        df_c['lat'].iloc[0], df_c['lon'].iloc[0]
+                    )
+                    if detected_state_full and detected_state_full in US_STATES_ABBR:
+                        st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
+                        if detected_city and detected_city != 'Unknown City':
+                            st.session_state['active_city'] = detected_city
+                        st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
+
+                st.session_state['csvs_ready'] = True
+                st.rerun()
+
+            elif call_file or station_file:
+                missing = "stations.csv" if call_file else "calls.csv"
+                st.warning(f"⚠️ Also upload **{missing}** to continue.")
+
+    with path_demo_col:
+        st.markdown(f"""
+        <div class="path-card" style="--accent:#FFD700;">
+            <span class="pc-icon">⚡</span>
+            <div class="pc-tag">Path 03</div>
+            <div class="pc-title">1-Click Demo<br>Large US City</div>
+            <div class="pc-desc">Instantly spin up a fully pre-configured scenario for a major US city. Ideal for live stakeholder presentations and platform walkthroughs.</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+        if st.button("⚡ Launch Random Demo City", use_container_width=True, key="demo_btn"):
             rcity, rstate = random.choice(DEMO_CITIES)
             st.session_state['target_cities'] = [{"city": rcity, "state": rstate}]
             st.session_state.city_count = 1
             st.session_state['trigger_sim'] = True
             st.rerun()
 
-    with col_right:
-        st.markdown(f"<h3 style='color:{text_main}; margin-bottom:4px;'>📁 Upload Real Data</h3>", unsafe_allow_html=True)
+        city_chips = "  ·  ".join([f"{c}" for c, _ in DEMO_CITIES])
         st.markdown(f"""
-        <div style="font-size:0.8rem; color:{text_muted}; margin-bottom:12px;">
-            Upload your own <b>calls.csv</b> and <b>stations.csv</b> (Requires <code>lat</code> and <code>lon</code> columns). The jurisdiction boundary will auto-detect from your coordinates.
+        <div class="demo-cities">
+            <b>Available Cities</b><br>
+            {city_chips}
+        </div>
+        <div class="demo-check">
+            <span>✓</span>Real Census boundaries<br>
+            <span>✓</span>Clustered 911 simulation<br>
+            <span>✓</span>100 station candidates<br>
+            <span>✓</span>Full optimization &amp; export
         </div>
         """, unsafe_allow_html=True)
-        uploaded_files = st.file_uploader("Drop calls.csv & stations.csv here", accept_multiple_files=True, label_visibility="collapsed")
-        call_file, station_file = None, None
-        if uploaded_files:
-            for f in uploaded_files:
-                fname = f.name.lower()
-                if fname == "calls.csv": call_file = f
-                elif fname == "stations.csv": station_file = f
-            if call_file and station_file:
-                df_c = pd.read_csv(call_file)
-                df_c.columns = [str(c).lower().strip() for c in df_c.columns]
-                df_c = df_c.rename(columns={'latitude':'lat','longitude':'lon'})
-                if 'lat' not in df_c.columns or 'lon' not in df_c.columns:
-                    st.error(f"❌ calls.csv must have lat/lon columns. Found: {', '.join(df_c.columns)}")
-                    st.stop()
-                keep_c = ['lat','lon'] + (['priority'] if 'priority' in df_c.columns else [])
-                df_c = df_c[keep_c].dropna(subset=['lat','lon']).reset_index(drop=True)
-                st.session_state['total_original_calls'] = len(df_c)
-                if len(df_c) > 25000:
-                    df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
-                    st.toast("⚠️ Sampled to 25,000 calls for performance.")
-                st.session_state['df_calls'] = df_c
-                df_s = pd.read_csv(station_file)
-                df_s.columns = [str(c).lower().strip() for c in df_s.columns]
-                df_s = df_s.rename(columns={'latitude':'lat','longitude':'lon'})
-                if 'lat' not in df_s.columns or 'lon' not in df_s.columns:
-                    st.error(f"❌ stations.csv must have lat/lon columns. Found: {', '.join(df_s.columns)}")
-                    st.stop()
-                keep_s = ['lat','lon'] + [c for c in ['name','type'] if c in df_s.columns]
-                df_s = df_s[keep_s].dropna(subset=['lat','lon']).reset_index(drop=True)
-                if 'name' not in df_s.columns:
-                    df_s['name'] = [f"Station {i+1}" for i in range(len(df_s))]
-                if len(df_s) > 100:
-                    df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
-                st.session_state['df_stations'] = df_s
-                with st.spinner("🌍 Auto-detecting jurisdiction from coordinates…"):
-                    detected_state_full, detected_city = reverse_geocode_state(df_c['lat'].iloc[0], df_c['lon'].iloc[0])
-                    if detected_state_full and detected_state_full in US_STATES_ABBR:
-                        st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
-                        if detected_city and detected_city != 'Unknown City':
-                            st.session_state['active_city'] = detected_city
-                        st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
-                st.session_state['csvs_ready'] = True
-                st.rerun()
-            elif call_file or station_file:
-                missing = "stations.csv" if call_file else "calls.csv"
-                st.warning(f"⚠️ Also upload **{missing}** to continue.")
 
+    # ── FOOTER NOTE ───────────────────────────────────────────────────
+    st.markdown(f"""
+    <div style="text-align:center; margin-top:8px; font-size:0.63rem; color:#2a2a2a;">
+        BRINC Drones, Inc. · <a href="https://brincdrones.com" target="_blank"
+        style="color:#333; text-decoration:none;">brincdrones.com</a>
+        · All coverage estimates are for planning purposes only.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── SIMULATION TRIGGER LOGIC (unchanged from original) ────────────
     if submit_demo or st.session_state.get('trigger_sim', False):
         if st.session_state.get('trigger_sim', False):
             st.session_state['trigger_sim'] = False
-            
+
         active_targets = [loc for loc in st.session_state['target_cities'] if loc['city'].strip()]
         if not active_targets:
             st.error("Please enter at least one valid city name.")
             st.stop()
 
         if len(active_targets) == 1:
-            st.session_state['active_city'] = active_targets[0]['city']
+            st.session_state['active_city']  = active_targets[0]['city']
             st.session_state['active_state'] = active_targets[0]['state']
         else:
-            st.session_state['active_city'] = f"{active_targets[0]['city']} & {len(active_targets)-1} others"
-            st.session_state['active_state'] = active_targets[0]['state'] 
+            st.session_state['active_city']  = f"{active_targets[0]['city']} & {len(active_targets)-1} others"
+            st.session_state['active_state'] = active_targets[0]['state']
 
         prog = st.progress(0, text="Starting simulation…")
         all_gdfs = []
@@ -959,8 +1198,9 @@ if not st.session_state['csvs_ready']:
         for i, loc in enumerate(active_targets):
             c_name = loc['city'].strip()
             s_name = loc['state']
-            
-            prog.progress(10 + int((i/len(active_targets))*20), text=f"📡 Fetching boundary for {c_name}, {s_name}…")
+
+            prog.progress(10 + int((i / len(active_targets)) * 20),
+                          text=f"📡 Fetching boundary for {c_name}, {s_name}…")
             success, temp_gdf = fetch_tiger_city_shapefile(STATE_FIPS[s_name], c_name, SHAPEFILE_DIR)
 
             if success:
@@ -970,7 +1210,7 @@ if not st.session_state['csvs_ready']:
                     total_estimated_pop += pop
                     st.toast(f"✅ {c_name} population verified: {pop:,}")
                 else:
-                    gdf_proj = temp_gdf.to_crs(epsg=3857)
+                    gdf_proj  = temp_gdf.to_crs(epsg=3857)
                     area_sq_mi = gdf_proj.geometry.area.sum() / 2589988.11
                     est = KNOWN_POPULATIONS.get(c_name, int(area_sq_mi * 3500))
                     total_estimated_pop += est
@@ -986,7 +1226,6 @@ if not st.session_state['csvs_ready']:
         prog.progress(35, text="✅ Boundaries loaded. Combining regions…")
         active_city_gdf = pd.concat(all_gdfs, ignore_index=True)
         city_poly = active_city_gdf.geometry.union_all()
-        
         st.session_state['estimated_pop'] = total_estimated_pop
 
         annual_cfs = int(total_estimated_pop * 0.6)
@@ -997,18 +1236,18 @@ if not st.session_state['csvs_ready']:
         np.random.seed(42)
         call_points = generate_clustered_calls(city_poly, simulated_points_count)
         st.session_state['df_calls'] = pd.DataFrame({
-            'lat': [p[0] for p in call_points],
-            'lon': [p[1] for p in call_points],
-            'priority': np.random.choice(['High','Medium','Low'], simulated_points_count)
+            'lat':      [p[0] for p in call_points],
+            'lon':      [p[1] for p in call_points],
+            'priority': np.random.choice(['High', 'Medium', 'Low'], simulated_points_count)
         })
 
         prog.progress(80, text="🏢 Distributing municipal infrastructure…")
         station_points = generate_random_points_in_polygon(city_poly, 100)
-        types = ['Police','Fire','EMS'] * 34
+        types = ['Police', 'Fire', 'EMS'] * 34
         st.session_state['df_stations'] = pd.DataFrame({
             'name': [f'Station {i+1}' for i in range(len(station_points))],
-            'lat': [p[0] for p in station_points],
-            'lon': [p[1] for p in station_points],
+            'lat':  [p[0] for p in station_points],
+            'lon':  [p[1] for p in station_points],
             'type': types[:len(station_points)]
         })
 
