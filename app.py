@@ -115,8 +115,7 @@ defaults = {
     'active_city': "Orlando", 'active_state': "FL", 'estimated_pop': 316081,
     'k_resp': 0, 'k_guard': 0, 'r_resp': 2.0, 'r_guard': 8.0,
     'dfr_rate': 25, 'deflect_rate': 30, 'total_original_calls': 0,
-    'onboarding_done': False, 'trigger_sim': False, 'city_count': 1,
-    'is_simulated': True
+    'onboarding_done': False, 'trigger_sim': False, 'city_count': 1
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -807,7 +806,6 @@ if not st.session_state['csvs_ready']:
                     st.session_state['df_calls'] = pd.DataFrame(calls_data)
                     st.session_state['df_stations'] = pd.DataFrame(stations_data)
                     st.session_state['total_original_calls'] = len(calls_data)
-                    st.session_state['is_simulated'] = False
                     st.session_state['csvs_ready'] = True
                     st.toast(f"✅ Loaded scenario for {st.session_state['active_city']}!")
                     st.rerun()
@@ -907,7 +905,6 @@ if not st.session_state['csvs_ready']:
                 keep_c = ['lat','lon'] + (['priority'] if 'priority' in df_c.columns else [])
                 df_c = df_c[keep_c].dropna(subset=['lat','lon']).reset_index(drop=True)
                 st.session_state['total_original_calls'] = len(df_c)
-                st.session_state['is_simulated'] = False
                 if len(df_c) > 25000:
                     df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
                     st.toast("⚠️ Sampled to 25,000 calls for performance.")
@@ -972,12 +969,9 @@ if not st.session_state['csvs_ready']:
                     total_estimated_pop += pop
                     st.toast(f"✅ {c_name} population verified: {pop:,}")
                 else:
-                    try:
-                        gdf_proj = temp_gdf.to_crs(epsg=6933) # US Equal Area projection for accurate sq miles
-                        area_sq_mi = gdf_proj.geometry.area.sum() / 2589988.11
-                        est = KNOWN_POPULATIONS.get(c_name, int(area_sq_mi * 3500))
-                    except:
-                        est = 50000 # Safe fallback if projection fails
+                    gdf_proj = temp_gdf.to_crs(epsg=3857)
+                    area_sq_mi = gdf_proj.geometry.area.sum() / 2589988.11
+                    est = KNOWN_POPULATIONS.get(c_name, int(area_sq_mi * 3500))
                     total_estimated_pop += est
                     st.toast(f"⚠️ {c_name} population estimated: {est:,}")
             else:
@@ -996,7 +990,6 @@ if not st.session_state['csvs_ready']:
 
         annual_cfs = int(total_estimated_pop * 0.6)
         st.session_state['total_original_calls'] = annual_cfs
-        st.session_state['is_simulated'] = True
         simulated_points_count = min(int(annual_cfs / 12), 25000)
 
         prog.progress(55, text="📍 Generating clustered 911 call distribution…")
@@ -1431,11 +1424,6 @@ if st.session_state['csvs_ready']:
 
         prop_city  = st.session_state.get('active_city', 'City')
         prop_state = st.session_state.get('active_state', 'FL')
-        
-        display_total_incidents = st.session_state.get('total_original_calls', 0)
-        if display_total_incidents == 0:
-            display_total_incidents = total_calls * 12 if st.session_state.get('is_simulated', True) else total_calls
-
         pop_metric = st.session_state.get('estimated_pop', 250000)
         current_time_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         safe_city = prop_city.replace(" ","_").replace("/","_")
@@ -1524,7 +1512,7 @@ if st.session_state['csvs_ready']:
         <h2>Grant Narrative (AI Draft)</h2>
         <div class="disclaimer"><strong>DISCLAIMER:</strong> AI-generated draft. Must be reviewed and fact-checked before submission.</div>
         <p><strong>Project Title:</strong> BRINC DRONES DFR Program for {prop_city}</p>
-        <p><strong>Need:</strong> {prop_city} respectfully requests DOJ Byrne JAG funding to deploy {actual_k_responder+actual_k_guardian} BRINC DRONES systems covering {calls_covered_perc:.1f}% of {display_total_incidents:,} annual incidents for a population of {pop_metric:,}.</p>
+        <p><strong>Need:</strong> {prop_city} respectfully requests DOJ Byrne JAG funding to deploy {actual_k_responder+actual_k_guardian} BRINC DRONES systems covering {calls_covered_perc:.1f}% of {st.session_state.get('total_original_calls',total_calls):,} annual incidents for a population of {pop_metric:,}.</p>
         <p><strong>Design:</strong> {actual_k_responder} Responder and {actual_k_guardian} Guardian drones will achieve {avg_resp_time:.1f}-minute average response — {avg_time_saved:.1f} minutes faster than vehicular patrol — with all sites pre-cleared against FAA LAANC facility maps.</p>
         <p><strong>ROI:</strong> A ${fleet_capex:,.0f} investment yields ${annual_savings:,.0f} annual capacity value by deflecting {daily_drone_only_calls:.1f} dispatches/day, breaking even in {break_even_text.lower()}.</p>
         <p><strong>Potential Grant Funding Sources:</strong> 
@@ -1556,6 +1544,7 @@ if st.session_state['csvs_ready']:
                                        use_container_width=True)
 
     # Grant eligibility
+    pop_metric = st.session_state.get('estimated_pop', 250000)
     grant_bracket = estimate_grants(pop_metric)
     st.sidebar.markdown(f"""
     <div style="margin-top:12px; background:{card_bg}; border:1px solid {budget_box_border}; padding:10px; border-radius:4px; margin-bottom:10px;">
@@ -1596,15 +1585,9 @@ if st.session_state['csvs_ready']:
     else:
         gain_val = None
 
-    display_incidents = st.session_state.get('total_original_calls', 0)
-    if display_incidents == 0:
-        display_incidents = total_calls * 12 if st.session_state.get('is_simulated', True) else total_calls
-        
-    incident_label = "Annual Incidents" if st.session_state.get('is_simulated', True) else "Total Incidents"
-
     kpi_html = f"""
     <div style="display:flex; justify-content:space-around; background:{card_bg}; border:1px solid {card_border}; border-radius:8px; padding:15px; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
-        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">{incident_label}</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{display_incidents:,}</div></div>
+        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Total Incidents</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{st.session_state.get('total_original_calls',total_calls):,}</div></div>
         <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Response Capacity</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{calls_covered_perc:.1f}%</div></div>
         <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Land Covered</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{area_covered_perc:.1f}%</div></div>
         <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Overlap</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{overlap_perc:.1f}%</div></div>
@@ -1614,7 +1597,7 @@ if st.session_state['csvs_ready']:
     
     kpi_html += "</div>"
     st.markdown(kpi_html, unsafe_allow_html=True)
-    st.markdown(f"<div style='font-size:0.65rem;color:gray;margin-top:-12px;margin-bottom:12px;text-align:center;'>(Optimized via {total_calls:,} representative map sample)</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-size:0.65rem;color:gray;margin-top:-12px;margin-bottom:12px;text-align:center;'>(Optimized via {total_calls:,} representative sample)</div>", unsafe_allow_html=True)
 
     # ── MAP + STATS COLUMNS ───────────────────────────────────────────
     map_col, stats_col = st.columns([4.2, 1.8])
