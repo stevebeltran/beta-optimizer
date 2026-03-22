@@ -1483,7 +1483,20 @@ if not st.session_state['csvs_ready']:
 # ============================================================
 if st.session_state['csvs_ready']:
     components.html("<script>window._brincHasData = true;</script>", height=0)
-
+# --- DRAW SIDEBAR LOGO FIRST SO IT IS AT THE ABSOLUTE TOP ---
+    logo_b64 = get_base64_of_bin_file("logo.png")
+    if logo_b64:
+        st.sidebar.markdown(f"""
+        <div style="background-color: #000000; padding: 40px 20px 20px 20px; border-bottom: 2px solid #00D2FF; margin: -60px -20px 20px -20px; text-align: left;">
+            <img src="data:image/png;base64,{logo_b64}" style="height: 32px; filter: brightness(0) invert(1);">
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.sidebar.markdown(f"""
+        <div style="background-color: #000000; padding: 40px 20px 20px 20px; border-bottom: 2px solid #00D2FF; margin: -60px -20px 20px -20px; text-align: left;">
+            <div style="font-size:24px; font-weight:900; letter-spacing:3px; color:#ffffff;">BRINC</div>
+        </div>
+        """, unsafe_allow_html=True)
     df_calls = st.session_state['df_calls'].copy()
     df_stations_all = st.session_state['df_stations'].copy()
 
@@ -1642,10 +1655,7 @@ if st.session_state['csvs_ready']:
     with st.spinner(get_airfield_message()):
         airfields = fetch_airfields(minx, miny, maxx, maxy)
 
-    try:
-        st.sidebar.image("logo.png", use_container_width=True)
-    except FileNotFoundError:
-        st.sidebar.markdown(f"<div style='font-size:2rem;font-weight:900;letter-spacing:4px;color:{accent_color};text-align:center;padding-bottom:10px;'>BRINC</div>", unsafe_allow_html=True)
+
 
     st.sidebar.markdown('<div class="sidebar-section-header">① Configure</div>', unsafe_allow_html=True)
 
