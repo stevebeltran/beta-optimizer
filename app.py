@@ -1159,12 +1159,112 @@ def ingest_stations_csv(uploaded_file):
     if type_col:
         df['type'] = raw[type_col].iloc[:len(df)].fillna('Police').values
 
+        df['type'] = raw[type_col].iloc[:len(df)].fillna('Police').values
+
     return df, []
 
 
-# ============================================================
-# SCENARIO LOADER (sidebar, pre-map)
-# ============================================================
+def generate_stations_from_calls(df_calls, max_stations=100):
+    """
+    Given a calls DataFrame with lat/lon, auto-generate stations by querying
+    OpenStreetMap for police stations, fire stations, schools, and universities
+    within a bounding box around the call cluster centroid.
+    Mirrors the logic in the DFR Command HTML tool.
+    Returns (df_stations, info_message).
+    """
+    lats = df_calls['lat'].dropna().values
+    lons = df_calls['lon'].dropna().values
+    if len(lats) == 0:
+        return None, "No coordinates available to generate stations."
+
+    # IQR outlier removal (same as HTML: fence=2.5)
+    q1_la, q3_la = np.percentile(lats, 25), np.percentile(lats, 75)
+    q1_lo, q3_lo = np.percentile(lons, 25), np.percentile(lons, 75)
+    iqr_la = q3_la - q1_la
+    iqr_lo = q3_lo - q1_lo
+    fence = 2.5
+    mask = (
+        (lats >= q1_la - fence * iqr_la) & (lats <= q3_la + fence * iqr_la) &
+        (lons >= q1_lo - fence * iqr_lo) & (lons <= q3_lo + fence * iqr_lo)
+    )
+    cen_lat = lats[mask].mean()
+    cen_lon = lons[mask].mean()
+
+    R = 0.25  # ~17 miles bounding box half-width
+    bbox = f"{cen_lat - R},{cen_lon - R},{cen_lat + R},{cen_lon + R}"
+    query = (
+        f'[out:json][timeout:25][maxsize:536870912];'
+        f'(node["amenity"="fire_station"]({bbox});'
+        f'node["amenity"="police"]({bbox});'
+        f'node["amenity"="school"]({bbox});'
+        f'node["amenity"="university"]({bbox});'
+        f'node["amenity"="college"]({bbox});'
+        f'way["amenity"="fire_station"]({bbox});'
+        f'way["amenity"="police"]({bbox});'
+        f'way["amenity"="school"]({bbox});'
+        f');out center;'
+    )
+
+    data = None
+    for osm_url in ['https://overpass-api.de/api/interpreter',
+                     'https://overpass.kumi.systems/api/interpreter']:
+        try:
+            import urllib.parse
+            req = urllib.request.Request(
+                f"{osm_url}?data={urllib.parse.quote(query)}",
+                headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'}
+            )
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            break
+        except Exception:
+            continue
+
+    if data is None:
+        return None, "OpenStreetMap query failed on both endpoints. Check your network connection."
+
+    elements = data.get('elements', [])
+    rows = []
+    for el in elements:
+        tags = el.get('tags', {})
+        lat = el.get('lat') or (el.get('center') or {}).get('lat')
+        lon = el.get('lon') or (el.get('center') or {}).get('lon')
+        if lat is None or lon is None:
+            continue
+        amenity = tags.get('amenity', '')
+        type_label = {'fire_station': 'Fire', 'police': 'Police',
+                      'school': 'School', 'university': 'University',
+                      'college': 'University'}.get(amenity, 'Police')
+        fac_name = tags.get('name', f"{type_label} Station")
+        hn  = tags.get('addr:housenumber', '')
+        st  = tags.get('addr:street', '')
+        cty = tags.get('addr:city', tags.get('addr:town', ''))
+        sta = tags.get('addr:state', '')
+        zp  = tags.get('addr:postcode', '')
+        addr_parts = []
+        if hn and st:  addr_parts.append(f"{hn} {st}")
+        elif st:       addr_parts.append(st)
+        if cty:        addr_parts.append(cty)
+        if sta and zp: addr_parts.append(f"{sta} {zp}")
+        elif sta:      addr_parts.append(sta)
+        full_name = (f"{type_label} {fac_name}" + (f" {', '.join(addr_parts)}" if addr_parts else '')).strip()
+        rows.append({'name': full_name, 'lat': round(lat, 6), 'lon': round(lon, 6), 'type': type_label})
+
+    if not rows:
+        return None, "No police/fire/school stations found near this area on OpenStreetMap."
+
+    df_s = pd.DataFrame(rows).drop_duplicates(subset=['lat', 'lon']).reset_index(drop=True)
+    if len(df_s) > max_stations:
+        # Prefer Police & Fire over schools
+        priority_order = {'Police': 0, 'Fire': 1, 'University': 2, 'School': 3}
+        df_s['_pri'] = df_s['type'].map(priority_order).fillna(3)
+        df_s = df_s.sort_values('_pri').head(max_stations).drop(columns='_pri').reset_index(drop=True)
+
+    msg = f"Auto-generated {len(df_s)} stations from OpenStreetMap (police, fire, schools near call cluster)."
+    return df_s, msg
+
+
+
 if not st.session_state['csvs_ready']:
     with st.sidebar.expander("💾 Load Saved Scenario", expanded=False):
         uploaded_scenario = st.file_uploader("Load .brinc file", type=['brinc','json'], label_visibility="collapsed")
@@ -1403,9 +1503,9 @@ if not st.session_state['csvs_ready']:
             <div class="pc-tag">Path 02</div>
             <div class="pc-title">Upload<br>Any CAD Data</div>
             <div class="pc-desc">
-                Drop <b>any</b> CAD export CSV for calls and a stations CSV.
-                Column names are auto-detected — no reformatting needed.
-                Date, time, priority &amp; coordinates are recognized automatically.
+                Drop <b>any</b> CAD export CSV — no renaming needed.
+                Optionally also drop a stations CSV; if omitted, stations are
+                auto-generated from OpenStreetMap (police, fire, schools).
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1413,98 +1513,116 @@ if not st.session_state['csvs_ready']:
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
         uploaded_files = st.file_uploader(
-            "Drop your CAD calls CSV and stations CSV",
+            "Drop your CAD export (+ optional stations CSV)",
             accept_multiple_files=True,
             label_visibility="collapsed",
-            help="Upload both files together. Any column naming works — lat/latitude/y, lon/longitude/x, date/datetime/call_date, etc."
+            help="One file = raw CAD export (stations auto-generated from OSM). Two files = calls + stations. Column names are detected automatically."
         )
 
         st.markdown("""
         <div class="field-footnote">
-            <b style='color:#555;'>Calls file</b> — any name, needs lat+lon (date/time/priority auto-detected)<br>
-            <b style='color:#555;'>Stations file</b> — any name, needs lat+lon (name/type auto-detected)<br>
-            Max 25,000 calls · 100 stations · CAD exports from any vendor supported
+            <b style='color:#555;'>1 file</b> — any CAD export; stations auto-built from OpenStreetMap<br>
+            <b style='color:#555;'>2 files</b> — calls + stations (any column names, any file names)<br>
+            Max 25,000 calls · 100 stations · date/time/priority auto-detected
         </div>
         """, unsafe_allow_html=True)
 
-        if uploaded_files and len(uploaded_files) == 2:
-            # Heuristic: the larger file is usually calls
-            f0, f1 = uploaded_files[0], uploaded_files[1]
-            f0.seek(0); f1.seek(0)
-            b0 = len(f0.read()); f0.seek(0)
-            b1 = len(f1.read()); f1.seek(0)
-            # Also use filename hints
-            def _is_stations(name):
-                n = name.lower()
-                return any(k in n for k in ['station','dept','agency','facility','police','fire'])
-            if _is_stations(f0.name) and not _is_stations(f1.name):
-                calls_up, stations_up = f1, f0
-            elif _is_stations(f1.name) and not _is_stations(f0.name):
-                calls_up, stations_up = f0, f1
+        def _looks_like_stations(fname):
+            n = fname.lower()
+            return any(k in n for k in ['station','dept','agency','facility','police','fire','loc'])
+
+        if uploaded_files and len(uploaded_files) >= 1:
+            f_list = list(uploaded_files)
+
+            # ── Route: 1 file or 2 files ──────────────────
+            if len(f_list) == 1:
+                calls_up   = f_list[0]
+                stations_up = None
+            elif len(f_list) == 2:
+                f0, f1 = f_list
+                if _looks_like_stations(f0.name) and not _looks_like_stations(f1.name):
+                    calls_up, stations_up = f1, f0
+                elif _looks_like_stations(f1.name) and not _looks_like_stations(f0.name):
+                    calls_up, stations_up = f0, f1
+                else:
+                    # larger file = calls
+                    f0.seek(0); sz0 = len(f0.read()); f0.seek(0)
+                    f1.seek(0); sz1 = len(f1.read()); f1.seek(0)
+                    calls_up, stations_up = (f0, f1) if sz0 >= sz1 else (f1, f0)
             else:
-                calls_up, stations_up = (f0, f1) if b0 >= b1 else (f1, f0)
+                st.warning("⚠️ Please upload 1 or 2 files.")
+                calls_up = stations_up = None
 
-            with st.spinner("🔍 Detecting column types…"):
-                df_c, c_warns = ingest_cad_csv(calls_up)
-                df_s, s_warns = ingest_stations_csv(stations_up)
+            if calls_up is not None:
+                with st.spinner("🔍 Detecting column types in CAD export…"):
+                    df_c, c_warns = ingest_cad_csv(calls_up)
 
-            for w in c_warns + s_warns:
-                st.warning(f"⚠️ {w}")
+                for w in c_warns:
+                    st.warning(f"⚠️ {w}")
 
-            if df_c is None:
-                st.error(f"❌ Calls file error: {c_warns[0] if c_warns else 'Unknown'}")
-                st.stop()
-            if df_s is None:
-                st.error(f"❌ Stations file error: {s_warns[0] if s_warns else 'Unknown'}")
-                st.stop()
+                if df_c is None:
+                    st.error(f"❌ Calls file error: {c_warns[0] if c_warns else 'Unknown'}")
+                    st.stop()
 
-            # Store temporal enrichment in session state for analytics charts
-            if 'hour' in df_c.columns:
-                st.session_state['df_calls_enriched'] = df_c.copy()
-            else:
-                st.session_state['df_calls_enriched'] = None
+                # Store enriched data for analytics section
+                if 'hour' in df_c.columns:
+                    st.session_state['df_calls_enriched'] = df_c.copy()
+                else:
+                    st.session_state['df_calls_enriched'] = None
 
-            # Sample if too large
-            if len(df_c) > 25000:
-                df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
-                st.toast("⚠️ Sampled to 25,000 calls for performance.")
-            if len(df_s) > 100:
-                df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
+                # Sample if too large
+                keep_c = ['lat', 'lon'] + [c for c in ['priority'] if c in df_c.columns]
+                df_c_opt = df_c[keep_c].dropna(subset=['lat','lon'])
+                if len(df_c_opt) > 25000:
+                    df_c_opt = df_c_opt.sample(25000, random_state=42).reset_index(drop=True)
+                    st.toast("⚠️ Sampled to 25,000 calls for performance.")
+                else:
+                    df_c_opt = df_c_opt.reset_index(drop=True)
 
-            # Keep only the columns the optimizer needs
-            keep_c = ['lat', 'lon'] + ([c for c in ['priority'] if c in df_c.columns])
-            df_c = df_c[keep_c].reset_index(drop=True)
+                # ── Stations: load or auto-generate ───────
+                if stations_up is not None:
+                    with st.spinner("🔍 Reading stations file…"):
+                        df_s, s_warns = ingest_stations_csv(stations_up)
+                    for w in s_warns:
+                        st.warning(f"⚠️ {w}")
+                    if df_s is None:
+                        st.error(f"❌ Stations file error: {s_warns[0] if s_warns else 'Unknown'}")
+                        st.stop()
+                    osm_note = None
+                else:
+                    with st.spinner("🌐 No stations file detected — querying OpenStreetMap for police, fire & schools…"):
+                        df_s, osm_note = generate_stations_from_calls(df_c_opt)
+                    if df_s is None:
+                        st.error(f"❌ Could not auto-generate stations: {osm_note}")
+                        st.stop()
+                    st.toast(f"✅ {osm_note}")
 
-            st.session_state['total_original_calls'] = len(df_c)
-            st.session_state['df_calls'] = df_c
-            st.session_state['df_stations'] = df_s
+                if len(df_s) > 100:
+                    df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
 
-            # Outlier filter — remove calls far from station cluster
-            lat_min, lat_max = df_s['lat'].min(), df_s['lat'].max()
-            lon_min, lon_max = df_s['lon'].min(), df_s['lon'].max()
-            df_c = df_c[
-                (df_c['lat'] >= lat_min - 0.5) & (df_c['lat'] <= lat_max + 0.5) &
-                (df_c['lon'] >= lon_min - 0.5) & (df_c['lon'] <= lon_max + 0.5)
-            ]
-            st.session_state['df_calls'] = df_c
-            st.session_state['total_original_calls'] = len(df_c)
+                # Outlier filter
+                lat_min, lat_max = df_s['lat'].min(), df_s['lat'].max()
+                lon_min, lon_max = df_s['lon'].min(), df_s['lon'].max()
+                df_c_opt = df_c_opt[
+                    (df_c_opt['lat'] >= lat_min - 0.5) & (df_c_opt['lat'] <= lat_max + 0.5) &
+                    (df_c_opt['lon'] >= lon_min - 0.5) & (df_c_opt['lon'] <= lon_max + 0.5)
+                ].reset_index(drop=True)
 
-            with st.spinner(get_jurisdiction_message()):
-                detected_state_full, detected_city = reverse_geocode_state(
-                    df_c['lat'].iloc[0], df_c['lon'].iloc[0]
-                )
-                if detected_state_full and detected_state_full in US_STATES_ABBR:
-                    st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
-                    if detected_city and detected_city != 'Unknown City':
-                        st.session_state['active_city'] = detected_city
-                    st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
-            st.session_state['csvs_ready'] = True
-            st.rerun()
+                st.session_state['df_calls']             = df_c_opt
+                st.session_state['df_stations']          = df_s
+                st.session_state['total_original_calls'] = len(df_c_opt)
 
-        elif uploaded_files and len(uploaded_files) == 1:
-            st.info("📎 Drop your **stations** file too to continue.")
-        elif uploaded_files and len(uploaded_files) > 2:
-            st.warning("⚠️ Please upload exactly 2 files: one calls file and one stations file.")
+                with st.spinner(get_jurisdiction_message()):
+                    detected_state_full, detected_city = reverse_geocode_state(
+                        df_c_opt['lat'].iloc[0], df_c_opt['lon'].iloc[0]
+                    )
+                    if detected_state_full and detected_state_full in US_STATES_ABBR:
+                        st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
+                        if detected_city and detected_city != 'Unknown City':
+                            st.session_state['active_city'] = detected_city
+                        st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
+                st.session_state['csvs_ready'] = True
+                st.rerun()
 
     with path_demo_col:
         st.markdown(f"""
