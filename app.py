@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
@@ -228,6 +227,33 @@ STATION_COLORS = [
     "#00D2FF", "#39FF14", "#FFD700", "#FF007F", "#FF4500",
     "#00FFCC", "#FF3333", "#7FFF00", "#00FFFF", "#FF9900"
 ]
+
+# ── Feel-good loading messages honoring law enforcement ──────────────────────
+HERO_MESSAGES = [
+    "🚔 Building safer communities, one drone at a time…",
+    "🛡️ Loading data because your officers deserve better tools…",
+    "🫡 Honoring the men and women who answer the call every day…",
+    "💙 Officers run toward danger so the rest of us don't have to…",
+    "🚁 Optimizing so your team gets there first — every time…",
+    "🌟 Every second we save is a life better protected…",
+    "🤝 Technology in service of the community's greatest heroes…",
+    "💪 Your officers deserve every advantage we can give them…",
+    "🙏 Dedicated to the families who wait at home while heroes serve…",
+    "🏅 Processing data worthy of those who wear the badge with pride…",
+    "🌃 Mapping the city your officers protect through every shift…",
+    "🔵 Building a network as reliable as the officers who depend on it…",
+    "❤️ Because faster response means more lives saved…",
+    "🌅 Creating tools that let officers come home safely every night…",
+    "🦅 Guardian drones — always watching, always ready to assist…",
+    "🏘️ Modeling coverage for the neighborhoods they protect and serve…",
+    "📡 Connecting technology to the courage already on the streets…",
+    "🧠 Smart systems for smarter, safer law enforcement…",
+    "🌟 Every data point represents a community worth protecting…",
+    "🚨 Fewer false alarms. More real backup. Better outcomes for all…",
+]
+
+def get_hero_message():
+    return random.choice(HERO_MESSAGES)
 
 def get_base64_of_bin_file(bin_file):
     try:
@@ -733,7 +759,7 @@ def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir):
 @st.cache_resource
 def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash):
     gdf_calls = gpd.GeoDataFrame(df_calls, geometry=gpd.points_from_xy(df_calls.lon, df_calls.lat), crs="EPSG:4326")
-    gdf_calls_utm = gdf_calls.to_crs(epsg=epsg_code)
+    gdf_calls_utm = gdf_calls.to_crs(epsg=int(epsg_code))
     try:
         calls_in_city = gdf_calls_utm[gdf_calls_utm.within(_city_m)]
     except Exception:
@@ -752,7 +778,7 @@ def precompute_spatial_data(df_calls, df_stations_all, _city_m, epsg_code, resp_
     if not calls_in_city.empty:
         calls_array = np.array(list(zip(calls_in_city.geometry.x, calls_in_city.geometry.y)))
         for idx_pos, (i, row) in enumerate(df_stations_all.iterrows()):
-            s_pt_m = gpd.GeoSeries([Point(row['lon'], row['lat'])], crs="EPSG:4326").to_crs(epsg=epsg_code).iloc[0]
+            s_pt_m = gpd.GeoSeries([Point(row['lon'], row['lat'])], crs="EPSG:4326").to_crs(epsg=int(epsg_code)).iloc[0]
             dists = np.sqrt((calls_array[:,0]-s_pt_m.x)**2 + (calls_array[:,1]-s_pt_m.y)**2)
             dists_mi = dists / 1609.34
             mask_r = dists <= radius_resp_m
@@ -813,7 +839,11 @@ def solve_mclp(resp_matrix, guard_matrix, dist_r, dist_g, num_resp, num_guard, a
             if cover: model += y[i] <= pulp.lpSum(cover)
             else: model += y[i] == 0
         model.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=10, gapRel=0.0))
-        return [i for i in range(n_stations) if pulp.value(x_r[i]) == 1], [i for i in range(n_stations) if pulp.value(x_g[i]) == 1]
+        # FIX #10: use > 0.5 instead of == 1 to handle float solver outputs
+        return (
+            [i for i in range(n_stations) if (pulp.value(x_r[i]) or 0) > 0.5],
+            [i for i in range(n_stations) if (pulp.value(x_g[i]) or 0) > 0.5]
+        )
 
     if not incremental:
         res_r, res_g = run_lp(num_resp, num_guard, [], [])
@@ -1204,7 +1234,7 @@ if not st.session_state['csvs_ready']:
                 if len(df_s) > 100:
                     df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
                 st.session_state['df_stations'] = df_s
-                with st.spinner("🌍 Auto-detecting jurisdiction…"):
+                with st.spinner(f"🌍 {get_hero_message()}"):
                     detected_state_full, detected_city = reverse_geocode_state(
                         df_c['lat'].iloc[0], df_c['lon'].iloc[0]
                     )
@@ -1239,7 +1269,6 @@ if not st.session_state['csvs_ready']:
             st.session_state['_last_demo_city'] = rcity
             st.session_state['target_cities'] = [{"city": rcity, "state": rstate}]
             st.session_state.city_count = 1
-            # Clear the text input widget state so it doesn't override the random pick
             for i in range(10):
                 st.session_state.pop(f"c_{i}", None)
                 st.session_state.pop(f"s_{i}", None)
@@ -1284,7 +1313,7 @@ if not st.session_state['csvs_ready']:
             st.session_state['active_city']  = f"{active_targets[0]['city']} & {len(active_targets)-1} others"
             st.session_state['active_state'] = active_targets[0]['state']
 
-        prog = st.progress(0, text="Starting simulation…")
+        prog = st.progress(0, text="🫡 Preparing tools worthy of those who serve…")
         all_gdfs = []
         total_estimated_pop = 0
 
@@ -1292,7 +1321,7 @@ if not st.session_state['csvs_ready']:
             c_name = loc['city'].strip()
             s_name = loc['state']
             prog.progress(10 + int((i / len(active_targets)) * 20),
-                          text=f"📡 Fetching boundary for {c_name}, {s_name}…")
+                          text=f"🗺️ Mapping {c_name}, {s_name} — because every block they patrol matters…")
             success, temp_gdf = fetch_tiger_city_shapefile(STATE_FIPS[s_name], c_name, SHAPEFILE_DIR)
             if success:
                 all_gdfs.append(temp_gdf)
@@ -1324,7 +1353,7 @@ if not st.session_state['csvs_ready']:
             st.error("❌ Could not find Census boundaries for any of the entered locations. Check spelling.")
             st.stop()
 
-        prog.progress(35, text="✅ Boundaries loaded. Combining regions…")
+        prog.progress(35, text="💙 Boundaries loaded — honoring the officers who know every street…")
         active_city_gdf = pd.concat(all_gdfs, ignore_index=True)
         city_poly = active_city_gdf.geometry.union_all()
         st.session_state['estimated_pop'] = total_estimated_pop
@@ -1333,7 +1362,7 @@ if not st.session_state['csvs_ready']:
         st.session_state['total_original_calls'] = annual_cfs
         simulated_points_count = min(int(annual_cfs / 12), 25000)
 
-        prog.progress(55, text="📍 Generating clustered 911 call distribution…")
+        prog.progress(55, text="🚔 Modeling 911 calls — every one represents someone who needed help…")
         np.random.seed(42)
         call_points = generate_clustered_calls(city_poly, simulated_points_count)
         st.session_state['df_calls'] = pd.DataFrame({
@@ -1342,7 +1371,7 @@ if not st.session_state['csvs_ready']:
             'priority': np.random.choice(['High', 'Medium', 'Low'], simulated_points_count)
         })
 
-        prog.progress(80, text="🏢 Distributing municipal infrastructure…")
+        prog.progress(80, text="🏅 Placing stations — giving officers the best possible backup…")
         station_points = generate_random_points_in_polygon(city_poly, 100)
         types = ['Police', 'Fire', 'EMS'] * 34
         st.session_state['df_stations'] = pd.DataFrame({
@@ -1352,7 +1381,7 @@ if not st.session_state['csvs_ready']:
             'type': types[:len(station_points)]
         })
 
-        prog.progress(100, text="✅ Simulation complete!")
+        prog.progress(100, text="✅ Ready — built for the communities they protect and serve.")
         st.session_state['inferred_daily_calls_override'] = int(annual_cfs / 365)
         st.session_state['csvs_ready'] = True
         st.rerun()
@@ -1366,7 +1395,7 @@ if st.session_state['csvs_ready']:
     df_calls = st.session_state['df_calls'].copy()
     df_stations_all = st.session_state['df_stations'].copy()
 
-    with st.spinner("🌍 Identifying jurisdictions…"):
+    with st.spinner(f"🌍 {get_hero_message()}"):
         master_gdf = find_relevant_jurisdictions(df_calls, df_stations_all, SHAPEFILE_DIR)
 
     if master_gdf is None or master_gdf.empty:
@@ -1446,7 +1475,8 @@ if st.session_state['csvs_ready']:
     center_lat = (miny + maxy) / 2
     dynamic_zoom = calculate_zoom(minx, maxx, miny, maxy)
     utm_zone = int((center_lon + 180) / 6) + 1
-    epsg_code = f"326{utm_zone}" if center_lat > 0 else f"327{utm_zone}"
+    # FIX #6: epsg_code must be int for geopandas
+    epsg_code = int(f"326{utm_zone}") if center_lat > 0 else int(f"327{utm_zone}")
 
     city_m = None
     city_boundary_geom = None
@@ -1461,14 +1491,23 @@ if st.session_state['csvs_ready']:
         st.error(f"Geometry Error: {e}"); st.stop()
 
     n = len(df_stations_all)
-    bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}"
+
+    # FIX #7: define bounds_hash ONCE after all slider values are known, then call precompute only once
+    k_responder = st.sidebar.slider("🚁 Responder Count", 0, max(1, n), min(st.session_state.get('k_resp', 0), n),
+                                    help="Short-range tactical drones (2-3mi radius).")
+    k_guardian  = st.sidebar.slider("🦅 Guardian Count",  0, max(1, n), min(st.session_state.get('k_guard', 0), n),
+                                    help="Long-range heavy-lift drones (up to 8mi radius).")
+    resp_radius_mi  = st.sidebar.slider("🚁 Responder Range (mi)", 2.0, 3.0, st.session_state.get('r_resp', 2.0), step=0.5)
+    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (mi)", 1, 8, int(st.session_state.get('r_guard', 8)))
+    st.session_state.update({'k_resp': k_responder, 'k_guard': k_guardian, 'r_resp': resp_radius_mi, 'r_guard': guard_radius_mi})
+
+    # Single bounds_hash including radii — used for both precompute and elbow curves
+    bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}_{resp_radius_mi}_{guard_radius_mi}"
 
     prog2 = st.sidebar.empty()
-    prog2.caption("⚡ Precomputing spatial matrices…")
+    prog2.caption(f"⚡ {get_hero_message()}")
     calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls = precompute_spatial_data(
-        df_calls, df_stations_all, city_m, epsg_code,
-        st.session_state.get('r_resp', 2.0), st.session_state.get('r_guard', 8.0),
-        center_lat, center_lon, bounds_hash
+        df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash
     )
     df_curve = compute_all_elbow_curves(
         total_calls, resp_matrix, guard_matrix,
@@ -1483,30 +1522,12 @@ if st.session_state['csvs_ready']:
         series = df_curve[col_name].dropna()
         if len(series) == 0: return 1
         idx_99 = series[series >= 99.0].first_valid_index()
-        return int(df_curve.loc[idx_99 if idx_99 is not None else series.last_valid_index(), 'Drones'])
+        fallback = series.index[-1]
+        return int(df_curve.loc[idx_99 if idx_99 is not None else fallback, 'Drones'])
 
+    # Clamp slider maxes now that we have curve data
     max_r = min(max(1, get_max_drones('Responder (Calls)') + 4), n)
     max_g = min(max(1, get_max_drones('Guardian (Calls)') + 4), n)
-
-    k_responder = st.sidebar.slider("🚁 Responder Count", 0, max_r, min(st.session_state.get('k_resp',0), max_r),
-                                    help="Short-range tactical drones (2-3mi radius).")
-    k_guardian  = st.sidebar.slider("🦅 Guardian Count",  0, max_g, min(st.session_state.get('k_guard',0), max_g),
-                                    help="Long-range heavy-lift drones (up to 8mi radius).")
-    resp_radius_mi  = st.sidebar.slider("🚁 Responder Range (mi)", 2.0, 3.0, st.session_state.get('r_resp', 2.0), step=0.5)
-    guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (mi)", 1, 8, int(st.session_state.get('r_guard', 8)))
-    st.session_state.update({'k_resp': k_responder, 'k_guard': k_guardian, 'r_resp': resp_radius_mi, 'r_guard': guard_radius_mi})
-
-    bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}_{resp_radius_mi}_{guard_radius_mi}"
-    calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls = precompute_spatial_data(
-        df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash
-    )
-    df_curve = compute_all_elbow_curves(
-        total_calls, resp_matrix, guard_matrix,
-        [s['clipped_2m'] for s in station_metadata],
-        [s['clipped_guard'] for s in station_metadata],
-        city_m.area if city_m else 1.0, bounds_hash,
-        max_stations=30
-    )
 
     faa_geojson = load_faa_parquet(minx, miny, maxx, maxy)
     airfields = fetch_airfields(minx, miny, maxx, maxy)
@@ -1532,7 +1553,6 @@ if st.session_state['csvs_ready']:
     chrono_r, chrono_g = [], []
     best_combo = None
 
-    # ── OPTIMIZATION CACHE KEY ────────────────────────────────────────
     opt_cache_key = f"{k_responder}_{k_guardian}_{resp_radius_mi}_{guard_radius_mi}_{opt_strategy}_{allow_redundancy}_{incremental_build}_{bounds_hash}"
 
     if k_responder + k_guardian > n:
@@ -1545,18 +1565,17 @@ if st.session_state['csvs_ready']:
         chrono_r, chrono_g = [], []
         best_combo = None
     else:
-        # Only re-run optimizer if parameters actually changed
         if st.session_state.get('_opt_cache_key') != opt_cache_key:
             if opt_strategy == "Maximize Call Coverage":
                 stage_bar = st.empty()
-                stage_bar.info("🧠 Running MCLP optimizer… this may take 10-20 seconds for large fleets.")
+                stage_bar.info("🧠 Optimizing coverage — because smarter deployment means safer streets…")
                 r_best, g_best, chrono_r, chrono_g = solve_mclp(
                     resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g,
                     k_responder, k_guardian, allow_redundancy, incremental=incremental_build
                 )
                 best_combo = (tuple(r_best), tuple(g_best))
                 stage_bar.empty()
-                st.toast("✅ Optimization complete!", icon="✅")
+                st.toast("✅ Optimization complete — your officers just got powerful new backup!", icon="✅")
             else:
                 def evaluate_combo(rg_combo):
                     r_combo, g_combo = rg_combo
@@ -1573,7 +1592,7 @@ if st.session_state['csvs_ready']:
                     return (score_area, score_calls, score_cent, rg_combo)
 
                 stage_bar = st.empty()
-                stage_bar.info("🗺️ Optimizing for land area coverage…")
+                stage_bar.info("🗺️ Maximizing land coverage — no neighborhood left behind…")
                 if incremental_build:
                     locked_r, locked_g = (), ()
                     chrono_r, chrono_g = [], []
@@ -1611,15 +1630,13 @@ if st.session_state['csvs_ready']:
                     best_combo = max(results, key=lambda x: x[:3])[3]
                     chrono_r, chrono_g = list(best_combo[0]), list(best_combo[1])
                 stage_bar.empty()
-                st.toast("✅ Optimization complete!", icon="✅")
+                st.toast("✅ Coverage optimized — every corner of the city now has aerial support!", icon="✅")
 
-            # Save result to session state
             st.session_state['_opt_cache_key']  = opt_cache_key
             st.session_state['_opt_best_combo'] = best_combo
             st.session_state['_opt_chrono_r']   = chrono_r
             st.session_state['_opt_chrono_g']   = chrono_g
         else:
-            # Parameters unchanged — reuse cached result instantly
             best_combo = st.session_state.get('_opt_best_combo')
             chrono_r   = st.session_state.get('_opt_chrono_r', [])
             chrono_g   = st.session_state.get('_opt_chrono_g', [])
@@ -1820,16 +1837,23 @@ if st.session_state['csvs_ready']:
 
         logo_b64 = get_base64_of_bin_file("logo.png")
         logo_html_str = f'<img src="data:image/png;base64,{logo_b64}" style="height:40px;">' if logo_b64 else '<div style="font-size:28px;font-weight:900;letter-spacing:3px;color:#111;">BRINC</div>'
-# ── GRANT NARRATIVE VARIABLES ─────────────────────────────────
+
+        # ── GRANT NARRATIVE VARIABLES ─────────────────────────────────────
         jurisdiction_list = ", ".join(selected_names) if selected_names else prop_city
-        police_stations = [d['name'] for d in active_drones if 'Police' in d.get('name','') or (
-    'type' in df_stations_all.columns and
-    'Police' in str(df_stations_all[df_stations_all['name'].str.contains(d['name'].split(']')[-1].strip(), na=False)]['type'].values[:1])
-)]
+        # FIX #1 (original): Guard 'type' column access throughout
         all_station_types = df_stations_all['type'].dropna().unique().tolist() if 'type' in df_stations_all.columns else []
         police_dept_names = [d['name'] for d in active_drones if '[Police]' in d['name']]
         fire_dept_names   = [d['name'] for d in active_drones if '[Fire]' in d['name']]
         ems_dept_names    = [d['name'] for d in active_drones if '[EMS]' in d['name']]
+
+        # FIX #1 (original): safe access with column existence guard
+        police_stations = [d['name'] for d in active_drones if 'Police' in d.get('name','') or (
+            'type' in df_stations_all.columns and
+            'Police' in str(df_stations_all[df_stations_all['name'].str.contains(
+                d['name'].split(']')[-1].strip(), na=False, regex=False
+            )]['type'].values[:1])
+        )]
+
         dept_summary_parts = []
         if police_dept_names: dept_summary_parts.append(f"{len(police_dept_names)} Police station{'s' if len(police_dept_names)>1 else ''}")
         if fire_dept_names:   dept_summary_parts.append(f"{len(fire_dept_names)} Fire station{'s' if len(fire_dept_names)>1 else ''}")
@@ -1838,6 +1862,7 @@ if st.session_state['csvs_ready']:
         police_names_str = (", ".join([n.replace('[Police] ','') for n in police_dept_names[:6]]) + ("..." if len(police_dept_names)>6 else "")) if police_dept_names else "municipal facilities"
         total_fleet = actual_k_responder + actual_k_guardian
         area_sq_mi_est = int((maxx - minx) * (maxy - miny) * 3280)
+
         export_html = f"""<html><head><title>BRINC DFR Proposal — {prop_city}</title>
         <style>
         body{{font-family:'Helvetica Neue',Arial,sans-serif;color:#333;margin:0;padding:40px;background:#f4f6f9;}}
@@ -2036,13 +2061,13 @@ if st.session_state['csvs_ready']:
                 line=dict(color=d['color'], width=4.5),
                 fill='toself', fillcolor='rgba(0,0,0,0)', name=lbl, hoverinfo='name'))
 
-            # ── Guardian 5-mile rapid response focus ring ─────────────
+            # Guardian 5-mile rapid response focus ring
             if d['type'] == 'GUARDIAN' and d['radius_m']/1609.34 > 5.0:
                 f_lats, f_lons = get_circle_coords(d['lat'], d['lon'], r_mi=5.0)
                 fig.add_trace(go.Scattermapbox(
                     lat=list(f_lats), lon=list(f_lons),
                     mode='lines',
-                    line=dict(color=d['color'], width=1.5, dash='dot' if False else None),
+                    line=dict(color=d['color'], width=1.5),
                     opacity=0.5,
                     fill='toself',
                     fillcolor=f"rgba({int(d['color'][1:3],16)},{int(d['color'][3:5],16)},{int(d['color'][5:7],16)},0.06)",
@@ -2188,12 +2213,18 @@ if st.session_state['csvs_ready']:
 
         show_sim = st.toggle("🎬 Enable 3D Simulation", value=False)
         if show_sim:
-            calls_coords = np.column_stack((calls_in_city['lon'], calls_in_city['lat']))
+            # FIX #4: use .geometry.x/.y instead of ['lon']/['lat'] on GeoDataFrame
+            calls_coords = np.column_stack((calls_in_city.geometry.x, calls_in_city.geometry.y))
+
+            # Project calls back to lon/lat for simulation (calls_in_city is in UTM)
+            calls_lonlat = calls_in_city.to_crs(epsg=4326)
+            calls_coords = np.column_stack((calls_lonlat.geometry.x, calls_lonlat.geometry.y))
+
             sim_assignments = {i:[] for i in range(len(active_drones))}
             for c_idx, cc in enumerate(calls_coords):
                 best_d, best_dist = -1, float('inf')
                 for d_idx, d in enumerate(active_drones):
-                    if d['cov_array'][c_idx]:
+                    if d['cov_array'][c_idx] if c_idx < len(d['cov_array']) else False:
                         dist = (cc[0]-d['lon'])**2 + (cc[1]-d['lat'])**2
                         if dist < best_dist:
                             best_dist, best_d = dist, d_idx
@@ -2210,7 +2241,15 @@ if st.session_state['csvs_ready']:
                 frac = len(sim_assignments[d_idx])/len(calls_coords) if calls_coords.shape[0]>0 else 0
                 monthly_for_drone = int(frac * calls_per_day * 30 * dfr_dispatch_rate)
                 pool = sim_assignments[d_idx]
-                sim_calls = random.choices(pool, k=monthly_for_drone) if monthly_for_drone > len(pool) else random.sample(pool, min(monthly_for_drone, len(pool)))
+
+                # FIX #13: guard against empty pool before random.choices
+                if not pool:
+                    sim_calls = []
+                elif monthly_for_drone > len(pool):
+                    sim_calls = random.choices(pool, k=monthly_for_drone)
+                else:
+                    sim_calls = random.sample(pool, monthly_for_drone)
+
                 total_sim_flights += len(sim_calls)
                 for ci in sim_calls:
                     lon1,lat1 = calls_coords[ci]
