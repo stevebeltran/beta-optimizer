@@ -933,7 +933,7 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
                     break
                 else:
                     hq.heappush(pq, (-actual_gain, idx))
-            if best_s != -1 and best_cov / max(1, n_calls) >= 0.005:
+            if best_s != -1 and best_cov > 0:
                 uncovered = uncovered & ~matrix[best_s]
                 cov_count += best_cov
                 curve.append((cov_count / max(1, n_calls)) * 100)
