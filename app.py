@@ -1269,71 +1269,243 @@ if not st.session_state['csvs_ready']:
         </div>
         """, unsafe_allow_html=True)
 
-        call_file, station_file = None, None
+# --- NEW FILE IDENTIFICATION LOGIC ---
+        call_files = []
+        station_file = None
         if uploaded_files:
             for f in uploaded_files:
-                fname = f.name.lower()
-                if fname == "calls.csv":    call_file = f
-                elif fname == "stations.csv": station_file = f
+                if "station" in f.name.lower():
+                    station_file = f
+                else:
+                    call_files.append(f)
 
-            if call_file and station_file:
-                df_c = pd.read_csv(call_file)
-                df_c.columns = [str(c).lower().strip() for c in df_c.columns]
-                df_c = df_c.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
-                if 'lat' not in df_c.columns or 'lon' not in df_c.columns:
-                    st.error(f"❌ calls.csv must have lat/lon columns. Found: {', '.join(df_c.columns)}")
-                    st.stop()
-                keep_c = ['lat', 'lon'] + (['priority'] if 'priority' in df_c.columns else [])
-                df_c = df_c[keep_c].dropna(subset=['lat', 'lon']).reset_index(drop=True)
-                st.session_state['total_original_calls'] = len(df_c)
-                if len(df_c) > 25000:
-                    df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
-                    st.toast("⚠️ Sampled to 25,000 calls for performance.")
-                st.session_state['df_calls'] = df_c
+        if call_files:
+            # --- AGGRESSIVE CSV PARSER FUNCTIONS ---
+            import io
+            import re
+            
+            def parse_priority(raw):
+                s = str(raw).strip().upper()
+                if not s or s == 'NAN': return None
+                if re.search(r'\bNON[\-\s]?EMERG|\bROUTINE\b|\bINFORMATIONAL\b', s): return 4
+                if re.search(r'\bHIGH\b|\bEMERG|\bCRITICAL\b', s): return 1
+                if re.search(r'\bMED', s): return 2
+                if re.search(r'\bLOW\b', s): return 3
+                m = re.search(r'^(\d+)', s)
+                if m: return int(m.group(1))
+                m2 = re.search(r'(\d+)', s)
+                if m2: return int(m2.group(1))
+                return None
+
+            CV = {
+                'date': ['received date','incident date','call date','call creation date','calldatetime','call datetime','calltime','timestamp','date','datetime','dispatch date','time received','incdate'],
+                'time': ['call creation time','call time','dispatch time','received time','time'],
+                'priority': ['call priority','priority level','priority','pri','urgency'],
+                'lat': ['call original address latitude','address latitude','addresslatitude','latitude','lat','ycoor','y coor','ycoord','y coord','y coordinate','y-coordinate','addressy','ylat','lat y','coord y','coordy','geo lat','geolat','point y','pointy','address y'],
+                'lon': ['call original address longitude','address longitude','addresslongitude','longitude','lon','long','xcoor','x coor','xcoord','x coord','x coordinate','x-coordinate','lng','addressx','xlong','lon x','coord x','coordx','geo lon','geolon','point x','pointx','address x']
+            }
+
+            def is_header_row(row):
+                for v in row:
+                    v = str(v).strip()
+                    if not v: continue
+                    if re.search(r'^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}', v): return False
+                    if re.search(r'^\d{4}[\/\-]\d{2}[\/\-]\d{2}', v): return False
+                    if re.match(r'^-?\d+\.\d{3,}$', v): return False
+                return True
+
+            def infer_headers(df):
+                m = {'date': -1, 'time': -1, 'priority': -1, 'lat': -1, 'lon': -1}
+                sample = df.head(40)
+                for ci in range(len(df.columns)):
+                    vals = sample.iloc[:, ci].dropna().astype(str).tolist()
+                    if len(vals) < 3: continue
+                    n = len(vals)
+                    dh = sum(1 for v in vals if re.search(r'\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}', v))
+                    def is_float(v):
+                        try: float(v); return True
+                        except: return False
+                    lah = sum(1 for v in vals if is_float(v) and '.' in v and abs(float(v)) <= 90 and len(v) > 4)
+                    loh = sum(1 for v in vals if is_float(v) and '.' in v and 90 < abs(float(v)) <= 180)
+                    ph = sum(1 for v in vals if re.search(r'^\d$', v) or re.search(r'^\d[-\s]', v) or re.search(r'(?i)medium|high|low|emerg|routine|critical|p1|p2|p3|p4', v))
+                    thr = n * 0.45
+                    if dh >= thr and m['date'] < 0: m['date'] = ci; continue
+                    if loh >= thr and m['lon'] < 0: m['lon'] = ci; continue
+                    if lah >= thr and m['lat'] < 0: m['lat'] = ci; continue
+                    if ph >= thr and m['priority'] < 0: m['priority'] = ci; continue
+                return m
+
+            # --- PROCESS CALL FILES ---
+            all_calls_list = []
+            for cfile in call_files:
+                content = cfile.getvalue().decode('utf-8', errors='ignore')
+                first_line = content.split('\n')[0]
+                delim = ',' if first_line.count(',') > first_line.count('\t') else '\t'
+                raw_df = pd.read_csv(io.StringIO(content), sep=delim, header=None, dtype=str)
+                if raw_df.empty: continue
+                
+                row0 = raw_df.iloc[0].tolist()
+                has_h = is_header_row(row0)
+                
+                if has_h:
+                    headers = [str(c).lower().strip().replace(r'[^a-z0-9]', ' ') for c in row0]
+                    data_df = raw_df.iloc[1:].reset_index(drop=True)
+                    data_df.columns = headers
+                else:
+                    headers = [f"col_{i}" for i in range(len(row0))]
+                    data_df = raw_df.copy()
+                    data_df.columns = headers
+                    
+                map_cols = {'date': -1, 'time': -1, 'priority': -1, 'lat': -1, 'lon': -1}
+                if has_h:
+                    for field, syns in CV.items():
+                        for i, col in enumerate(headers):
+                            if any(s in col for s in syns):
+                                map_cols[field] = i
+                                break
+                
+                if map_cols['lat'] < 0 or map_cols['lon'] < 0 or map_cols['date'] < 0:
+                    infer_map = infer_headers(data_df)
+                    for k, v in map_cols.items():
+                        if v < 0 and infer_map[k] >= 0:
+                            map_cols[k] = infer_map[k]
+                            
+                if map_cols['lat'] < 0 or map_cols['lon'] < 0:
+                    for ci in range(len(data_df.columns)):
+                        vals = pd.to_numeric(data_df.iloc[:, ci], errors='coerce').dropna()
+                        if len(vals) >= 5:
+                            avg_abs = vals.abs().mean()
+                            any_neg = (vals < 0).any()
+                            all_lat = vals.between(-90, 90).all()
+                            all_lon = vals.between(-180, 180).all()
+                            if map_cols['lat'] < 0 and all_lat and 0.1 < avg_abs < 90:
+                                map_cols['lat'] = ci
+                            elif map_cols['lon'] < 0 and all_lon and any_neg and avg_abs > 90:
+                                map_cols['lon'] = ci
+                
+                res = pd.DataFrame()
+                if map_cols['lat'] >= 0: res['lat'] = pd.to_numeric(data_df.iloc[:, map_cols['lat']], errors='coerce')
+                else: res['lat'] = np.nan
+                
+                if map_cols['lon'] >= 0: res['lon'] = pd.to_numeric(data_df.iloc[:, map_cols['lon']], errors='coerce')
+                else: res['lon'] = np.nan
+                
+                if map_cols['priority'] >= 0: res['priority'] = data_df.iloc[:, map_cols['priority']].apply(parse_priority)
+                else: res['priority'] = np.nan
+                
+                if map_cols['date'] >= 0:
+                    date_col = data_df.iloc[:, map_cols['date']]
+                    time_col = data_df.iloc[:, map_cols['time']] if map_cols['time'] >= 0 else None
+                    if time_col is not None:
+                        combined = date_col.astype(str).str.strip() + " " + time_col.astype(str).str.strip()
+                        same_mask = date_col.astype(str).str.strip() == time_col.astype(str).str.strip()
+                        combined[same_mask] = date_col.astype(str).str.strip()[same_mask]
+                    else:
+                        combined = date_col.astype(str).str.strip()
+                    dt_series = pd.to_datetime(combined, errors='coerce')
+                    res['date'] = dt_series.dt.strftime('%Y-%m-%d')
+                    res['time'] = dt_series.dt.strftime('%H:%M:%S')
+                else:
+                    res['date'], res['time'] = np.nan, np.nan
+                    
+                all_calls_list.append(res)
+                
+            if not all_calls_list:
+                st.error("❌ No valid calls data could be parsed from the uploaded files.")
+                st.stop()
+                
+            df_c = pd.concat(all_calls_list, ignore_index=True)
+            df_c = df_c.dropna(subset=['lat', 'lon']).reset_index(drop=True)
+            
+            if df_c.empty:
+                st.error("❌ No coordinates found in the uploaded calls.")
+                st.stop()
+
+            st.session_state['total_original_calls'] = len(df_c)
+            if len(df_c) > 25000:
+                df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
+                st.toast("⚠️ Sampled to 25,000 calls for performance.")
+                
+            # Filter outliers based on Call Density (IQR)
+            q1_lat, q3_lat = df_c['lat'].quantile(0.25), df_c['lat'].quantile(0.75)
+            q1_lon, q3_lon = df_c['lon'].quantile(0.25), df_c['lon'].quantile(0.75)
+            iqr_lat, iqr_lon = q3_lat - q1_lat, q3_lon - q1_lon
+            df_c = df_c[
+                (df_c['lat'] >= q1_lat - 2.5 * iqr_lat) & (df_c['lat'] <= q3_lat + 2.5 * iqr_lat) &
+                (df_c['lon'] >= q1_lon - 2.5 * iqr_lon) & (df_c['lon'] <= q3_lon + 2.5 * iqr_lon)
+            ].reset_index(drop=True)
+            
+            st.session_state['df_calls'] = df_c
+
+            # --- PROCESS STATIONS (Or Auto-Generate!) ---
+            if station_file:
                 df_s = pd.read_csv(station_file)
                 df_s.columns = [str(c).lower().strip() for c in df_s.columns]
-                df_s = df_s.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
+                df_s = df_s.rename(columns={'latitude': 'lat', 'longitude': 'lon', 'station_name': 'name', 'station_type': 'type'})
                 if 'lat' not in df_s.columns or 'lon' not in df_s.columns:
                     st.error(f"❌ stations.csv must have lat/lon columns. Found: {', '.join(df_s.columns)}")
                     st.stop()
-                keep_s = ['lat', 'lon'] + [c for c in ['name', 'type'] if c in df_s.columns]
-                df_s = df_s[keep_s].dropna(subset=['lat', 'lon']).reset_index(drop=True)
-                if 'name' not in df_s.columns:
-                    df_s['name'] = [f"Station {i+1}" for i in range(len(df_s))]
-                if len(df_s) > 100:
-                    df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
+                if 'name' not in df_s.columns: df_s['name'] = [f"Station {i+1}" for i in range(len(df_s))]
+                if len(df_s) > 100: df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
+                df_s = df_s.dropna(subset=['lat', 'lon']).reset_index(drop=True)
                 st.session_state['df_stations'] = df_s
+            else:
+                with st.spinner("🌍 No stations uploaded. Auto-discovering real Police & Fire stations via OpenStreetMap..."):
+                    lat_cen, lon_cen = df_c['lat'].mean(), df_c['lon'].mean()
+                    R = 0.20 # Search radius bounds
+                    min_lat, min_lon, max_lat, max_lon = lat_cen - R, lon_cen - R, lat_cen + R, lon_cen + R
+                    
+                    query = f"""[out:json][timeout:25];(
+                      node["amenity"~"fire_station|police|hospital"]({min_lat},{min_lon},{max_lat},{max_lon});
+                      way["amenity"~"fire_station|police|hospital"]({min_lat},{min_lon},{max_lat},{max_lon});
+                    );out center;"""
+                    
+                    req = urllib.request.Request("https://overpass-api.de/api/interpreter", data=query.encode('utf-8'))
+                    try:
+                        with urllib.request.urlopen(req, timeout=15) as response:
+                            data = json.loads(response.read().decode('utf-8'))
+                            rows = []
+                            for el in data.get('elements', []):
+                                tags = el.get('tags', {})
+                                alat = el.get('lat') or el.get('center', {}).get('lat')
+                                alon = el.get('lon') or el.get('center', {}).get('lon')
+                                if not alat or not alon: continue
+                                
+                                amenity = tags.get('amenity', '')
+                                t_label = 'Fire' if amenity == 'fire_station' else 'Police' if amenity == 'police' else 'EMS'
+                                fname = tags.get('name', f"Municipal {t_label} Facility")
+                                rows.append({'name': fname, 'lat': alat, 'lon': alon, 'type': t_label})
+                            df_s = pd.DataFrame(rows)
+                    except Exception:
+                        df_s = pd.DataFrame()
+                    
+                    # Fallback if OSM fails or returns too few (Generate optimal clustered candidates)
+                    if df_s.empty or len(df_s) < 5:
+                        st.toast("⚠️ OSM query returned few stations. Generating optimal candidates.")
+                        station_points = generate_random_points_in_polygon(box(lon_cen-0.05, lat_cen-0.05, lon_cen+0.05, lat_cen+0.05), 50)
+                        types = ['Police', 'Fire', 'EMS'] * 20
+                        df_s = pd.DataFrame({
+                            'name': [f'Candidate Site {i+1}' for i in range(len(station_points))],
+                            'lat':  [p[0] for p in station_points],
+                            'lon':  [p[1] for p in station_points],
+                            'type': types[:len(station_points)]
+                        })
+                    st.session_state['df_stations'] = df_s.drop_duplicates(subset=['lat', 'lon']).reset_index(drop=True)
+                    st.toast(f"✅ Auto-generated {len(st.session_state['df_stations'])} station candidates!")
 
-                # --- NEW OUTLIER FILTER ---
-                # Find the bounding box of the actual stations
-                lat_min, lat_max = df_s['lat'].min(), df_s['lat'].max()
-                lon_min, lon_max = df_s['lon'].min(), df_s['lon'].max()
-                
-                # Filter out any calls that are more than ~35 miles (0.5 degrees) from the station cluster
-                df_c = df_c[
-                    (df_c['lat'] >= lat_min - 0.5) & (df_c['lat'] <= lat_max + 0.5) &
-                    (df_c['lon'] >= lon_min - 0.5) & (df_c['lon'] <= lon_max + 0.5)
-                ]
-                
-                # Re-save the newly cleaned calls to the session state
-                st.session_state['df_calls'] = df_c
-                st.session_state['total_original_calls'] = len(df_c)
-                # --------------------------
-                
-                with st.spinner(get_jurisdiction_message()):
-                    detected_state_full, detected_city = reverse_geocode_state(
-                        df_c['lat'].iloc[0], df_c['lon'].iloc[0]
-                    )
-                    if detected_state_full and detected_state_full in US_STATES_ABBR:
-                        st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
-                        if detected_city and detected_city != 'Unknown City':
-                            st.session_state['active_city'] = detected_city
-                        st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
-                st.session_state['csvs_ready'] = True
-                st.rerun()
-            elif call_file or station_file:
-                missing = "stations.csv" if call_file else "calls.csv"
-                st.warning(f"⚠️ Also upload **{missing}** to continue.")
+            with st.spinner(get_jurisdiction_message()):
+                detected_state_full, detected_city = reverse_geocode_state(df_c['lat'].iloc[0], df_c['lon'].iloc[0])
+                if detected_state_full and detected_state_full in US_STATES_ABBR:
+                    st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
+                    if detected_city and detected_city != 'Unknown City':
+                        st.session_state['active_city'] = detected_city
+                    st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
+            st.session_state['csvs_ready'] = True
+            st.rerun()
+
+        elif not call_files and not station_file:
+            # Note: Because we removed the strict station_file requirement, this block only triggers if NO files are dragged in.
+            pass
 
     with path_demo_col:
         st.markdown(f"""
