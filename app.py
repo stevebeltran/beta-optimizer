@@ -2470,10 +2470,9 @@ if st.session_state['csvs_ready']:
             </p>
             <div style="margin-top: 50px; font-family:'Manrope', Arial, sans-serif !important;">
                 <div style="border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
-                    {{analytics_html_export}}
+                    [ANALYTICS_HTML_EXPORT]
                 </div>
             </div>
-        </div>
         <div class="footer">
             <div class="footer-logo">BRINC</div>
             <div style="font-weight:bold; font-size:15px; margin-bottom:8px; color:#fff;">BRINC Drones, Inc.</div>
@@ -2490,8 +2489,8 @@ if st.session_state['csvs_ready']:
         </div>
         </div></body></html>"""
 
-        # Format safely since analytics contains curly braces
-        export_html = export_html.replace("{{analytics_html_export}}", analytics_html_export)
+        # Format safely using a plain text placeholder
+        export_html = export_html.replace("[ANALYTICS_HTML_EXPORT]", analytics_html_export)
 
         if st.sidebar.download_button("💾 Save Deployment Plan", data=json.dumps(export_dict),
                                       file_name=f"Brinc_{safe_city}_{current_time_str}.brinc",
