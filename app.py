@@ -1468,7 +1468,8 @@ default_selection = [all_options[0]] if all_options else []
 
 selected_labels = st.sidebar.multiselect("Jurisdictions", options=all_options, default=default_selection,
                                          help="Select which geographic areas to include in coverage analysis.")
-    if not selected_labels:
+
+if not selected_labels:
         st.warning("Please select at least one jurisdiction from the sidebar.")
         st.stop()
     selected_names = [options_map[l] for l in selected_labels]
