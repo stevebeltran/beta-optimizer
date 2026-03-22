@@ -1822,7 +1822,10 @@ if st.session_state['csvs_ready']:
         logo_html_str = f'<img src="data:image/png;base64,{logo_b64}" style="height:40px;">' if logo_b64 else '<div style="font-size:28px;font-weight:900;letter-spacing:3px;color:#111;">BRINC</div>'
 # ── GRANT NARRATIVE VARIABLES ─────────────────────────────────
         jurisdiction_list = ", ".join(selected_names) if selected_names else prop_city
-        police_stations = [d['name'] for d in active_drones if 'Police' in d.get('name','') or 'Police' in str(df_stations_all[df_stations_all['name'].str.contains(d['name'].split(']')[-1].strip(), na=False)]['type'].values[:1])]
+        police_stations = [d['name'] for d in active_drones if 'Police' in d.get('name','') or (
+    'type' in df_stations_all.columns and
+    'Police' in str(df_stations_all[df_stations_all['name'].str.contains(d['name'].split(']')[-1].strip(), na=False)]['type'].values[:1])
+)]
         all_station_types = df_stations_all['type'].dropna().unique().tolist() if 'type' in df_stations_all.columns else []
         police_dept_names = [d['name'] for d in active_drones if '[Police]' in d['name']]
         fire_dept_names   = [d['name'] for d in active_drones if '[Fire]' in d['name']]
