@@ -169,14 +169,21 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
             v = sum(hourly_counts[(s + h) % 24] for h in range(win))
             if v > best_v: best_v, best_s = v, s
         pct = (best_v / max(total_calls, 1)) * 100
+        
+        is_active = (win == shift_hours)
+        bg_color = "rgba(0,210,255,0.08)" if is_active else "#0c0c12"
+        br_color = "#00D2FF" if is_active else "#252535"
+        badge_html = "<div style='font-size:8px; color:#00D2FF; margin-left:10px; border:1px solid #00D2FF; padding:1px 4px; border-radius:2px;'>SELECTED</div>" if is_active else ""
+        
         shift_html += f"""
-        <div style="display:flex; align-items:center; background:#0c0c12; border:1px solid #252535; padding:8px; margin-bottom:5px; border-radius:4px;">
+        <div style="display:flex; align-items:center; background:{bg_color}; border:1px solid {br_color}; padding:8px; margin-bottom:5px; border-radius:4px; transition:all 0.2s;">
             <div style="width:50px; font-weight:800; color:#fff; font-size:13px;">{win}hr</div>
             <div style="width:110px; font-family:monospace; color:#00D2FF; font-size:12px;">{best_s:02d}:00 - {(best_s+win)%24:02d}:00</div>
             <div style="flex-grow:1; background:#1a1a26; height:8px; border-radius:4px; margin:0 15px; position:relative;">
                 <div style="position:absolute; left:{(best_s/24)*100}%; width:{(win/24)*100}%; background:#00D2FF; height:100%; border-radius:4px; opacity:0.6;"></div>
             </div>
-            <div style="width:60px; text-align:right; font-family:monospace; color:#00D2FF; font-size:13px;">{pct:.1f}%</div>
+            <div style="width:50px; text-align:right; font-family:monospace; color:#00D2FF; font-size:13px;">{pct:.1f}%</div>
+            {badge_html}
         </div>"""
 
     dow_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -241,16 +248,16 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
     brinc_info = """
     <div style="margin-bottom:20px; background:#0c0c12; border:1px solid #1a1a26; border-radius:4px; padding:18px 22px; display:grid; grid-template-columns:1fr auto; gap:18px; align-items:start;">
         <div style="font-family:monospace; font-size:11px; color:#7777a0; line-height:1.85;">
-            <strong style="color:#00D2FF;font-weight:400;">BRINC</strong> is the largest drone manufacturer focused exclusively on public safety, trusted by <strong style="color:#00D2FF;font-weight:400;">900+ police and fire agencies across all 50 states</strong>. Founded by Blake Resnick and headquartered in <strong style="color:#00D2FF;font-weight:400;">Seattle, WA</strong>, BRINC designs NDAA &amp; CJIS compliant systems built entirely in the USA. The Responder drone reaches 911 calls in under <strong style="color:#00D2FF;font-weight:400;">70 seconds</strong> &mdash; arriving before ground units to deliver live video, two-way communication, and real-time situational awareness. BRINC DFR integrates with CAD, RTCC, ALPR, gunshot detection, 911, and evidence management. Agencies resolve approximately <strong style="color:#00D2FF;font-weight:400;">25% of calls for service</strong> without dispatching officers.<br>
-            <span style="color:#44445a;font-size:9px;">brincdrones.com &middot; Seattle, WA &middot; NDAA &amp; CJIS Compliant &middot; Made in USA &middot; Backed by Sam Altman &amp; Motorola Solutions</span>
+            <strong style="color:#00D2FF;font-weight:400;">BRINC</strong> is the largest drone manufacturer focused exclusively on public safety, trusted by <strong style="color:#00D2FF;font-weight:400;">900+ police and fire agencies across all 50 states</strong>. Founded by Blake Resnick and headquartered in <strong style="color:#00D2FF;font-weight:400;">Seattle, WA</strong>, BRINC designs NDAA & CJIS compliant systems built entirely in the USA. The Responder drone reaches 911 calls in under <strong style="color:#00D2FF;font-weight:400;">70 seconds</strong> — arriving before ground units to deliver live video, two-way communication, and real-time situational awareness. BRINC DFR integrates with CAD, RTCC, ALPR, gunshot detection, 911, and evidence management. Agencies resolve approximately <strong style="color:#00D2FF;font-weight:400;">25% of calls for service</strong> without dispatching officers.<br>
+            <span style="color:#44445a;font-size:9px;">brincdrones.com · Seattle, WA · NDAA & CJIS Compliant · Made in USA · Backed by Sam Altman & Motorola Solutions</span>
         </div>
         <div style="display:flex; flex-direction:column; gap:5px;">
-            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">LEMUR 2 &middot; Indoor Tactical</div>
-            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">RESPONDER &middot; DFR Platform</div>
-            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">BRINC BALL &middot; Compact Response</div>
-            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">GUARDIAN &middot; Perimeter ISR</div>
-            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">LIVEOPS &middot; Fleet Operations</div>
-            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">RESPONDER STATION &middot; Auto Dock</div>
+            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">LEMUR 2 · Indoor Tactical</div>
+            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">RESPONDER · DFR Platform</div>
+            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">BRINC BALL · Compact Response</div>
+            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">GUARDIAN · Perimeter ISR</div>
+            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">LIVEOPS · Fleet Operations</div>
+            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">RESPONDER STATION · Auto Dock</div>
         </div>
     </div>
     """
@@ -1256,20 +1263,17 @@ if not st.session_state['csvs_ready']:
                     df_c = df_c.reset_index(drop=True)
 
                 # ── Stations: load or auto-generate ───────
-                # ── Stations: load or auto-generate ───────
                 if station_file is not None:
                     with st.spinner("🔍 Reading stations file…"):
                         try:
                             df_s = pd.read_csv(station_file)
                             df_s.columns = [str(c).lower().strip() for c in df_s.columns]
-                            
-                            # Rename common columns
                             if 'latitude' in df_s.columns: df_s = df_s.rename(columns={'latitude':'lat'})
                             if 'longitude' in df_s.columns: df_s = df_s.rename(columns={'longitude':'lon'})
                             if 'station_name' in df_s.columns: df_s = df_s.rename(columns={'station_name':'name'})
                             if 'station_type' in df_s.columns: df_s = df_s.rename(columns={'station_type':'type'})
                             
-                            # FORCE LAT/LON TO BE NUMBERS (This fixes the TypeError)
+                            # FORCE LAT/LON TO BE NUMBERS
                             if 'lat' in df_s.columns and 'lon' in df_s.columns:
                                 df_s['lat'] = pd.to_numeric(df_s['lat'], errors='coerce')
                                 df_s['lon'] = pd.to_numeric(df_s['lon'], errors='coerce')
@@ -1278,12 +1282,10 @@ if not st.session_state['csvs_ready']:
 
                             if 'name' not in df_s.columns: df_s['name'] = [f"Station {i+1}" for i in range(len(df_s))]
                             if 'type' not in df_s.columns: df_s['type'] = 'Police'
-                            
                             df_s = df_s.dropna(subset=['lat', 'lon']).reset_index(drop=True)
                             osm_note = "Loaded stations from file."
                         except Exception as e:
                             df_s, osm_note = None, f"Failed: {e}"
-                            
                     if df_s is None or df_s.empty:
                         st.error(f"❌ Stations file error: {osm_note}")
                         st.stop()
@@ -1573,7 +1575,6 @@ if st.session_state['csvs_ready']:
 
     n = len(df_stations_all)
 
-    # Dynamic Sliders based on Area Size
     area_sq_mi = city_m.area / 2589988.11 if city_m and not city_m.is_empty else 100.0
     r_resp_est = st.session_state.get('r_resp', 2.0)
     r_guard_est = st.session_state.get('r_guard', 8.0)
@@ -1875,196 +1876,6 @@ if st.session_state['csvs_ready']:
         active_drones.append(d)
         step += 1
 
-    # ── EXPORT BUTTONS ────────────────────────────────────────────────
-    if fleet_capex > 0:
-        st.sidebar.markdown("---")
-        col_n, col_e = st.sidebar.columns(2)
-        prop_name  = col_n.text_input("Your Name",  value=st.session_state.get('user_name', 'John Doe'), key='user_name')
-        prop_email = col_e.text_input("Your Email", value=st.session_state.get('user_email', 'john.doe@example.com'), key='user_email')
-        st.sidebar.caption("*(Press **Enter** after typing to apply changes to your document)*")
-
-        prop_city  = st.session_state.get('active_city', 'City')
-        prop_state = st.session_state.get('active_state', 'FL')
-        pop_metric = st.session_state.get('estimated_pop', 250000)
-        current_time_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        safe_city = prop_city.replace(" ","_").replace("/","_")
-
-        export_dict = {
-            "city": prop_city, "state": prop_state,
-            "k_resp": k_responder, "k_guard": k_guardian,
-            "r_resp": resp_radius_mi, "r_guard": guard_radius_mi,
-            "dfr_rate": int(dfr_dispatch_rate*100), "deflect_rate": int(deflection_rate*100),
-            "calls_data": json.loads(st.session_state['df_calls'].replace({np.nan:None}).to_json(orient='records')) if st.session_state.get('df_calls') is not None else None,
-            "stations_data": json.loads(st.session_state['df_stations'].replace({np.nan:None}).to_json(orient='records')) if st.session_state.get('df_stations') is not None else None,
-            "faa_geojson": faa_geojson
-        }
-
-        avg_resp_time  = sum(d['avg_time_min'] for d in active_drones)/len(active_drones) if active_drones else 0.0
-        avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level/100)
-        avg_time_saved = ((sum((d['radius_m']/1609.34*1.4/avg_ground_speed)*60 for d in active_drones)/len(active_drones)) - avg_resp_time) if active_drones and avg_ground_speed > 0 else 0.0
-
-        fig_for_export = go.Figure()
-        for d in active_drones:
-            clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
-            fig_for_export.add_trace(go.Scattermapbox(
-                lat=list(clats)+[None,d['lat']], lon=list(clons)+[None,d['lon']],
-                mode='lines+markers', line=dict(color=d['color'], width=3),
-                marker=dict(size=[0]*len(clats)+[0,16], color=d['color']),
-                fill='toself', fillcolor='rgba(0,0,0,0)', name=d['name'][:30]
-            ))
-        fig_for_export.update_layout(
-            mapbox=dict(center=dict(lat=center_lat, lon=center_lon), zoom=dynamic_zoom, style="carto-darkmatter"),
-            margin=dict(l=0,r=0,t=0,b=0), height=500, showlegend=True,
-            legend=dict(bgcolor=legend_bg, font=dict(color=legend_text, size=11))
-        )
-        map_html_str = fig_for_export.to_html(full_html=False, include_plotlyjs='cdn', default_height='500px', default_width='100%')
-        station_rows = "".join(f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>{d['faa_ceiling']}</td><td>${d['cost']:,}</td></tr>" for d in active_drones)
-
-        logo_b64 = get_base64_of_bin_file("logo.png")
-        logo_html_str = f'<img src="data:image/png;base64,{logo_b64}" style="height:40px;">' if logo_b64 else '<div style="font-size:28px;font-weight:900;letter-spacing:3px;color:#111;">BRINC</div>'
-
-        jurisdiction_list = ", ".join(selected_names) if selected_names else prop_city
-        all_station_types = df_stations_all['type'].dropna().unique().tolist() if 'type' in df_stations_all.columns else []
-        police_dept_names = [d['name'] for d in active_drones if '[Police]' in d['name']]
-        fire_dept_names   = [d['name'] for d in active_drones if '[Fire]' in d['name']]
-        ems_dept_names    = [d['name'] for d in active_drones if '[EMS]' in d['name']]
-
-        police_stations = [d['name'] for d in active_drones if 'Police' in d.get('name','') or (
-            'type' in df_stations_all.columns and
-            'Police' in str(df_stations_all[df_stations_all['name'].str.contains(
-                d['name'].split(']')[-1].strip(), na=False, regex=False
-            )]['type'].values[:1])
-        )]
-
-        dept_summary_parts = []
-        if police_dept_names: dept_summary_parts.append(f"{len(police_dept_names)} Police station{'s' if len(police_dept_names)>1 else ''}")
-        if fire_dept_names:   dept_summary_parts.append(f"{len(fire_dept_names)} Fire station{'s' if len(fire_dept_names)>1 else ''}")
-        if ems_dept_names:    dept_summary_parts.append(f"{len(ems_dept_names)} EMS station{'s' if len(ems_dept_names)>1 else ''}")
-        dept_summary = ", ".join(dept_summary_parts) if dept_summary_parts else f"{len(active_drones)} municipal stations"
-        police_names_str = (", ".join([n.replace('[Police] ','') for n in police_dept_names[:6]]) + ("..." if len(police_dept_names)>6 else "")) if police_dept_names else "municipal facilities"
-        total_fleet = actual_k_responder + actual_k_guardian
-        area_sq_mi_est = int((maxx - minx) * (maxy - miny) * 3280)
-
-        # Build Analytics Block for Export
-        analytics_html_block = generate_command_center_html(df_calls, total_orig_calls=st.session_state.get('total_original_calls', total_calls), export_mode=True)
-
-        export_html = f"""<html><head><title>BRINC DFR Proposal — {prop_city}</title>
-        <style>
-        body{{font-family:'Helvetica Neue',Arial,sans-serif;color:#333;margin:0;padding:40px;background:#f4f6f9;}}
-        .page{{max-width:1000px;margin:0 auto;background:#fff;padding:50px;border-radius:8px;box-shadow:0 4px 15px rgba(0,0,0,0.05);}}
-        .header{{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #00D2FF;padding-bottom:15px;margin-bottom:30px;}}
-        h1{{color:#000;margin:0;font-size:24px;}} h2{{color:#444;margin-top:30px;font-size:18px;border-bottom:1px solid #ddd;padding-bottom:5px;}}
-        table{{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}}
-        th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid #ddd;}}
-        th{{background:#f1f1f1;font-size:12px;text-transform:uppercase;color:#555;}}
-        .map-container{{border:1px solid #ddd;border-radius:8px;overflow:hidden;margin-top:10px;}}
-        .footer{{margin-top:40px;padding-top:20px;border-top:2px solid #eee;text-align:center;font-size:13px;color:#555;line-height:1.6;}}
-        .footer a{{color:#00D2FF;text-decoration:none;font-weight:bold;}}
-        .kpi-grid{{display:flex;gap:20px;margin-bottom:30px;}}
-        .kpi-box{{flex:1;border:1px solid #eaeaea;border-radius:8px;padding:20px;background:#fafafa;}}
-        .kpi-box h2{{margin-top:0;}}
-        .kpi-val{{font-size:22px;font-weight:bold;color:#00D2FF;}}
-        .kpi-lbl{{font-size:11px;font-weight:bold;color:#888;text-transform:uppercase;}}
-        .disclaimer{{background:#fff3cd;border-left:4px solid #ffeeba;padding:12px;margin-bottom:16px;font-size:12px;color:#856404;}}
-        </style></head><body><div class="page">
-        <div class="header"><div>{logo_html_str}</div>
-        <div style="text-align:right;"><h1>DFR Deployment Proposal</h1>
-        <div style="font-size:14px;color:#666;margin-top:5px;">For: {prop_city}, {prop_state} | Pop: {pop_metric:,}</div>
-        <div style="font-size:14px;color:#666;margin-top:3px;">By: {prop_name} | {prop_email}</div></div></div>
-        <div class="kpi-grid">
-        <div class="kpi-box"><h2>Financial</h2>
-          <div class="kpi-lbl">Fleet CapEx</div><div class="kpi-val">${fleet_capex:,.0f}</div>
-          <div class="kpi-lbl" style="margin-top:12px;">Annual Savings Capacity</div><div class="kpi-val">${annual_savings:,.0f}</div>
-          <div class="kpi-lbl" style="margin-top:12px;">Break-Even</div><div class="kpi-val">{break_even_text}</div>
-        </div>
-        <div class="kpi-box"><h2>Operational</h2>
-          <div class="kpi-lbl">911 Call Coverage</div><div class="kpi-val">{calls_covered_perc:.1f}%</div>
-          <div class="kpi-lbl" style="margin-top:12px;">Avg Response Time</div><div class="kpi-val">{avg_resp_time:.1f} min</div>
-          <div class="kpi-lbl" style="margin-top:12px;">Time Saved vs Patrol</div><div class="kpi-val">{avg_time_saved:.1f} min</div>
-        </div></div>
-        <h2>Proposed Fleet</h2>
-        <table><tr><th>Type</th><th>Qty</th><th>Range</th><th>Unit Cost</th></tr>
-        <tr><td>BRINC Responder</td><td>{actual_k_responder}</td><td>{resp_radius_mi} mi</td><td>${CONFIG['RESPONDER_COST']:,}</td></tr>
-        <tr><td>BRINC Guardian</td><td>{actual_k_guardian}</td><td>{guard_radius_mi} mi</td><td>${CONFIG['GUARDIAN_COST']:,}</td></tr></table>
-        <h2>Coverage Map</h2>
-        <div class="map-container">{map_html_str}</div>
-        <h2>Deployment Locations</h2>
-        <table><tr><th>Station</th><th>Type</th><th>Avg Response</th><th>FAA Ceiling</th><th>CapEx</th></tr>{station_rows}</table>
-        <h2>Grant Narrative (AI Draft)</h2>
-        <div class="disclaimer"><strong>DISCLAIMER:</strong> AI-generated draft. Must be reviewed, localized, and fact-checked by your grants administrator before submission. All statistics are model estimates.</div>
-
-        <p><strong>Project Title:</strong> BRINC Drones Drone as a First Responder (DFR) Program — {jurisdiction_list}</p>
-
-        <p><strong>Executive Summary:</strong> The {jurisdiction_list} respectfully submits this application requesting funding to establish a BRINC Drones-powered Drone as a First Responder (DFR) program. This initiative will deploy a fleet of {total_fleet} purpose-built BRINC Drones aerial systems — comprising {actual_k_responder} BRINC Responder and {actual_k_guardian} BRINC Guardian units — across {dept_summary} serving a combined population of {pop_metric:,} residents across approximately {area_sq_mi_est:,} square miles in {prop_city}, {prop_state}.</p>
-
-        <p><strong>Statement of Need:</strong> The {jurisdiction_list} currently serves a population of {pop_metric:,} residents and responds to an estimated {st.session_state.get('total_original_calls', total_calls):,} calls for service annually. Ground-based patrol response times are constrained by traffic, geography, and unit availability. This proposal addresses a critical public safety gap: the need for immediate aerial situational awareness that arrives before ground units, enabling smarter, safer, and faster emergency response. BRINC Drones, the world leader in purpose-built DFR technology, provides the only fully integrated hardware, software, and operational support platform purpose-designed for law enforcement DFR deployment.</p>
-
-        <p><strong>Geographic Scope & Participating Agencies:</strong> The proposed DFR network covers the jurisdictions of <strong>{jurisdiction_list}</strong> ({prop_state}). Drone stations will be hosted at {dept_summary}, including facilities operated by: <em>{police_names_str}</em>. The deployment area encompasses an estimated {area_sq_mi_est:,} square miles of mixed urban and suburban terrain, with BRINC Drones units positioned to achieve {calls_covered_perc:.1f}% coverage of historical incident locations and {area_covered_perc:.1f}% geographic area coverage.</p>
-
-        <p><strong>Program Design:</strong> The proposed fleet consists of {actual_k_responder} <strong>BRINC Responder</strong> units (short-range tactical response, {resp_radius_mi}-mile operational radius) and {actual_k_guardian} <strong>BRINC Guardian</strong> units (long-range heavy-lift, {guard_radius_mi}-mile operational radius). All deployment sites have been pre-screened against FAA LAANC UAS Facility Maps. The BRINC Drones platform provides automated launch-on-dispatch, live-streaming HD/thermal video to dispatch and responding officers, and full chain-of-custody flight logging. Average aerial response time under this configuration is projected at <strong>{avg_resp_time:.1f} minutes</strong> — approximately <strong>{avg_time_saved:.1f} minutes faster</strong> than current vehicular patrol response for equivalent distances.</p>
-
-        <p><strong>Fiscal Impact & Return on Investment:</strong> Total program capital expenditure is <strong>${fleet_capex:,.0f}</strong>. Based on a {int(dfr_dispatch_rate*100)}% DFR dispatch rate and {int(deflection_rate*100)}% call resolution rate, the program is projected to generate <strong>${annual_savings:,.0f} in annual operational savings</strong> through reduced officer dispatch on drone-resolved incidents, reaching full cost recovery in <strong>{break_even_text.lower()}</strong>. At ${CONFIG["DRONE_COST_PER_CALL"]}/drone response versus ${CONFIG["OFFICER_COST_PER_CALL"]}/officer dispatch, the BRINC Drones platform delivers a demonstrated cost-per-response reduction of over {int((1 - CONFIG["DRONE_COST_PER_CALL"]/CONFIG["OFFICER_COST_PER_CALL"])*100)}%.</p>
-
-        <p><strong>About BRINC Drones:</strong> BRINC Drones, Inc. is the global leader in purpose-built Drone as a First Responder technology, with deployments across hundreds of law enforcement agencies in the United States. BRINC Drones designs, manufactures, and supports the only DFR platform built from the ground up for public safety — including the BRINC Responder for rapid tactical response and the BRINC Guardian for extended-range operations. BRINC provides full agency onboarding, FAA coordination support, pilot training, and ongoing operational guidance. Learn more at <a href="https://brincdrones.com" target="_blank">brincdrones.com</a>.</p>
-
-        <p><strong>Potential Grant Funding Sources:</strong>
-          <a href="https://bja.ojp.gov/program/jag/overview" target="_blank">DOJ Byrne JAG</a> — UAS and technology procurement eligible  • 
-          <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank">FEMA HSGP</a> — CapEx offset for tactical deployments  • 
-          <a href="https://cops.usdoj.gov/grants" target="_blank">DOJ COPS Office</a> — Law enforcement technology grants  • 
-          <a href="https://www.transportation.gov/grants" target="_blank">DOT RAISE</a> — Regional infrastructure and safety
-        </p>
-        
-        <div style="margin-top: 50px;">
-            <div style="border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
-                {analytics_html_block}
-            </div>
-        </div>
-
-        <div class="footer">
-          <div style="font-size:20px;font-weight:900;letter-spacing:2px;color:#111;margin-bottom:4px;">BRINC</div>
-          <div style="font-weight:bold;margin-bottom:4px;">BRINC Drones, Inc.</div>
-          <div style="margin-bottom:8px;">Leading the world in purpose-built Drone as a First Responder technology.</div>
-          <div style="margin-bottom:8px;font-weight:bold;">Prepared by: {prop_name} | <a href="mailto:{prop_email}">{prop_email}</a></div>
-          <div style="margin-bottom:8px;">
-            <a href="https://brincdrones.com" target="_blank">brincdrones.com</a> | <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> | +1 (855) 950-0226
-          </div>
-          <div>
-            <a href="https://www.linkedin.com/company/brincdrones" target="_blank">LinkedIn</a> •
-            <a href="https://twitter.com/brincdrones" target="_blank">Twitter / X</a> •
-            <a href="https://www.youtube.com/c/brincdrones" target="_blank">YouTube</a>
-          </div>
-        </div></div></body></html>"""
-
-        if st.sidebar.download_button("💾 Save Deployment Plan", data=json.dumps(export_dict),
-                                      file_name=f"Brinc_{safe_city}_{current_time_str}.brinc",
-                                      mime="application/json", use_container_width=True):
-            _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                          "BRINC", k_responder, k_guardian, calls_covered_perc,
-                          st.session_state.get('user_name',''), st.session_state.get('user_email',''))
-            _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                           "BRINC", k_responder, k_guardian, calls_covered_perc,
-                           st.session_state.get('user_name',''), st.session_state.get('user_email',''))
-
-        if st.sidebar.download_button("📄 Executive Summary (HTML)", data=export_html,
-                                      file_name=f"Brinc_{safe_city}_Proposal_{current_time_str}.html",
-                                      mime="text/html", use_container_width=True):
-            _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                          "HTML", k_responder, k_guardian, calls_covered_perc,
-                          st.session_state.get('user_name',''), st.session_state.get('user_email',''))
-            _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                           "HTML", k_responder, k_guardian, calls_covered_perc,
-                           st.session_state.get('user_name',''), st.session_state.get('user_email',''))
-
-        if active_drones:
-            if st.sidebar.download_button("🌏 Google Earth Briefing File", data=generate_kml(active_gdf, active_drones, calls_in_city),
-                                          file_name="drone_deployment.kml", mime="application/vnd.google-earth.kml+xml",
-                                          use_container_width=True):
-                _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                              "KML", k_responder, k_guardian, calls_covered_perc,
-                              st.session_state.get('user_name',''), st.session_state.get('user_email',''))
-                _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                               "KML", k_responder, k_guardian, calls_covered_perc,
-                               st.session_state.get('user_name',''), st.session_state.get('user_email',''))
 
     pop_metric = st.session_state.get('estimated_pop', 250000)
     grant_bracket = estimate_grants(pop_metric)
@@ -2158,7 +1969,6 @@ if st.session_state['csvs_ready']:
                 line=dict(color=d['color'], width=4.5),
                 fill='toself', fillcolor='rgba(0,0,0,0)', name=lbl, hoverinfo='name'))
 
-            # Guardian 5-mile rapid response focus ring
             if d['type'] == 'GUARDIAN' and d['radius_m']/1609.34 > 5.0:
                 f_lats, f_lons = get_circle_coords(d['lat'], d['lon'], r_mi=5.0)
                 fig.add_trace(go.Scattermapbox(
@@ -2475,9 +2285,218 @@ if st.session_state['csvs_ready']:
 
     # ── COMMAND CENTER ANALYTICS DASHBOARD ──
     st.markdown("---")
+    st.markdown(f"<h3 style='color:{text_main};'>📊 CAD Ingestion Analytics</h3>", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-size:0.82rem; color:{text_muted}; margin-bottom:10px;'>Temporal patterns derived from your uploaded CAD data — hourly volumes, day-of-week distribution, optimal DFR shift windows, and an interactive call-volume calendar.</div>", unsafe_allow_html=True)
+
+    ctrl_col1, ctrl_col2, _ = st.columns([1.5, 1.5, 2])
+    with ctrl_col1:
+        ana_shift = st.radio("Shift Length", [8, 10, 12], index=0, horizontal=True, format_func=lambda x: f"{x} HR")
+    with ctrl_col2:
+        ana_pri = st.radio("Priority Filter", ["ALL", "P1-3", "P1-2", "P1 ONLY"], index=0, horizontal=True)
+
+    df_ana_display = df_calls.copy()
+    if 'priority' in df_ana_display.columns:
+        if ana_pri == "P1-3":
+            df_ana_display = df_ana_display[df_ana_display['priority'] <= 3]
+        elif ana_pri == "P1-2":
+            df_ana_display = df_ana_display[df_ana_display['priority'] <= 2]
+        elif ana_pri == "P1 ONLY":
+            df_ana_display = df_ana_display[df_ana_display['priority'] == 1]
+
+    show_cad_analytics = st.toggle("📈 Show Data Analytics Heatmaps", value=False)
     
-    show_cad_analytics = st.toggle("📈 Show CAD Analytics Dashboard", value=False)
-    analytics_html_block = generate_command_center_html(df_calls, total_orig_calls=st.session_state.get('total_original_calls', total_calls))
+    analytics_html_block = generate_command_center_html(df_ana_display, total_orig_calls=st.session_state.get('total_original_calls', total_calls), shift_hours=ana_shift)
     
     if show_cad_analytics:
         components.html(analytics_html_block, height=850, scrolling=True)
+
+    # ── EXPORT BUTTONS ──
+    if fleet_capex > 0:
+        st.sidebar.markdown("---")
+        col_n, col_e = st.sidebar.columns(2)
+        prop_name  = col_n.text_input("Your Name",  value=st.session_state.get('user_name', 'John Doe'), key='user_name')
+        prop_email = col_e.text_input("Your Email", value=st.session_state.get('user_email', 'john.doe@example.com'), key='user_email')
+        st.sidebar.caption("*(Press **Enter** after typing to apply changes to your document)*")
+
+        prop_city  = st.session_state.get('active_city', 'City')
+        prop_state = st.session_state.get('active_state', 'FL')
+        pop_metric = st.session_state.get('estimated_pop', 250000)
+        current_time_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        safe_city = prop_city.replace(" ","_").replace("/","_")
+
+        export_dict = {
+            "city": prop_city, "state": prop_state,
+            "k_resp": k_responder, "k_guard": k_guardian,
+            "r_resp": resp_radius_mi, "r_guard": guard_radius_mi,
+            "dfr_rate": int(dfr_dispatch_rate*100), "deflect_rate": int(deflection_rate*100),
+            "calls_data": json.loads(st.session_state['df_calls'].replace({np.nan:None}).to_json(orient='records')) if st.session_state.get('df_calls') is not None else None,
+            "stations_data": json.loads(st.session_state['df_stations'].replace({np.nan:None}).to_json(orient='records')) if st.session_state.get('df_stations') is not None else None,
+            "faa_geojson": faa_geojson
+        }
+
+        avg_resp_time  = sum(d['avg_time_min'] for d in active_drones)/len(active_drones) if active_drones else 0.0
+        avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level/100)
+        avg_time_saved = ((sum((d['radius_m']/1609.34*1.4/avg_ground_speed)*60 for d in active_drones)/len(active_drones)) - avg_resp_time) if active_drones and avg_ground_speed > 0 else 0.0
+
+        fig_for_export = go.Figure()
+        for d in active_drones:
+            clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
+            fig_for_export.add_trace(go.Scattermapbox(
+                lat=list(clats)+[None,d['lat']], lon=list(clons)+[None,d['lon']],
+                mode='lines+markers', line=dict(color=d['color'], width=3),
+                marker=dict(size=[0]*len(clats)+[0,16], color=d['color']),
+                fill='toself', fillcolor='rgba(0,0,0,0)', name=d['name'][:30]
+            ))
+        fig_for_export.update_layout(
+            mapbox=dict(center=dict(lat=center_lat, lon=center_lon), zoom=dynamic_zoom, style="carto-darkmatter"),
+            margin=dict(l=0,r=0,t=0,b=0), height=500, showlegend=True,
+            legend=dict(bgcolor=legend_bg, font=dict(color=legend_text, size=11))
+        )
+        map_html_str = fig_for_export.to_html(full_html=False, include_plotlyjs='cdn', default_height='500px', default_width='100%')
+        station_rows = "".join(f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>{d['faa_ceiling']}</td><td>${d['cost']:,}</td></tr>" for d in active_drones)
+
+        logo_b64 = get_base64_of_bin_file("logo.png")
+        logo_html_str = f'<img src="data:image/png;base64,{logo_b64}" style="height:40px;">' if logo_b64 else '<div style="font-size:28px;font-weight:900;letter-spacing:3px;color:#111;">BRINC</div>'
+
+        jurisdiction_list = ", ".join(selected_names) if selected_names else prop_city
+        all_station_types = df_stations_all['type'].dropna().unique().tolist() if 'type' in df_stations_all.columns else []
+        police_dept_names = [d['name'] for d in active_drones if '[Police]' in d['name']]
+        fire_dept_names   = [d['name'] for d in active_drones if '[Fire]' in d['name']]
+        ems_dept_names    = [d['name'] for d in active_drones if '[EMS]' in d['name']]
+
+        police_stations = [d['name'] for d in active_drones if 'Police' in d.get('name','') or (
+            'type' in df_stations_all.columns and
+            'Police' in str(df_stations_all[df_stations_all['name'].str.contains(
+                d['name'].split(']')[-1].strip(), na=False, regex=False
+            )]['type'].values[:1])
+        )]
+
+        dept_summary_parts = []
+        if police_dept_names: dept_summary_parts.append(f"{len(police_dept_names)} Police station{'s' if len(police_dept_names)>1 else ''}")
+        if fire_dept_names:   dept_summary_parts.append(f"{len(fire_dept_names)} Fire station{'s' if len(fire_dept_names)>1 else ''}")
+        if ems_dept_names:    dept_summary_parts.append(f"{len(ems_dept_names)} EMS station{'s' if len(ems_dept_names)>1 else ''}")
+        dept_summary = ", ".join(dept_summary_parts) if dept_summary_parts else f"{len(active_drones)} municipal stations"
+        police_names_str = (", ".join([n.replace('[Police] ','') for n in police_dept_names[:6]]) + ("..." if len(police_dept_names)>6 else "")) if police_dept_names else "municipal facilities"
+        total_fleet = actual_k_responder + actual_k_guardian
+        area_sq_mi_est = int((maxx - minx) * (maxy - miny) * 3280)
+
+        # Build Analytics Block for Export (Ensure same filters are passed)
+        analytics_html_export = generate_command_center_html(df_ana_display, total_orig_calls=st.session_state.get('total_original_calls', total_calls), export_mode=True, shift_hours=ana_shift)
+
+        export_html = f"""<html><head><title>BRINC DFR Proposal — {prop_city}</title>
+        <style>
+        body{{font-family:'Helvetica Neue',Arial,sans-serif;color:#333;margin:0;padding:40px;background:#f4f6f9;}}
+        .page{{max-width:1000px;margin:0 auto;background:#fff;padding:50px;border-radius:8px;box-shadow:0 4px 15px rgba(0,0,0,0.05);}}
+        .header{{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #00D2FF;padding-bottom:15px;margin-bottom:30px;}}
+        h1{{color:#000;margin:0;font-size:24px;}} h2{{color:#444;margin-top:30px;font-size:18px;border-bottom:1px solid #ddd;padding-bottom:5px;}}
+        table{{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}}
+        th,td{{padding:8px 12px;text-align:left;border-bottom:1px solid #ddd;}}
+        th{{background:#f1f1f1;font-size:12px;text-transform:uppercase;color:#555;}}
+        .map-container{{border:1px solid #ddd;border-radius:8px;overflow:hidden;margin-top:10px;}}
+        .footer{{margin-top:40px;padding-top:20px;border-top:2px solid #eee;text-align:center;font-size:13px;color:#555;line-height:1.6;}}
+        .footer a{{color:#00D2FF;text-decoration:none;font-weight:bold;}}
+        .kpi-grid{{display:flex;gap:20px;margin-bottom:30px;}}
+        .kpi-box{{flex:1;border:1px solid #eaeaea;border-radius:8px;padding:20px;background:#fafafa;}}
+        .kpi-box h2{{margin-top:0;}}
+        .kpi-val{{font-size:22px;font-weight:bold;color:#00D2FF;}}
+        .kpi-lbl{{font-size:11px;font-weight:bold;color:#888;text-transform:uppercase;}}
+        .disclaimer{{background:#fff3cd;border-left:4px solid #ffeeba;padding:12px;margin-bottom:16px;font-size:12px;color:#856404;}}
+        </style></head><body><div class="page">
+        <div class="header"><div>{logo_html_str}</div>
+        <div style="text-align:right;"><h1>DFR Deployment Proposal</h1>
+        <div style="font-size:14px;color:#666;margin-top:5px;">For: {prop_city}, {prop_state} | Pop: {pop_metric:,}</div>
+        <div style="font-size:14px;color:#666;margin-top:3px;">By: {prop_name} | {prop_email}</div></div></div>
+        <div class="kpi-grid">
+        <div class="kpi-box"><h2>Financial</h2>
+          <div class="kpi-lbl">Fleet CapEx</div><div class="kpi-val">${fleet_capex:,.0f}</div>
+          <div class="kpi-lbl" style="margin-top:12px;">Annual Savings Capacity</div><div class="kpi-val">${annual_savings:,.0f}</div>
+          <div class="kpi-lbl" style="margin-top:12px;">Break-Even</div><div class="kpi-val">{break_even_text}</div>
+        </div>
+        <div class="kpi-box"><h2>Operational</h2>
+          <div class="kpi-lbl">911 Call Coverage</div><div class="kpi-val">{calls_covered_perc:.1f}%</div>
+          <div class="kpi-lbl" style="margin-top:12px;">Avg Response Time</div><div class="kpi-val">{avg_resp_time:.1f} min</div>
+          <div class="kpi-lbl" style="margin-top:12px;">Time Saved vs Patrol</div><div class="kpi-val">{avg_time_saved:.1f} min</div>
+        </div></div>
+        <h2>Proposed Fleet</h2>
+        <table><tr><th>Type</th><th>Qty</th><th>Range</th><th>Unit Cost</th></tr>
+        <tr><td>BRINC Responder</td><td>{actual_k_responder}</td><td>{resp_radius_mi} mi</td><td>${CONFIG['RESPONDER_COST']:,}</td></tr>
+        <tr><td>BRINC Guardian</td><td>{actual_k_guardian}</td><td>{guard_radius_mi} mi</td><td>${CONFIG['GUARDIAN_COST']:,}</td></tr></table>
+        <h2>Coverage Map</h2>
+        <div class="map-container">{map_html_str}</div>
+        <h2>Deployment Locations</h2>
+        <table><tr><th>Station</th><th>Type</th><th>Avg Response</th><th>FAA Ceiling</th><th>CapEx</th></tr>{station_rows}</table>
+        <h2>Grant Narrative (AI Draft)</h2>
+        <div class="disclaimer"><strong>DISCLAIMER:</strong> AI-generated draft. Must be reviewed, localized, and fact-checked by your grants administrator before submission. All statistics are model estimates.</div>
+
+        <p><strong>Project Title:</strong> BRINC Drones Drone as a First Responder (DFR) Program — {jurisdiction_list}</p>
+
+        <p><strong>Executive Summary:</strong> The {jurisdiction_list} respectfully submits this application requesting funding to establish a BRINC Drones-powered Drone as a First Responder (DFR) program. This initiative will deploy a fleet of {total_fleet} purpose-built BRINC Drones aerial systems — comprising {actual_k_responder} BRINC Responder and {actual_k_guardian} BRINC Guardian units — across {dept_summary} serving a combined population of {pop_metric:,} residents across approximately {area_sq_mi_est:,} square miles in {prop_city}, {prop_state}.</p>
+
+        <p><strong>Statement of Need:</strong> The {jurisdiction_list} currently serves a population of {pop_metric:,} residents and responds to an estimated {st.session_state.get('total_original_calls', total_calls):,} calls for service annually. Ground-based patrol response times are constrained by traffic, geography, and unit availability. This proposal addresses a critical public safety gap: the need for immediate aerial situational awareness that arrives before ground units, enabling smarter, safer, and faster emergency response. BRINC Drones, the world leader in purpose-built DFR technology, provides the only fully integrated hardware, software, and operational support platform purpose-designed for law enforcement DFR deployment.</p>
+
+        <p><strong>Geographic Scope & Participating Agencies:</strong> The proposed DFR network covers the jurisdictions of <strong>{jurisdiction_list}</strong> ({prop_state}). Drone stations will be hosted at {dept_summary}, including facilities operated by: <em>{police_names_str}</em>. The deployment area encompasses an estimated {area_sq_mi_est:,} square miles of mixed urban and suburban terrain, with BRINC Drones units positioned to achieve {calls_covered_perc:.1f}% coverage of historical incident locations and {area_covered_perc:.1f}% geographic area coverage.</p>
+
+        <p><strong>Program Design:</strong> The proposed fleet consists of {actual_k_responder} <strong>BRINC Responder</strong> units (short-range tactical response, {resp_radius_mi}-mile operational radius) and {actual_k_guardian} <strong>BRINC Guardian</strong> units (long-range heavy-lift, {guard_radius_mi}-mile operational radius). All deployment sites have been pre-screened against FAA LAANC UAS Facility Maps. The BRINC Drones platform provides automated launch-on-dispatch, live-streaming HD/thermal video to dispatch and responding officers, and full chain-of-custody flight logging. Average aerial response time under this configuration is projected at <strong>{avg_resp_time:.1f} minutes</strong> — approximately <strong>{avg_time_saved:.1f} minutes faster</strong> than current vehicular patrol response for equivalent distances.</p>
+
+        <p><strong>Fiscal Impact & Return on Investment:</strong> Total program capital expenditure is <strong>${fleet_capex:,.0f}</strong>. Based on a {int(dfr_dispatch_rate*100)}% DFR dispatch rate and {int(deflection_rate*100)}% call resolution rate, the program is projected to generate <strong>${annual_savings:,.0f} in annual operational savings</strong> through reduced officer dispatch on drone-resolved incidents, reaching full cost recovery in <strong>{break_even_text.lower()}</strong>. At ${CONFIG["DRONE_COST_PER_CALL"]}/drone response versus ${CONFIG["OFFICER_COST_PER_CALL"]}/officer dispatch, the BRINC Drones platform delivers a demonstrated cost-per-response reduction of over {int((1 - CONFIG["DRONE_COST_PER_CALL"]/CONFIG["OFFICER_COST_PER_CALL"])*100)}%.</p>
+
+        <p><strong>About BRINC Drones:</strong> BRINC Drones, Inc. is the global leader in purpose-built Drone as a First Responder technology, with deployments across hundreds of law enforcement agencies in the United States. BRINC Drones designs, manufactures, and supports the only DFR platform built from the ground up for public safety — including the BRINC Responder for rapid tactical response and the BRINC Guardian for extended-range operations. BRINC provides full agency onboarding, FAA coordination support, pilot training, and ongoing operational guidance. Learn more at <a href="https://brincdrones.com" target="_blank">brincdrones.com</a>.</p>
+
+        <p><strong>Potential Grant Funding Sources:</strong>
+          <a href="https://bja.ojp.gov/program/jag/overview" target="_blank">DOJ Byrne JAG</a> — UAS and technology procurement eligible  • 
+          <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank">FEMA HSGP</a> — CapEx offset for tactical deployments  • 
+          <a href="https://cops.usdoj.gov/grants" target="_blank">DOJ COPS Office</a> — Law enforcement technology grants  • 
+          <a href="https://www.transportation.gov/grants" target="_blank">DOT RAISE</a> — Regional infrastructure and safety
+        </p>
+        
+        <div style="margin-top: 50px;">
+            <div style="border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+                {analytics_html_export}
+            </div>
+        </div>
+
+        <div class="footer">
+          <div style="font-size:20px;font-weight:900;letter-spacing:2px;color:#111;margin-bottom:4px;">BRINC</div>
+          <div style="font-weight:bold;margin-bottom:4px;">BRINC Drones, Inc.</div>
+          <div style="margin-bottom:8px;">Leading the world in purpose-built Drone as a First Responder technology.</div>
+          <div style="margin-bottom:8px;font-weight:bold;">Prepared by: {prop_name} | <a href="mailto:{prop_email}">{prop_email}</a></div>
+          <div style="margin-bottom:8px;">
+            <a href="https://brincdrones.com" target="_blank">brincdrones.com</a> | <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> | +1 (855) 950-0226
+          </div>
+          <div>
+            <a href="https://www.linkedin.com/company/brincdrones" target="_blank">LinkedIn</a> •
+            <a href="https://twitter.com/brincdrones" target="_blank">Twitter / X</a> •
+            <a href="https://www.youtube.com/c/brincdrones" target="_blank">YouTube</a>
+          </div>
+        </div></div></body></html>"""
+
+        if st.sidebar.download_button("💾 Save Deployment Plan", data=json.dumps(export_dict),
+                                      file_name=f"Brinc_{safe_city}_{current_time_str}.brinc",
+                                      mime="application/json", use_container_width=True):
+            _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                          "BRINC", k_responder, k_guardian, calls_covered_perc,
+                          st.session_state.get('user_name',''), st.session_state.get('user_email',''))
+            _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                           "BRINC", k_responder, k_guardian, calls_covered_perc,
+                           st.session_state.get('user_name',''), st.session_state.get('user_email',''))
+
+        if st.sidebar.download_button("📄 Executive Summary (HTML)", data=export_html,
+                                      file_name=f"Brinc_{safe_city}_Proposal_{current_time_str}.html",
+                                      mime="text/html", use_container_width=True):
+            _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                          "HTML", k_responder, k_guardian, calls_covered_perc,
+                          st.session_state.get('user_name',''), st.session_state.get('user_email',''))
+            _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                           "HTML", k_responder, k_guardian, calls_covered_perc,
+                           st.session_state.get('user_name',''), st.session_state.get('user_email',''))
+
+        if active_drones:
+            if st.sidebar.download_button("🌏 Google Earth Briefing File", data=generate_kml(active_gdf, active_drones, calls_in_city),
+                                          file_name="drone_deployment.kml", mime="application/vnd.google-earth.kml+xml",
+                                          use_container_width=True):
+                _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                              "KML", k_responder, k_guardian, calls_covered_perc,
+                              st.session_state.get('user_name',''), st.session_state.get('user_email',''))
+                _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                               "KML", k_responder, k_guardian, calls_covered_perc,
+                               st.session_state.get('user_name',''), st.session_state.get('user_email',''))
