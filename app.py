@@ -1943,20 +1943,72 @@ if st.session_state['csvs_ready']:
     orig_calls = st.session_state.get('total_original_calls', total_calls)
     call_str = f"{orig_calls:,}"
     if orig_calls > total_calls:
-        call_str += f" <br><span style='font-size:0.5em;color:#888;'>(Sampled: {total_calls:,})</span>"
+        call_str += f" <br><span style='font-size:0.55em;color:#888;'>(Sampled: {total_calls:,})</span>"
 
-    kpi_html = f"""
-    <div style="display:flex; justify-content:space-around; background:{card_bg}; border:1px solid {card_border}; border-radius:8px; padding:15px; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
-        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Total Incidents</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{call_str}</div></div>
-        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Response Capacity</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{calls_covered_perc:.1f}%</div></div>
-        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Land Covered</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{area_covered_perc:.1f}%</div></div>
-        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Overlap</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{overlap_perc:.1f}%</div></div>
+    # Calculate Date Range of CAD data (if available)
+    date_range_str = "Simulated / Unknown"
+    if 'date' in df_calls.columns:
+        try:
+            min_date = pd.to_datetime(df_calls['date']).min().strftime('%b %Y')
+            max_date = pd.to_datetime(df_calls['date']).max().strftime('%b %Y')
+            date_range_str = f"{min_date} – {max_date}" if min_date != max_date else min_date
+        except:
+            pass
+
+    # Calculate Average Response Time for the KPI bar
+    avg_resp_time = sum(d['avg_time_min'] for d in active_drones) / len(active_drones) if active_drones else 0.0
+
+    # 1. THE NEW EXECUTIVE HEADER
+    header_html = f"""
+    <div style="margin-top: 10px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 1px solid {card_border}; padding-bottom: 15px;">
+        <div>
+            <div style="color: {accent_color}; font-family: 'IBM Plex Mono', monospace; font-size: 0.75rem; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 4px;">Strategic Deployment Plan</div>
+            <div style="font-size: 2.2rem; font-weight: 900; color: {text_main}; line-height: 1.1; margin-bottom: 4px;">{st.session_state.get('active_city', 'Unknown City')}, {st.session_state.get('active_state', 'US')}</div>
+            <div style="font-size: 0.9rem; color: {text_muted};">Serving {st.session_state.get('estimated_pop', 0):,} residents across ~{int(area_sq_mi):,} sq miles</div>
+        </div>
+        <div style="text-align: right;">
+            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">Data Period: <span style="color:#fff;">{date_range_str}</span></div>
+            <div style="font-size: 1.4rem; font-weight: 800; color: {text_main};">{actual_k_responder} <span style="color:#888; font-size:1rem;">Resp</span> &middot; {actual_k_guardian} <span style="color:#888; font-size:1rem;">Guard</span></div>
+        </div>
+    </div>
     """
+    st.markdown(header_html, unsafe_allow_html=True)
+
+    # 2. THE EXPANDED KPI BAR
+    kpi_html = f"""
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); background: {card_bg}; border: 1px solid {card_border}; border-radius: 8px; padding: 20px; margin-bottom: 15px; gap: 15px;">
+        <div style="border-right: 1px solid #222; padding-right: 10px;">
+            <div style="font-size: 0.65rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Total Incidents</div>
+            <div style="font-size: 1.5rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{call_str}</div>
+        </div>
+        <div style="border-right: 1px solid #222; padding-right: 10px;">
+            <div style="font-size: 0.65rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Call Coverage</div>
+            <div style="font-size: 1.5rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{calls_covered_perc:.1f}%</div>
+        </div>
+        <div style="border-right: 1px solid #222; padding-right: 10px;">
+            <div style="font-size: 0.65rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Est. Avg Response</div>
+            <div style="font-size: 1.5rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{avg_resp_time:.1f}m</div>
+        </div>
+        <div style="border-right: 1px solid #222; padding-right: 10px;">
+            <div style="font-size: 0.65rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Annual Savings</div>
+            <div style="font-size: 1.5rem; font-weight: 800; color: #39FF14; font-family: 'IBM Plex Mono', monospace;">${annual_savings:,.0f}</div>
+        </div>
+        <div>
+            <div style="font-size: 0.65rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Break-Even</div>
+            <div style="font-size: 1.5rem; font-weight: 800; color: #FFD700; font-family: 'IBM Plex Mono', monospace;">{break_even_text}</div>
+        </div>
+    """
+    
     if gain_val is not None:
-        kpi_html += f"""<div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Time Saved ({eval_dist:.0f}mi)</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{gain_val}</div></div>"""
+        kpi_html += f"""
+        <div style="border-left: 1px solid #222; padding-left: 15px;">
+            <div style="font-size: 0.65rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Time Saved ({eval_dist:.0f}mi)</div>
+            <div style="font-size: 1.5rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{gain_val}</div>
+        </div>"""
+        
     kpi_html += "</div>"
     st.markdown(kpi_html, unsafe_allow_html=True)
-    st.markdown(f"<div style='font-size:0.65rem;color:gray;margin-top:-12px;margin-bottom:12px;text-align:center;'>(Optimized via {total_calls:,} representative sample)</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='font-size:0.65rem;color:gray;margin-top:-10px;margin-bottom:12px;text-align:right;'>(Optimization modeled via {total_calls:,} representative CAD samples)</div>", unsafe_allow_html=True)
 
     map_col, stats_col = st.columns([4.2, 1.8])
 
