@@ -328,10 +328,10 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
                 const dow = parseInt(el.getAttribute('data-dow'));
                 
                 let loadText = '';
-                if (ratio >= 0.85) loadText = '<span style="color:#ff4444">■ PEAK</span> &mdash; Full crew';
-                else if (ratio >= 0.55) loadText = '<span style="color:#ff8c00">■ HIGH</span> &mdash; Priority deploy';
-                else if (ratio >= 0.25) loadText = '<span style="color:#d4c000">■ MEDIUM</span> &mdash; Standard ops';
-                else loadText = '<span style="color:#2ecc71">■ LOW</span> &mdash; Light staffing';
+                if (ratio >= 0.85) loadText = '<span style="color:#ff4444">■ PEAK</span> — Full crew';
+                else if (ratio >= 0.55) loadText = '<span style="color:#ff8c00">■ HIGH</span> — Priority deploy';
+                else if (ratio >= 0.25) loadText = '<span style="color:#d4c000">■ MEDIUM</span> — Standard ops';
+                else loadText = '<span style="color:#2ecc71">■ LOW</span> — Light staffing';
                 
                 const hrArr = dateHourly[dk] || Array(24).fill(0);
                 let bestV = 0, bestS = 0;
@@ -346,11 +346,11 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
                 
                 const tt = document.getElementById('dfr-tooltip');
                 tt.innerHTML = `
-                    <div style="color:#00D2FF; margin-bottom:6px; font-size:12px; font-weight:bold; border-bottom:1px solid #252535; padding-bottom:4px;">${{mName}} ${{d}}, ${{y}} &middot; ${{dowNames[dow]}}</div>
-                    <div style="margin-bottom:8px; font-size:13px;">Calls: <span style="color:#fff; font-weight:bold;">${{cnt}}</span> &nbsp;&middot;&nbsp; ${{loadText}}</div>
+                    <div style="color:#00D2FF; margin-bottom:6px; font-size:12px; font-weight:bold; border-bottom:1px solid #252535; padding-bottom:4px;">${{mName}} ${{d}}, ${{y}} · ${{dowNames[dow]}}</div>
+                    <div style="margin-bottom:8px; font-size:13px;">Calls: <span style="color:#fff; font-weight:bold;">${{cnt}}</span>  ·  ${{loadText}}</div>
                     <div style="background:#1a1a26; padding:8px; border-radius:4px;">
                         <div style="color:#7777a0; font-size:9px; letter-spacing:1px; text-transform:uppercase; margin-bottom:4px;">Best ${{shiftHours}}hr Shift</div>
-                        <div style="color:#00D2FF; font-size:14px; font-weight:bold; margin-bottom:2px;">${{fmt(bestS)}} &ndash; ${{fmt(eHr)}}</div>
+                        <div style="color:#00D2FF; font-size:14px; font-weight:bold; margin-bottom:2px;">${{fmt(bestS)}} – ${{fmt(eHr)}}</div>
                         <div style="color:#aaa; font-size:10px;">Covers <span style="color:#fff;">${{dayPct}}%</span> of daily volume</div>
                     </div>
                 `;
@@ -1004,6 +1004,10 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
 
 if not st.session_state['csvs_ready']:
 
+    # GRAB THE LOGO FOR THE UPLOAD PAGE
+    logo_b64 = get_base64_of_bin_file("logo.png")
+    hero_logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:48px; margin-bottom:15px; filter: brightness(0) invert(1);">' if logo_b64 else f'<div style="font-size:2.5rem; font-weight:900; letter-spacing:4px; color:#ffffff; margin-bottom:15px;">BRINC</div>'
+
     st.markdown(f"""
     <style>
     @keyframes pulseGlow {{
@@ -1140,6 +1144,7 @@ if not st.session_state['csvs_ready']:
     </style>
 
     <div class="brinc-hero">
+        {hero_logo_html}
         <div class="brinc-eyebrow">BRINC Drones · DFR Platform</div>
         <div class="brinc-h1">
             Coverage. Operations.<br><em>Savings.</em>
@@ -1267,14 +1272,12 @@ if not st.session_state['csvs_ready']:
 
                 st.session_state['total_original_calls'] = len(df_c)
                 
-                # Sample if too large
                 if len(df_c) > 25000:
                     df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
                     st.toast("⚠️ Sampled to 25,000 calls for performance.")
                 else:
                     df_c = df_c.reset_index(drop=True)
 
-                # ── Stations: load or auto-generate ───────
                 if station_file is not None:
                     with st.spinner("🔍 Reading stations file…"):
                         try:
@@ -1285,14 +1288,30 @@ if not st.session_state['csvs_ready']:
                             if 'station_name' in df_s.columns: df_s = df_s.rename(columns={'station_name':'name'})
                             if 'station_type' in df_s.columns: df_s = df_s.rename(columns={'station_type':'type'})
                             
-                            # FORCE LAT/LON TO BE NUMBERS
                             if 'lat' in df_s.columns and 'lon' in df_s.columns:
                                 df_s['lat'] = pd.to_numeric(df_s['lat'], errors='coerce')
                                 df_s['lon'] = pd.to_numeric(df_s['lon'], errors='coerce')
                             else:
                                 raise ValueError("Could not find lat/lon columns.")
 
-                            if 'name' not in df_s.columns: df_s['name'] = [f"Station {i+1}" for i in range(len(df_s))]
+                            if 'name' not in df_s.columns: 
+                                df_s['name'] = [f"Site {i+1}" for i in range(len(df_s))]
+                            else:
+                                df_s['name'] = df_s['name'].fillna('').astype(str).str.strip()
+                                df_s['name'] = df_s['name'].replace(r'(?i)^(null|<null>|nan|none)$', '', regex=True)
+                                df_s['name'] = [n if n else f"Site {i+1}" for i, n in enumerate(df_s['name'])]
+
+                            counts = {}
+                            new_names = []
+                            for n in df_s['name']:
+                                if n in counts:
+                                    counts[n] += 1
+                                    new_names.append(f"{n} ({counts[n]})")
+                                else:
+                                    counts[n] = 0
+                                    new_names.append(n)
+                            df_s['name'] = new_names
+
                             if 'type' not in df_s.columns: df_s['type'] = 'Police'
                             df_s = df_s.dropna(subset=['lat', 'lon']).reset_index(drop=True)
                             osm_note = "Loaded stations from file."
@@ -1483,20 +1502,7 @@ if not st.session_state['csvs_ready']:
 # ============================================================
 if st.session_state['csvs_ready']:
     components.html("<script>window._brincHasData = true;</script>", height=0)
-# --- DRAW SIDEBAR LOGO FIRST SO IT IS AT THE ABSOLUTE TOP ---
-    logo_b64 = get_base64_of_bin_file("logo.png")
-    if logo_b64:
-        st.sidebar.markdown(f"""
-        <div style="background-color: transparent; padding: 40px 20px 10px 20px; margin: -60px -20px 20px -20px; text-align: center;">
-            <img src="data:image/png;base64,{logo_b64}" style="height: 36px; filter: brightness(0) invert(1);">
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.sidebar.markdown(f"""
-        <div style="background-color: transparent; padding: 40px 20px 10px 20px; margin: -60px -20px 20px -20px; text-align: center;">
-            <div style="font-size:26px; font-weight:900; letter-spacing:3px; color:#ffffff;">BRINC</div>
-        </div>
-        """, unsafe_allow_html=True)
+
     df_calls = st.session_state['df_calls'].copy()
     df_stations_all = st.session_state['df_stations'].copy()
 
@@ -1510,6 +1516,21 @@ if st.session_state['csvs_ready']:
         lat_pad = (max_lat - min_lat) * 0.1
         poly = box(min_lon-lon_pad, min_lat-lat_pad, max_lon+lon_pad, max_lat+lat_pad)
         master_gdf = gpd.GeoDataFrame({'DISPLAY_NAME':['Auto-Generated Boundary'],'data_count':[len(df_calls)]}, geometry=[poly], crs="EPSG:4326")
+
+    # --- DRAW SIDEBAR LOGO FIRST SO IT IS AT THE ABSOLUTE TOP ---
+    logo_b64 = get_base64_of_bin_file("logo.png")
+    if logo_b64:
+        st.sidebar.markdown(f"""
+        <div style="background-color: transparent; padding: 40px 20px 10px 20px; margin: -60px -20px 20px -20px; text-align: center;">
+            <img src="data:image/png;base64,{logo_b64}" style="height: 36px; filter: brightness(0) invert(1);">
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.sidebar.markdown(f"""
+        <div style="background-color: transparent; padding: 40px 20px 10px 20px; margin: -60px -20px 20px -20px; text-align: center;">
+            <div style="font-size:26px; font-weight:900; letter-spacing:3px; color:#ffffff;">BRINC</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     st.sidebar.markdown('<div class="sidebar-section-header">① Configure</div>', unsafe_allow_html=True)
 
@@ -1655,9 +1676,7 @@ if st.session_state['csvs_ready']:
     with st.spinner(get_airfield_message()):
         airfields = fetch_airfields(minx, miny, maxx, maxy)
 
-
-
-    st.sidebar.markdown('<div class="sidebar-section-header">① Configure</div>', unsafe_allow_html=True)
+    st.sidebar.markdown('<div class="sidebar-section-header">③ Budget & Export</div>', unsafe_allow_html=True)
 
     inferred_daily = st.session_state.get('inferred_daily_calls_override', max(1, int(total_calls/365)))
     calls_per_day = st.sidebar.slider("Total Daily Calls (citywide)", 1, max(100, inferred_daily*3), inferred_daily)
@@ -1976,18 +1995,19 @@ if st.session_state['csvs_ready']:
     logo_b64 = get_base64_of_bin_file("logo.png")
     # Applied the invert filter to make it pure white, and changed fallback text to white
     main_logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:24px; vertical-align:middle; margin-right:15px; filter: brightness(0) invert(1);">' if logo_b64 else f'<span style="font-size:1.5rem; font-weight:900; letter-spacing:2px; color:#ffffff; margin-right:15px;">BRINC</span>'
+
     header_html = f"""
     <div style="margin-top: 5px; margin-bottom: 15px; padding-bottom: 12px; border-bottom: 1px solid {card_border}; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
         <div style="display: flex; align-items: center; flex-wrap: wrap; font-size: 0.9rem;">
             {main_logo_html}
             <span style="color: {accent_color}; font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; letter-spacing: 1px; text-transform: uppercase; margin-right: 12px;">Strategic Deployment Plan</span>
             <span style="font-weight: 800; color: {text_main}; font-size: 1.1rem; margin-right: 12px;">{st.session_state.get('active_city', 'Unknown City')}, {st.session_state.get('active_state', 'US')}</span>
-            <span style="color: {text_muted}; margin-right: 12px;">&bull; Serving {st.session_state.get('estimated_pop', 0):,} residents across ~{int(area_sq_mi):,} sq miles</span>
+            <span style="color: {text_muted}; margin-right: 12px;">• Serving {st.session_state.get('estimated_pop', 0):,} residents across ~{int(area_sq_mi):,} sq miles</span>
         </div>
         <div style="display: flex; align-items: center; font-size: 0.85rem; color: {text_muted}; gap: 15px;">
             <span>Data Period: <span style="color:#fff;">{date_range_str}</span></span>
             <span style="color:{card_border};">|</span>
-            <span style="font-weight: 800; color: {text_main}; font-size: 0.95rem;">{actual_k_responder} <span style="color:#888; font-weight:normal;">Resp</span> &middot; {actual_k_guardian} <span style="color:#888; font-weight:normal;">Guard</span></span>
+            <span style="font-weight: 800; color: {text_main}; font-size: 0.95rem;">{actual_k_responder} <span style="color:#888; font-weight:normal;">Resp</span> · {actual_k_guardian} <span style="color:#888; font-weight:normal;">Guard</span></span>
         </div>
     </div>
     """
@@ -2566,11 +2586,13 @@ if st.session_state['csvs_ready']:
               <a href="https://cops.usdoj.gov/grants" target="_blank">DOJ COPS Office</a> — Law enforcement technology grants <br>
               <a href="https://www.transportation.gov/grants" target="_blank">DOT RAISE</a> — Regional infrastructure and safety
             </p>
+            
             <div style="margin-top: 50px; font-family:'Manrope', Arial, sans-serif !important;">
                 <div style="border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
                     [ANALYTICS_HTML_EXPORT]
                 </div>
             </div>
+        </div>
         <div class="footer">
             <div class="footer-logo">BRINC</div>
             <div style="font-weight:bold; font-size:15px; margin-bottom:8px; color:#fff;">BRINC Drones, Inc.</div>
@@ -2580,8 +2602,8 @@ if st.session_state['csvs_ready']:
                 <a href="https://brincdrones.com" target="_blank">brincdrones.com</a> | <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> | +1 (855) 950-0226
             </div>
             <div style="color:#555;">
-                <a href="https://www.linkedin.com/company/brincdrones" target="_blank">LinkedIn</a>  • 
-                <a href="https://twitter.com/brincdrones" target="_blank">Twitter / X</a>  • 
+                <a href="https://www.linkedin.com/company/brincdrones" target="_blank">LinkedIn</a>  • 
+                <a href="https://twitter.com/brincdrones" target="_blank">Twitter / X</a>  • 
                 <a href="https://www.youtube.com/c/brincdrones" target="_blank">YouTube</a>
             </div>
         </div>
