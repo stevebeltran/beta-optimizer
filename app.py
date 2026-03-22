@@ -1285,6 +1285,23 @@ if not st.session_state['csvs_ready']:
                 if len(df_s) > 100:
                     df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
                 st.session_state['df_stations'] = df_s
+
+                # --- NEW OUTLIER FILTER ---
+                # Find the bounding box of the actual stations
+                lat_min, lat_max = df_s['lat'].min(), df_s['lat'].max()
+                lon_min, lon_max = df_s['lon'].min(), df_s['lon'].max()
+                
+                # Filter out any calls that are more than ~35 miles (0.5 degrees) from the station cluster
+                df_c = df_c[
+                    (df_c['lat'] >= lat_min - 0.5) & (df_c['lat'] <= lat_max + 0.5) &
+                    (df_c['lon'] >= lon_min - 0.5) & (df_c['lon'] <= lon_max + 0.5)
+                ]
+                
+                # Re-save the newly cleaned calls to the session state
+                st.session_state['df_calls'] = df_c
+                st.session_state['total_original_calls'] = len(df_c)
+                # --------------------------
+                
                 with st.spinner(get_jurisdiction_message()):
                     detected_state_full, detected_city = reverse_geocode_state(
                         df_c['lat'].iloc[0], df_c['lon'].iloc[0]
