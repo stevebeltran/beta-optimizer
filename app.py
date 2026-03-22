@@ -24,7 +24,7 @@ st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide", initia
 defaults = {
     'csvs_ready': False, 'df_calls': None, 'df_stations': None,
     'active_city': "Orlando", 'active_state': "FL", 'estimated_pop': 316081,
-    'k_resp': 0, 'k_guard': 0, 'r_resp': 2.0, 'r_guard': 8.0,
+    'k_resp': 2, 'k_guard': 0, 'r_resp': 2.0, 'r_guard': 8.0,
     'dfr_rate': 25, 'deflect_rate': 30, 'total_original_calls': 0,
     'onboarding_done': False, 'trigger_sim': False, 'city_count': 1,
     'brinc_user': 'steven.beltran'
@@ -1594,10 +1594,25 @@ if st.session_state['csvs_ready']:
     max_resp_calc = min(n, int(math.ceil(area_sq_mi / (math.pi * (r_resp_est**2)))) + 5)
     max_guard_calc = min(n, int(math.ceil(area_sq_mi / (math.pi * (r_guard_est**2)))) + 5)
 
-    # Default to 3 Responders (but don't exceed the max allowed by the area size)
-    default_r = min(3, max_resp_calc) 
-    k_responder = st.sidebar.slider("🚁 Responder Count", 0, max(1, max_resp_calc), min(st.session_state.get('k_resp', default_r), max_resp_calc),
+    # Default to 2 Responders (but don't exceed the max allowed by the area size)
+    # Dynamic Sliders based on Area Size
+    area_sq_mi = city_m.area / 2589988.11 if city_m and not city_m.is_empty else 100.0
+    r_resp_est = st.session_state.get('r_resp', 2.0)
+    r_guard_est = st.session_state.get('r_guard', 8.0)
+    
+    max_resp_calc = min(n, int(math.ceil(area_sq_mi / (math.pi * (r_resp_est**2)))) + 5)
+    max_guard_calc = min(n, int(math.ceil(area_sq_mi / (math.pi * (r_guard_est**2)))) + 5)
+
+    # Safely pull the default values without exceeding the allowed maximums
+    val_r = min(st.session_state.get('k_resp', 3), max_resp_calc)
+    val_g = min(st.session_state.get('k_guard', 1), max_guard_calc)
+
+    k_responder = st.sidebar.slider("🚁 Responder Count", 0, max(1, max_resp_calc), val_r,
                                     help="Short-range tactical drones (2-3mi radius).")
+    k_guardian  = st.sidebar.slider("🦅 Guardian Count",  0, max(1, max_guard_calc), val_g,
+                                    help="Long-range heavy-lift drones (up to 8mi radius).")
+    
+    st.session_state.update({'k_resp': k_responder, 'k_guard': k_guardian, 'r_resp': resp_radius_mi, 'r_guard': guard_radius_mi})
     
     # Default to 1 Guardian (but don't exceed the max allowed)
     default_g = min(1, max_guard_calc)
