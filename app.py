@@ -113,7 +113,7 @@ def get_base64_of_bin_file(bin_file):
 # ============================================================
 # COMMAND CENTER ANALYTICS GENERATOR
 # ============================================================
-def generate_command_center_html(df, export_mode=False, shift_hours=8):
+def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_hours=8):
     """Generates the full Command Center visual suite with interactive Calendar tooltips."""
     if df is None or df.empty or 'date' not in df.columns:
         return "<div style='color:gray; padding:20px;'>Analytics unavailable. Missing date/time fields.</div>"
@@ -131,6 +131,9 @@ def generate_command_center_html(df, export_mode=False, shift_hours=8):
     df_ana['month_key'] = df_ana['dt_obj'].dt.strftime('%Y-%m')
     
     total_calls = len(df_ana)
+    orig_calls_display = f"{total_orig_calls:,}" if total_orig_calls > 0 else f"{total_calls:,}"
+    if total_orig_calls > total_calls:
+        orig_calls_display += f" <br><span style='font-size:12px;color:#888;'>(Sampled: {total_calls:,})</span>"
     
     date_counts = df_ana['date_key'].value_counts().to_dict()
     date_hourly = {}
@@ -214,7 +217,135 @@ def generate_command_center_html(df, export_mode=False, shift_hours=8):
         cal_html += "</div></div>"
     cal_html += "</div>"
 
+    brinc_info = """
+    <div style="margin-bottom:20px; background:#0c0c12; border:1px solid #1a1a26; border-radius:4px; padding:18px 22px; display:grid; grid-template-columns:1fr auto; gap:18px; align-items:start;">
+        <div style="font-family:monospace; font-size:11px; color:#7777a0; line-height:1.85;">
+            <strong style="color:#00D2FF;font-weight:400;">BRINC</strong> is the largest drone manufacturer focused exclusively on public safety, trusted by <strong style="color:#00D2FF;font-weight:400;">900+ police and fire agencies across all 50 states</strong>. Founded by Blake Resnick and headquartered in <strong style="color:#00D2FF;font-weight:400;">Seattle, WA</strong>, BRINC designs NDAA &amp; CJIS compliant systems built entirely in the USA. The Responder drone reaches 911 calls in under <strong style="color:#00D2FF;font-weight:400;">70 seconds</strong> &mdash; arriving before ground units to deliver live video, two-way communication, and real-time situational awareness. BRINC DFR integrates with CAD, RTCC, ALPR, gunshot detection, 911, and evidence management. Agencies resolve approximately <strong style="color:#00D2FF;font-weight:400;">25% of calls for service</strong> without dispatching officers.<br>
+            <span style="color:#44445a;font-size:9px;">brincdrones.com &middot; Seattle, WA &middot; NDAA &amp; CJIS Compliant &middot; Made in USA &middot; Backed by Sam Altman &amp; Motorola Solutions</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:5px;">
+            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">LEMUR 2 &middot; Indoor Tactical</div>
+            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">RESPONDER &middot; DFR Platform</div>
+            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">BRINC BALL &middot; Compact Response</div>
+            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">GUARDIAN &middot; Perimeter ISR</div>
+            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">LIVEOPS &middot; Fleet Operations</div>
+            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">RESPONDER STATION &middot; Auto Dock</div>
+        </div>
+    </div>
+    """
+
     full_html = f"""
+    <div style="background:#000; color:#e8e8f2; font-family: 'Barlow', sans-serif; padding:15px; border-radius:8px;">
+        <style>
+            .day-cell:hover {{ transform: scale(1.15); z-index: 10; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }}
+            .day-peak {{ border-color: #cc0000 !important; font-weight: 700; }}
+            #dfr-tooltip {{ position: fixed; z-index: 9999; background: #09090f; border: 1px solid #252535; border-radius: 6px; padding: 12px 16px; font-family: monospace; font-size: 11px; color: #e8e8f2; pointer-events: none; box-shadow: 0 6px 24px rgba(0,0,0,0.8); display: none; min-width: 220px; }}
+        </style>
+        
+        <div id="dfr-tooltip"></div>
+        
+        <div style="color:#00D2FF; font-weight:900; letter-spacing:3px; font-size:14px; text-transform:uppercase; margin-bottom:20px; border-bottom:1px solid #1a1a26; padding-bottom:10px;">Data Ingestion Analytics</div>
+        {brinc_info}
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:20px;">
+            <div style="background:#0c0c12; border-left:4px solid #00D2FF; padding:15px; border-radius:4px; border-top:1px solid #1a1a26; border-right:1px solid #1a1a26; border-bottom:1px solid #1a1a26;">
+                <div style="color:#00D2FF; font-size:26px; font-weight:900; font-family:monospace;">{orig_calls_display}</div>
+                <div style="color:#7777a0; font-size:10px; text-transform:uppercase; letter-spacing:1px; margin-top:4px;">Total Ingested Incidents</div>
+            </div>
+            <div style="background:#0c0c12; border-left:4px solid #F0B429; padding:15px; border-radius:4px; border-top:1px solid #1a1a26; border-right:1px solid #1a1a26; border-bottom:1px solid #1a1a26;">
+                <div style="color:#F0B429; font-size:26px; font-weight:900; font-family:monospace;">{int(df_ana['hour'].mode()[0]) if not df_ana['hour'].mode().empty else 0}:00</div>
+                <div style="color:#7777a0; font-size:10px; text-transform:uppercase; letter-spacing:1px; margin-top:4px;">Peak Activity Hour</div>
+            </div>
+        </div>
+        
+        <div style="display:grid; grid-template-columns: 3fr 2fr; gap:15px; margin-bottom:25px;">
+            <div style="background:#06060a; border:1px solid #1a1a26; border-radius:6px; padding:15px;">
+                <div style="margin-bottom:12px; font-size:10px; color:#7777a0; text-transform:uppercase; letter-spacing:1px; font-weight:bold;">Optimized DFR Shift Windows</div>
+                {shift_html}
+            </div>
+            <div style="background:#06060a; border:1px solid #1a1a26; border-radius:6px; padding:15px; display:flex; flex-direction:column;">
+                <div style="margin-bottom:12px; font-size:10px; color:#7777a0; text-transform:uppercase; letter-spacing:1px; font-weight:bold;">Call Volume by Day of Week</div>
+                <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-grow:1; padding:10px 5px 0;">
+                    {dow_html}
+                </div>
+            </div>
+        </div>
+        
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:5px; padding-top:15px; border-top:1px solid #1a1a26;">
+            <div style="font-size:14px; font-weight:800; color:#fff; letter-spacing:1px; text-transform:uppercase;">DFR Deployment Calendar</div>
+            <div style="display:flex; gap:12px; font-family:monospace; font-size:9px; color:#7777a0;">
+                <div style="display:flex; align-items:center; gap:5px;"><div style="width:8px; height:8px; background:#2ecc71; border-radius:2px;"></div>LOW</div>
+                <div style="display:flex; align-items:center; gap:5px;"><div style="width:8px; height:8px; background:#d4c000; border-radius:2px;"></div>MED</div>
+                <div style="display:flex; align-items:center; gap:5px;"><div style="width:8px; height:8px; background:#ff8c00; border-radius:2px;"></div>HIGH</div>
+                <div style="display:flex; align-items:center; gap:5px;"><div style="width:8px; height:8px; background:#ff4444; border-radius:2px;"></div>PEAK</div>
+            </div>
+        </div>
+        
+        {cal_html}
+        
+        <script>
+            const dateHourly = {json.dumps(date_hourly)};
+            const shiftHours = {shift_hours};
+            const dowNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+            
+            function showTooltip(el, ev) {{
+                const cnt = parseInt(el.getAttribute('data-count'));
+                if (cnt === 0) return;
+                
+                const dk = el.getAttribute('data-date');
+                const ratio = parseFloat(el.getAttribute('data-ratio'));
+                const mName = el.getAttribute('data-month');
+                const d = el.getAttribute('data-d');
+                const y = el.getAttribute('data-y');
+                const dow = parseInt(el.getAttribute('data-dow'));
+                
+                let loadText = '';
+                if (ratio >= 0.85) loadText = '<span style="color:#ff4444">■ PEAK</span> &mdash; Full crew';
+                else if (ratio >= 0.55) loadText = '<span style="color:#ff8c00">■ HIGH</span> &mdash; Priority deploy';
+                else if (ratio >= 0.25) loadText = '<span style="color:#d4c000">■ MEDIUM</span> &mdash; Standard ops';
+                else loadText = '<span style="color:#2ecc71">■ LOW</span> &mdash; Light staffing';
+                
+                // Calculate best shift for THIS DAY
+                const hrArr = dateHourly[dk] || Array(24).fill(0);
+                let bestV = 0, bestS = 0;
+                for (let s=0; s<24; s++) {{
+                    let v = 0;
+                    for (let h=0; h<shiftHours; h++) v += hrArr[(s+h)%24];
+                    if (v > bestV) {{ bestV = v; bestS = s; }}
+                }}
+                const dayPct = Math.round((bestV / cnt) * 100);
+                const eHr = (bestS + shiftHours) % 24;
+                const fmt = (h) => (h%12 || 12) + (h<12 ? 'AM' : 'PM');
+                
+                const tt = document.getElementById('dfr-tooltip');
+                tt.innerHTML = `
+                    <div style="color:#00D2FF; margin-bottom:6px; font-size:12px; font-weight:bold; border-bottom:1px solid #252535; padding-bottom:4px;">${{mName}} ${{d}}, ${{y}} &middot; ${{dowNames[dow]}}</div>
+                    <div style="margin-bottom:8px; font-size:13px;">Calls: <span style="color:#fff; font-weight:bold;">${{cnt}}</span> &nbsp;&middot;&nbsp; ${{loadText}}</div>
+                    <div style="background:#1a1a26; padding:8px; border-radius:4px;">
+                        <div style="color:#7777a0; font-size:9px; letter-spacing:1px; text-transform:uppercase; margin-bottom:4px;">Best ${{shiftHours}}hr Shift</div>
+                        <div style="color:#00D2FF; font-size:14px; font-weight:bold; margin-bottom:2px;">${{fmt(bestS)}} &ndash; ${{fmt(eHr)}}</div>
+                        <div style="color:#aaa; font-size:10px;">Covers <span style="color:#fff;">${{dayPct}}%</span> of daily volume</div>
+                    </div>
+                `;
+                
+                tt.style.display = 'block';
+                
+                // Adjust position to stay on screen
+                let left = ev.clientX + 15;
+                let top = ev.clientY - 20;
+                if (left + 220 > window.innerWidth) left = ev.clientX - 235;
+                if (top + 100 > window.innerHeight) top = ev.clientY - 110;
+                
+                tt.style.left = left + 'px';
+                tt.style.top = top + 'px';
+            }}
+            
+            function hideTooltip() {{
+                document.getElementById('dfr-tooltip').style.display = 'none';
+            }}
+        </script>
+    </div>
+    """
+    return full_html
     <div style="background:#000; color:#e8e8f2; font-family: 'Barlow', sans-serif; padding:15px; border-radius:8px;">
         <style>
             .day-cell:hover {{ transform: scale(1.15); z-index: 10; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }}
