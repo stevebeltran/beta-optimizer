@@ -1463,8 +1463,11 @@ if st.session_state['csvs_ready']:
     master_gdf['LABEL'] = master_gdf['DISPLAY_NAME'] + " (" + (master_gdf['data_count']/total_pts*100).round(1).astype(str) + "%)"
     options_map = dict(zip(master_gdf['LABEL'], master_gdf['DISPLAY_NAME']))
     all_options = master_gdf['LABEL'].tolist()
-    selected_labels = st.sidebar.multiselect("Jurisdictions", options=all_options, default=all_options,
-                                             help="Select which geographic areas to include in coverage analysis.")
+    # Only pre-select the first item (the one with the highest call volume)
+default_selection = [all_options[0]] if all_options else []
+
+selected_labels = st.sidebar.multiselect("Jurisdictions", options=all_options, default=default_selection,
+                                         help="Select which geographic areas to include in coverage analysis.")
     if not selected_labels:
         st.warning("Please select at least one jurisdiction from the sidebar.")
         st.stop()
