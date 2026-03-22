@@ -622,7 +622,13 @@ def estimate_grants(population):
     elif population > 250000: return "$250k - $500k"
     elif population > 100000: return "$100k - $250k"
     else: return "$25k - $100k"
-
+        
+def get_circle_coords(lat, lon, r_mi=2.0):
+    angles = np.linspace(0, 2*np.pi, 100)
+    c_lats = lat + (r_mi/69.172) * np.sin(angles)
+    c_lons = lon + (r_mi/(69.172 * np.cos(np.radians(lat)))) * np.cos(angles)
+    return c_lats, c_lons
+    
 def format_3_lines(name_str):
     match = re.search(r'\s(\d{1,5}\s+[A-Za-z])', name_str)
     if match:
