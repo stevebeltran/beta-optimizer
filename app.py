@@ -319,7 +319,7 @@ st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide", initia
 
 # --- INITIALIZE SESSION STATE ---
 defaults = {
-    'csvs_ready': False, 'df_calls': None, 'df_stations': None,
+    'csvs_ready': False, 'df_calls': None, 'df_stations': None, 'df_calls_enriched': None,
     'active_city': "Orlando", 'active_state': "FL", 'estimated_pop': 316081,
     'k_resp': 0, 'k_guard': 0, 'r_resp': 2.0, 'r_guard': 8.0,
     'dfr_rate': 25, 'deflect_rate': 30, 'total_original_calls': 0,
@@ -1004,6 +1004,165 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
 
 
 # ============================================================
+# ============================================================
+# SMART CAD INGESTION HELPERS
+# ============================================================
+def _fuzzy_match(columns, candidates, threshold=0.55):
+    """Return the first column name that fuzzy-matches any candidate keyword."""
+    import difflib
+    cols_lower = {c: c.lower().strip() for c in columns}
+    for col, col_l in cols_lower.items():
+        for cand in candidates:
+            if cand in col_l:
+                return col
+    # Try difflib ratio as a fallback
+    for col, col_l in cols_lower.items():
+        for cand in candidates:
+            r = difflib.SequenceMatcher(None, col_l, cand).ratio()
+            if r >= threshold:
+                return col
+    return None
+
+def _parse_datetime_col(series):
+    """Try multiple common date/time formats; return parsed Series or None."""
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%m/%d/%Y %H:%M:%S', '%m/%d/%Y %H:%M',
+                '%Y-%m-%dT%H:%M:%S', '%m/%d/%Y', '%Y-%m-%d',
+                '%d/%m/%Y %H:%M:%S', '%d/%m/%Y'):
+        try:
+            return pd.to_datetime(series, format=fmt, errors='raise')
+        except Exception:
+            pass
+    try:
+        return pd.to_datetime(series, infer_datetime_format=True, errors='coerce')
+    except Exception:
+        return None
+
+def _parse_priority(series):
+    """Convert priority strings to integers 1-5."""
+    def _p(v):
+        if pd.isna(v):
+            return None
+        s = str(v).strip().lower()
+        if s.isdigit():
+            return min(max(int(s), 1), 5)
+        mapping = {'p1':1,'priority 1':1,'high':1,'urgent':1,'emergency':1,
+                   'p2':2,'priority 2':2,'moderate':2,
+                   'p3':3,'priority 3':3,'medium':3,'normal':3,
+                   'p4':4,'priority 4':4,'low':4,
+                   'p5':5,'priority 5':5,'routine':5}
+        return mapping.get(s, None)
+    return series.map(_p)
+
+def ingest_cad_csv(uploaded_file):
+    """
+    Accept any CAD-style CSV and return a clean DataFrame with columns:
+    lat, lon, [priority], [date], [hour], [dow], [date_key], [month_key]
+    Returns (df, warnings_list).
+    """
+    warnings = []
+    try:
+        raw = pd.read_csv(uploaded_file, dtype=str, encoding_errors='replace')
+    except Exception as e:
+        return None, [f"Could not read CSV: {e}"]
+
+    raw.columns = [str(c).strip() for c in raw.columns]
+
+    # ── Latitude / Longitude ──────────────────────────────────
+    LAT_KEYS = ['lat','latitude','y','ylat','lat_y','incident_lat','call_lat','geo_lat','location_lat']
+    LON_KEYS = ['lon','lng','long','longitude','x','xlong','lon_x','incident_lon','call_lon','geo_lon','location_lon']
+    lat_col = _fuzzy_match(raw.columns, LAT_KEYS)
+    lon_col = _fuzzy_match(raw.columns, LON_KEYS)
+    if lat_col is None or lon_col is None:
+        return None, ["Could not find lat/lon columns. Rename to 'lat'/'lon' and re-upload."]
+
+    df = pd.DataFrame()
+    df['lat'] = pd.to_numeric(raw[lat_col], errors='coerce')
+    df['lon'] = pd.to_numeric(raw[lon_col], errors='coerce')
+    df = df.dropna(subset=['lat','lon'])
+    df = df[(df['lat'].between(-90,90)) & (df['lon'].between(-180,180))].reset_index(drop=True)
+    if len(df) == 0:
+        return None, ["No valid lat/lon coordinates found after parsing."]
+
+    # ── Priority ─────────────────────────────────────────────
+    PRI_KEYS = ['priority','pri','urgency','call priority','priority level','response_priority',
+                'incident_priority','cad_priority','npa_priority','call_type_priority']
+    pri_col = _fuzzy_match(raw.columns, PRI_KEYS)
+    if pri_col:
+        df['priority'] = _parse_priority(raw[pri_col].iloc[:len(df)])
+    else:
+        warnings.append("No priority column detected — priority filtering disabled.")
+
+    # ── Date / Time ───────────────────────────────────────────
+    DATE_KEYS = ['date','datetime','call_date','incident_date','reported_date','dispatch_date',
+                 'event_date','received_date','created_date','cad_date']
+    TIME_KEYS = ['time','call_time','incident_time','reported_time','dispatch_time',
+                 'event_time','received_time','hour']
+    date_col = _fuzzy_match(raw.columns, DATE_KEYS)
+    time_col = _fuzzy_match(raw.columns, TIME_KEYS)
+
+    dt_series = None
+    if date_col and time_col and date_col != time_col:
+        combined = raw[date_col].fillna('') + ' ' + raw[time_col].fillna('')
+        dt_series = _parse_datetime_col(combined.iloc[:len(df)])
+    elif date_col:
+        dt_series = _parse_datetime_col(raw[date_col].iloc[:len(df)])
+
+    if dt_series is not None:
+        dt_series = dt_series.reset_index(drop=True)
+        valid_mask = dt_series.notna()
+        if valid_mask.sum() > 0:
+            df['datetime'] = dt_series
+            df['hour']      = dt_series.dt.hour
+            df['dow']       = dt_series.dt.dayofweek
+            df['date_key']  = dt_series.dt.strftime('%Y-%m-%d')
+            df['month_key'] = dt_series.dt.strftime('%Y-%m')
+            pct = valid_mask.sum() / len(df) * 100
+            if pct < 50:
+                warnings.append(f"Only {pct:.0f}% of rows had parseable dates — charts may be sparse.")
+        else:
+            warnings.append("Date column found but no dates could be parsed. Temporal charts disabled.")
+    else:
+        warnings.append("No date/time column detected — calendar & hourly charts disabled.")
+
+    return df, warnings
+
+
+def ingest_stations_csv(uploaded_file):
+    """Accept any stations CSV; return clean DataFrame with lat, lon, name, [type]."""
+    try:
+        raw = pd.read_csv(uploaded_file, dtype=str, encoding_errors='replace')
+    except Exception as e:
+        return None, [f"Could not read stations CSV: {e}"]
+
+    raw.columns = [str(c).strip() for c in raw.columns]
+    LAT_KEYS = ['lat','latitude','y','ylat','station_lat','loc_lat']
+    LON_KEYS = ['lon','lng','long','longitude','x','xlong','station_lon','loc_lon']
+    lat_col = _fuzzy_match(raw.columns, LAT_KEYS)
+    lon_col = _fuzzy_match(raw.columns, LON_KEYS)
+    if lat_col is None or lon_col is None:
+        return None, ["Could not find lat/lon columns in stations file."]
+
+    df = pd.DataFrame()
+    df['lat'] = pd.to_numeric(raw[lat_col], errors='coerce')
+    df['lon'] = pd.to_numeric(raw[lon_col], errors='coerce')
+    df = df.dropna(subset=['lat','lon']).reset_index(drop=True)
+
+    NAME_KEYS = ['name','station_name','facility','location','address','site','dept','department','agency']
+    TYPE_KEYS = ['type','station_type','category','kind','use']
+    name_col = _fuzzy_match(raw.columns, NAME_KEYS)
+    type_col = _fuzzy_match(raw.columns, TYPE_KEYS)
+
+    if name_col:
+        df['name'] = raw[name_col].iloc[:len(df)].fillna('').values
+    else:
+        df['name'] = [f"Station {i+1}" for i in range(len(df))]
+    if type_col:
+        df['type'] = raw[type_col].iloc[:len(df)].fillna('Police').values
+
+    return df, []
+
+
+# ============================================================
 # SCENARIO LOADER (sidebar, pre-map)
 # ============================================================
 if not st.session_state['csvs_ready']:
@@ -1242,12 +1401,11 @@ if not st.session_state['csvs_ready']:
         <div class="path-card" style="--accent:#39FF14;">
             <span class="pc-icon">📂</span>
             <div class="pc-tag">Path 02</div>
-            <div class="pc-title">Upload<br>Real CAD Data</div>
+            <div class="pc-title">Upload<br>Any CAD Data</div>
             <div class="pc-desc">
-                Drop your own <code class="inline">calls.csv</code> and
-                <code class="inline">stations.csv</code> — both need
-                <code class="inline">lat</code> and <code class="inline">lon</code>
-                columns. Jurisdiction auto-detected from coordinates.
+                Drop <b>any</b> CAD export CSV for calls and a stations CSV.
+                Column names are auto-detected — no reformatting needed.
+                Date, time, priority &amp; coordinates are recognized automatically.
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1255,85 +1413,98 @@ if not st.session_state['csvs_ready']:
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
         uploaded_files = st.file_uploader(
-            "Drop calls.csv & stations.csv",
+            "Drop your CAD calls CSV and stations CSV",
             accept_multiple_files=True,
             label_visibility="collapsed",
-            help="Upload both files together. The uploader accepts multiple files at once."
+            help="Upload both files together. Any column naming works — lat/latitude/y, lon/longitude/x, date/datetime/call_date, etc."
         )
 
         st.markdown("""
         <div class="field-footnote">
-            <b style='color:#555;'>calls.csv</b> — lat, lon, priority (optional)<br>
-            <b style='color:#555;'>stations.csv</b> — lat, lon, name, type (optional)<br>
-            Max 25,000 calls · 100 stations
+            <b style='color:#555;'>Calls file</b> — any name, needs lat+lon (date/time/priority auto-detected)<br>
+            <b style='color:#555;'>Stations file</b> — any name, needs lat+lon (name/type auto-detected)<br>
+            Max 25,000 calls · 100 stations · CAD exports from any vendor supported
         </div>
         """, unsafe_allow_html=True)
 
-        call_file, station_file = None, None
-        if uploaded_files:
-            for f in uploaded_files:
-                fname = f.name.lower()
-                if fname == "calls.csv":    call_file = f
-                elif fname == "stations.csv": station_file = f
+        if uploaded_files and len(uploaded_files) == 2:
+            # Heuristic: the larger file is usually calls
+            f0, f1 = uploaded_files[0], uploaded_files[1]
+            f0.seek(0); f1.seek(0)
+            b0 = len(f0.read()); f0.seek(0)
+            b1 = len(f1.read()); f1.seek(0)
+            # Also use filename hints
+            def _is_stations(name):
+                n = name.lower()
+                return any(k in n for k in ['station','dept','agency','facility','police','fire'])
+            if _is_stations(f0.name) and not _is_stations(f1.name):
+                calls_up, stations_up = f1, f0
+            elif _is_stations(f1.name) and not _is_stations(f0.name):
+                calls_up, stations_up = f0, f1
+            else:
+                calls_up, stations_up = (f0, f1) if b0 >= b1 else (f1, f0)
 
-            if call_file and station_file:
-                df_c = pd.read_csv(call_file)
-                df_c.columns = [str(c).lower().strip() for c in df_c.columns]
-                df_c = df_c.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
-                if 'lat' not in df_c.columns or 'lon' not in df_c.columns:
-                    st.error(f"❌ calls.csv must have lat/lon columns. Found: {', '.join(df_c.columns)}")
-                    st.stop()
-                keep_c = ['lat', 'lon'] + (['priority'] if 'priority' in df_c.columns else [])
-                df_c = df_c[keep_c].dropna(subset=['lat', 'lon']).reset_index(drop=True)
-                st.session_state['total_original_calls'] = len(df_c)
-                if len(df_c) > 25000:
-                    df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
-                    st.toast("⚠️ Sampled to 25,000 calls for performance.")
-                st.session_state['df_calls'] = df_c
-                df_s = pd.read_csv(station_file)
-                df_s.columns = [str(c).lower().strip() for c in df_s.columns]
-                df_s = df_s.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
-                if 'lat' not in df_s.columns or 'lon' not in df_s.columns:
-                    st.error(f"❌ stations.csv must have lat/lon columns. Found: {', '.join(df_s.columns)}")
-                    st.stop()
-                keep_s = ['lat', 'lon'] + [c for c in ['name', 'type'] if c in df_s.columns]
-                df_s = df_s[keep_s].dropna(subset=['lat', 'lon']).reset_index(drop=True)
-                if 'name' not in df_s.columns:
-                    df_s['name'] = [f"Station {i+1}" for i in range(len(df_s))]
-                if len(df_s) > 100:
-                    df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
-                st.session_state['df_stations'] = df_s
+            with st.spinner("🔍 Detecting column types…"):
+                df_c, c_warns = ingest_cad_csv(calls_up)
+                df_s, s_warns = ingest_stations_csv(stations_up)
 
-                # --- NEW OUTLIER FILTER ---
-                # Find the bounding box of the actual stations
-                lat_min, lat_max = df_s['lat'].min(), df_s['lat'].max()
-                lon_min, lon_max = df_s['lon'].min(), df_s['lon'].max()
-                
-                # Filter out any calls that are more than ~35 miles (0.5 degrees) from the station cluster
-                df_c = df_c[
-                    (df_c['lat'] >= lat_min - 0.5) & (df_c['lat'] <= lat_max + 0.5) &
-                    (df_c['lon'] >= lon_min - 0.5) & (df_c['lon'] <= lon_max + 0.5)
-                ]
-                
-                # Re-save the newly cleaned calls to the session state
-                st.session_state['df_calls'] = df_c
-                st.session_state['total_original_calls'] = len(df_c)
-                # --------------------------
-                
-                with st.spinner(get_jurisdiction_message()):
-                    detected_state_full, detected_city = reverse_geocode_state(
-                        df_c['lat'].iloc[0], df_c['lon'].iloc[0]
-                    )
-                    if detected_state_full and detected_state_full in US_STATES_ABBR:
-                        st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
-                        if detected_city and detected_city != 'Unknown City':
-                            st.session_state['active_city'] = detected_city
-                        st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
-                st.session_state['csvs_ready'] = True
-                st.rerun()
-            elif call_file or station_file:
-                missing = "stations.csv" if call_file else "calls.csv"
-                st.warning(f"⚠️ Also upload **{missing}** to continue.")
+            for w in c_warns + s_warns:
+                st.warning(f"⚠️ {w}")
+
+            if df_c is None:
+                st.error(f"❌ Calls file error: {c_warns[0] if c_warns else 'Unknown'}")
+                st.stop()
+            if df_s is None:
+                st.error(f"❌ Stations file error: {s_warns[0] if s_warns else 'Unknown'}")
+                st.stop()
+
+            # Store temporal enrichment in session state for analytics charts
+            if 'hour' in df_c.columns:
+                st.session_state['df_calls_enriched'] = df_c.copy()
+            else:
+                st.session_state['df_calls_enriched'] = None
+
+            # Sample if too large
+            if len(df_c) > 25000:
+                df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
+                st.toast("⚠️ Sampled to 25,000 calls for performance.")
+            if len(df_s) > 100:
+                df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
+
+            # Keep only the columns the optimizer needs
+            keep_c = ['lat', 'lon'] + ([c for c in ['priority'] if c in df_c.columns])
+            df_c = df_c[keep_c].reset_index(drop=True)
+
+            st.session_state['total_original_calls'] = len(df_c)
+            st.session_state['df_calls'] = df_c
+            st.session_state['df_stations'] = df_s
+
+            # Outlier filter — remove calls far from station cluster
+            lat_min, lat_max = df_s['lat'].min(), df_s['lat'].max()
+            lon_min, lon_max = df_s['lon'].min(), df_s['lon'].max()
+            df_c = df_c[
+                (df_c['lat'] >= lat_min - 0.5) & (df_c['lat'] <= lat_max + 0.5) &
+                (df_c['lon'] >= lon_min - 0.5) & (df_c['lon'] <= lon_max + 0.5)
+            ]
+            st.session_state['df_calls'] = df_c
+            st.session_state['total_original_calls'] = len(df_c)
+
+            with st.spinner(get_jurisdiction_message()):
+                detected_state_full, detected_city = reverse_geocode_state(
+                    df_c['lat'].iloc[0], df_c['lon'].iloc[0]
+                )
+                if detected_state_full and detected_state_full in US_STATES_ABBR:
+                    st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
+                    if detected_city and detected_city != 'Unknown City':
+                        st.session_state['active_city'] = detected_city
+                    st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
+            st.session_state['csvs_ready'] = True
+            st.rerun()
+
+        elif uploaded_files and len(uploaded_files) == 1:
+            st.info("📎 Drop your **stations** file too to continue.")
+        elif uploaded_files and len(uploaded_files) > 2:
+            st.warning("⚠️ Please upload exactly 2 files: one calls file and one stations file.")
 
     with path_demo_col:
         st.markdown(f"""
@@ -2472,3 +2643,157 @@ if st.session_state['csvs_ready']:
             </script></body></html>"""
 
             components.html(sim_html, height=700)
+
+    # ── CAD ANALYTICS (below Swarm) ───────────────────────────────────
+    df_enriched = st.session_state.get('df_calls_enriched', None)
+    if df_enriched is not None and 'hour' in df_enriched.columns:
+        st.markdown("---")
+        st.markdown(f"<h3 style='color:{text_main};'>📊 CAD Analytics</h3>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:0.82rem; color:{text_muted}; margin-bottom:16px;'>Temporal patterns derived from your uploaded CAD data — hourly volumes, day-of-week distribution, optimal DFR shift windows, and a call-volume calendar.</div>", unsafe_allow_html=True)
+
+        # ── Priority filter ────────────────────────────────
+        if 'priority' in df_enriched.columns and df_enriched['priority'].notna().any():
+            pri_opts = ['All'] + [str(p) for p in sorted(df_enriched['priority'].dropna().unique().astype(int))]
+            sel_pri = st.selectbox("Filter by Priority (1 = highest)", pri_opts, key='ana_pri')
+            if sel_pri != 'All':
+                df_plot = df_enriched[df_enriched['priority'] == int(sel_pri)]
+            else:
+                df_plot = df_enriched
+        else:
+            df_plot = df_enriched
+
+        hourly = [int((df_plot['hour'] == h).sum()) for h in range(24)]
+        total_calls = len(df_plot)
+
+        # ── Shift recommendation ───────────────────────────
+        def best_shift(hourly, win):
+            best_s, best_v = 0, 0
+            for s in range(24):
+                v = sum(hourly[(s+h) % 24] for h in range(win))
+                if v > best_v:
+                    best_v, best_s = v, s
+            return best_s, best_v
+
+        shift_windows = [8, 10, 12]
+        st.markdown(f"<div style='font-family:var(--brand,monospace);font-size:0.52rem;letter-spacing:2px;text-transform:uppercase;color:{text_muted};margin-bottom:8px;'>DFR Shift Coverage Comparison</div>", unsafe_allow_html=True)
+        shift_cols = st.columns(len(shift_windows))
+        for i, win in enumerate(shift_windows):
+            s, v = best_shift(hourly, win)
+            end = (s + win) % 24
+            pct = round(v / max(total_calls, 1) * 100)
+            def fh(h): return f"{h % 12 or 12}{'am' if h < 12 else 'pm'}"
+            is_best = (win == 8)
+            border_color = accent_color if is_best else "#333"
+            with shift_cols[i]:
+                st.markdown(f"""
+                <div style='background:#06060a;border:1px solid {border_color};border-radius:4px;padding:12px 10px;text-align:center;'>
+                  <div style='font-family:monospace;font-size:0.45rem;letter-spacing:1px;color:{text_muted};text-transform:uppercase;'>{win}-hr shift</div>
+                  <div style='font-family:monospace;font-size:0.85rem;color:{text_main};margin:4px 0 2px;'>{fh(s)} – {fh(end)}</div>
+                  <div style='font-family:monospace;font-size:0.72rem;color:{accent_color};font-weight:700;'>{pct}%</div>
+                  <div style='font-family:monospace;font-size:0.45rem;color:{text_muted};'>of daily calls</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+        # ── Hourly chart ───────────────────────────────────
+        best_s8, _ = best_shift(hourly, 8)
+        in_shift = [(best_s8 + h) % 24 for h in range(8)]
+        bar_colors = [accent_color if h in in_shift else 'rgba(0,210,255,0.18)' for h in range(24)]
+        fig_hr = go.Figure(go.Bar(
+            x=list(range(24)),
+            y=hourly,
+            marker_color=bar_colors,
+            marker_line_width=0,
+        ))
+        fig_hr.update_layout(
+            title=dict(text="Hourly Call Volume", font=dict(size=11, color=text_muted), x=0),
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color=text_muted, size=10),
+            xaxis=dict(tickmode='array', tickvals=list(range(0,24,2)),
+                       ticktext=[f"{h}{'a' if h<12 else 'p'}" for h in range(0,24,2)],
+                       showgrid=False, color=text_muted),
+            yaxis=dict(showgrid=True, gridcolor='#1a1a26', color=text_muted),
+            margin=dict(l=30, r=10, t=30, b=30),
+            height=180,
+        )
+        # ── Day-of-week chart ──────────────────────────────
+        dow_labels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+        dow_counts = [int((df_plot['dow'] == d).sum()) for d in range(7)]
+        dow_colors = ['rgba(0,210,255,0.7)' if d < 5 else 'rgba(240,180,41,0.7)' for d in range(7)]
+        fig_dow = go.Figure(go.Bar(
+            x=dow_labels,
+            y=dow_counts,
+            marker_color=dow_colors,
+            marker_line_width=0,
+        ))
+        fig_dow.update_layout(
+            title=dict(text="Day of Week", font=dict(size=11, color=text_muted), x=0),
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color=text_muted, size=10),
+            xaxis=dict(showgrid=False, color=text_muted),
+            yaxis=dict(showgrid=True, gridcolor='#1a1a26', color=text_muted),
+            margin=dict(l=30, r=10, t=30, b=30),
+            height=180,
+        )
+        ch1, ch2 = st.columns(2)
+        with ch1:
+            st.plotly_chart(fig_hr, use_container_width=True, config={'displayModeBar': False})
+        with ch2:
+            st.plotly_chart(fig_dow, use_container_width=True, config={'displayModeBar': False})
+
+        # ── Calendar heatmap ───────────────────────────────
+        if 'date_key' in df_enriched.columns and 'month_key' in df_enriched.columns:
+            df_cal = df_plot.dropna(subset=['date_key','month_key'])
+            if len(df_cal) > 0:
+                st.markdown(f"<div style='font-family:var(--brand,monospace);font-size:0.52rem;letter-spacing:2px;text-transform:uppercase;color:{text_muted};margin:12px 0 8px;'>Call Volume Calendar</div>", unsafe_allow_html=True)
+                date_counts = df_cal.groupby('date_key').size().to_dict()
+                month_keys = sorted(df_cal['month_key'].unique())
+                DOW_NAMES = ['Su','Mo','Tu','We','Th','Fr','Sa']
+                DOW_COLORS = ['#FF6B6B','#4ECDC4','#45B7D1','#F0B429','#96CEB4','#DDA0DD','#FF9A8B']
+
+                cal_cols = st.columns(min(len(month_keys), 4))
+                for mi, mk in enumerate(month_keys[:12]):
+                    yr, mo = int(mk.split('-')[0]), int(mk.split('-')[1])
+                    m_data = df_cal[df_cal['month_key'] == mk]
+                    m_max = max((date_counts.get(k, 0) for k in m_data['date_key'].unique()), default=1)
+                    import calendar as _cal
+                    col_idx = mi % 4
+                    with cal_cols[col_idx]:
+                        st.markdown(f"<div style='font-family:monospace;font-size:0.55rem;color:{accent_color};letter-spacing:1px;text-transform:uppercase;margin-bottom:4px;'>{_cal.month_abbr[mo]} {yr} <span style='color:{text_muted};font-size:0.45rem;'>{m_data.shape[0]:,} calls</span></div>", unsafe_allow_html=True)
+                        # DOW header
+                        dow_row = "".join([f"<div style='font-size:0.38rem;text-align:center;color:{DOW_COLORS[i]};padding:1px 0;font-weight:600;'>{DOW_NAMES[i]}</div>" for i in range(7)])
+                        st.markdown(f"<div style='display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:2px;'>{dow_row}</div>", unsafe_allow_html=True)
+                        # Build cells
+                        first_dow = _cal.weekday(yr, mo, 1)  # Monday=0
+                        first_dow_sun = (first_dow + 1) % 7  # Sunday=0
+                        last_day = _cal.monthrange(yr, mo)[1]
+                        cells = ""
+                        for _ in range(first_dow_sun):
+                            cells += "<div></div>"
+                        for d in range(1, last_day + 1):
+                            dk = f"{yr}-{mo:02d}-{d:02d}"
+                            cnt = date_counts.get(dk, 0)
+                            ratio = cnt / m_max if m_max > 0 else 0
+                            if cnt == 0:
+                                bg = '#0c0c12'; fc = '#333'
+                            elif ratio >= 0.85:
+                                bg = '#7f1d1d'; fc = '#fca5a5'
+                            elif ratio >= 0.55:
+                                bg = '#92400e'; fc = '#fcd34d'
+                            elif ratio >= 0.25:
+                                bg = '#1e3a5f'; fc = '#93c5fd'
+                            else:
+                                bg = '#0f2d1a'; fc = '#6ee7b7'
+                            dow_i = _cal.weekday(yr, mo, d)
+                            dow_sun = (dow_i + 1) % 7
+                            stripe_color = DOW_COLORS[dow_sun]
+                            cell_content = f'<span style="font-size:0.38rem;z-index:1;">{d}</span>'
+                            if cnt > 0:
+                                cell_content += f'<span style="font-size:0.3rem;opacity:0.7;">{cnt}</span>'
+                                cell_content += f'<div style="position:absolute;bottom:0;left:0;right:0;height:2px;background:{stripe_color};opacity:0.7;border-radius:0 0 2px 2px;"></div>'
+                            cells += f'<div style="aspect-ratio:1;background:{bg};border-radius:2px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:{fc};position:relative;font-family:monospace;">{cell_content}</div>'
+                        st.markdown(f"<div style='display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:8px;'>{cells}</div>", unsafe_allow_html=True)
+    elif st.session_state.get('csvs_ready') and st.session_state.get('df_calls_enriched') is None:
+        # Data was loaded (demo or old upload without enrichment) — show placeholder note
+        pass
