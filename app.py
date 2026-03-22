@@ -1256,21 +1256,34 @@ if not st.session_state['csvs_ready']:
                     df_c = df_c.reset_index(drop=True)
 
                 # ── Stations: load or auto-generate ───────
+                # ── Stations: load or auto-generate ───────
                 if station_file is not None:
                     with st.spinner("🔍 Reading stations file…"):
                         try:
                             df_s = pd.read_csv(station_file)
                             df_s.columns = [str(c).lower().strip() for c in df_s.columns]
+                            
+                            # Rename common columns
                             if 'latitude' in df_s.columns: df_s = df_s.rename(columns={'latitude':'lat'})
                             if 'longitude' in df_s.columns: df_s = df_s.rename(columns={'longitude':'lon'})
                             if 'station_name' in df_s.columns: df_s = df_s.rename(columns={'station_name':'name'})
                             if 'station_type' in df_s.columns: df_s = df_s.rename(columns={'station_type':'type'})
+                            
+                            # FORCE LAT/LON TO BE NUMBERS (This fixes the TypeError)
+                            if 'lat' in df_s.columns and 'lon' in df_s.columns:
+                                df_s['lat'] = pd.to_numeric(df_s['lat'], errors='coerce')
+                                df_s['lon'] = pd.to_numeric(df_s['lon'], errors='coerce')
+                            else:
+                                raise ValueError("Could not find lat/lon columns.")
+
                             if 'name' not in df_s.columns: df_s['name'] = [f"Station {i+1}" for i in range(len(df_s))]
                             if 'type' not in df_s.columns: df_s['type'] = 'Police'
+                            
                             df_s = df_s.dropna(subset=['lat', 'lon']).reset_index(drop=True)
                             osm_note = "Loaded stations from file."
                         except Exception as e:
                             df_s, osm_note = None, f"Failed: {e}"
+                            
                     if df_s is None or df_s.empty:
                         st.error(f"❌ Stations file error: {osm_note}")
                         st.stop()
