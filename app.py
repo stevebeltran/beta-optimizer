@@ -328,10 +328,10 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
                 const dow = parseInt(el.getAttribute('data-dow'));
                 
                 let loadText = '';
-                if (ratio >= 0.85) loadText = '<span style="color:#ff4444">■ PEAK</span> — Full crew';
-                else if (ratio >= 0.55) loadText = '<span style="color:#ff8c00">■ HIGH</span> — Priority deploy';
-                else if (ratio >= 0.25) loadText = '<span style="color:#d4c000">■ MEDIUM</span> — Standard ops';
-                else loadText = '<span style="color:#2ecc71">■ LOW</span> — Light staffing';
+                if (ratio >= 0.85) loadText = '<span style="color:#ff4444">■ PEAK</span> &mdash; Full crew';
+                else if (ratio >= 0.55) loadText = '<span style="color:#ff8c00">■ HIGH</span> &mdash; Priority deploy';
+                else if (ratio >= 0.25) loadText = '<span style="color:#d4c000">■ MEDIUM</span> &mdash; Standard ops';
+                else loadText = '<span style="color:#2ecc71">■ LOW</span> &mdash; Light staffing';
                 
                 const hrArr = dateHourly[dk] || Array(24).fill(0);
                 let bestV = 0, bestS = 0;
@@ -346,11 +346,11 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
                 
                 const tt = document.getElementById('dfr-tooltip');
                 tt.innerHTML = `
-                    <div style="color:#00D2FF; margin-bottom:6px; font-size:12px; font-weight:bold; border-bottom:1px solid #252535; padding-bottom:4px;">${{mName}} ${{d}}, ${{y}} · ${{dowNames[dow]}}</div>
-                    <div style="margin-bottom:8px; font-size:13px;">Calls: <span style="color:#fff; font-weight:bold;">${{cnt}}</span>  ·  ${{loadText}}</div>
+                    <div style="color:#00D2FF; margin-bottom:6px; font-size:12px; font-weight:bold; border-bottom:1px solid #252535; padding-bottom:4px;">${{mName}} ${{d}}, ${{y}} &middot; ${{dowNames[dow]}}</div>
+                    <div style="margin-bottom:8px; font-size:13px;">Calls: <span style="color:#fff; font-weight:bold;">${{cnt}}</span> &nbsp;&middot;&nbsp; ${{loadText}}</div>
                     <div style="background:#1a1a26; padding:8px; border-radius:4px;">
                         <div style="color:#7777a0; font-size:9px; letter-spacing:1px; text-transform:uppercase; margin-bottom:4px;">Best ${{shiftHours}}hr Shift</div>
-                        <div style="color:#00D2FF; font-size:14px; font-weight:bold; margin-bottom:2px;">${{fmt(bestS)}} – ${{fmt(eHr)}}</div>
+                        <div style="color:#00D2FF; font-size:14px; font-weight:bold; margin-bottom:2px;">${{fmt(bestS)}} &ndash; ${{fmt(eHr)}}</div>
                         <div style="color:#aaa; font-size:10px;">Covers <span style="color:#fff;">${{dayPct}}%</span> of daily volume</div>
                     </div>
                 `;
@@ -986,11 +986,11 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         'Guardian (Area)':   pad(a_g)
     })
 
-# ============================================================
-# APP FLOW 
-# ============================================================
+# --- PAGE CONFIG ---
+# (Already defined at top)
 
 if not st.session_state['csvs_ready']:
+
     st.markdown(f"""
     <style>
     @keyframes pulseGlow {{
@@ -1108,10 +1108,6 @@ if not st.session_state['csvs_ready']:
     .pc-title {{ font-size:1rem; font-weight:800; color:#fff;
                  line-height:1.25; margin-bottom:7px; }}
     .pc-desc  {{ font-size:0.7rem; color:#555; line-height:1.6; margin-bottom:0; }}
-    code.inline {{
-        background:#151515; border-radius:3px;
-        padding:1px 5px; font-size:0.68rem; color:#aaa;
-    }}
     .field-footnote {{
         font-size: 0.63rem; color: #3a3a3a; line-height: 1.75;
         margin-top: 10px; border-top: 1px solid #141414;
@@ -1879,218 +1875,6 @@ if st.session_state['csvs_ready']:
         active_drones.append(d)
         step += 1
 
-    # ── EXPORT BUTTONS ────────────────────────────────────────────────
-    if fleet_capex > 0:
-        st.sidebar.markdown("---")
-        
-        brinc_user = st.sidebar.text_input("BRINC Email Prefix (first.last)", value=st.session_state.get('brinc_user', 'steven.beltran'), key='brinc_user')
-        st.sidebar.caption("*(Press **Enter** after typing to apply changes)*")
-        
-        user_clean = brinc_user.strip()
-        if not user_clean: user_clean = "steven.beltran"
-        prop_email = f"{user_clean}@brincdrones.com"
-        prop_name = " ".join([word.capitalize() for word in user_clean.split('.')])
-
-        prop_city  = st.session_state.get('active_city', 'City')
-        prop_state = st.session_state.get('active_state', 'FL')
-        pop_metric = st.session_state.get('estimated_pop', 250000)
-        current_time_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        safe_city = prop_city.replace(" ","_").replace("/","_")
-
-        export_dict = {
-            "city": prop_city, "state": prop_state,
-            "k_resp": k_responder, "k_guard": k_guardian,
-            "r_resp": resp_radius_mi, "r_guard": guard_radius_mi,
-            "dfr_rate": int(dfr_dispatch_rate*100), "deflect_rate": int(deflection_rate*100),
-            "calls_data": json.loads(st.session_state['df_calls'].replace({np.nan:None}).to_json(orient='records')) if st.session_state.get('df_calls') is not None else None,
-            "stations_data": json.loads(st.session_state['df_stations'].replace({np.nan:None}).to_json(orient='records')) if st.session_state.get('df_stations') is not None else None,
-            "faa_geojson": faa_geojson
-        }
-
-        avg_resp_time  = sum(d['avg_time_min'] for d in active_drones)/len(active_drones) if active_drones else 0.0
-        avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level/100)
-        avg_time_saved = ((sum((d['radius_m']/1609.34*1.4/avg_ground_speed)*60 for d in active_drones)/len(active_drones)) - avg_resp_time) if active_drones and avg_ground_speed > 0 else 0.0
-
-        fig_for_export = go.Figure()
-        for d in active_drones:
-            clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
-            fig_for_export.add_trace(go.Scattermapbox(
-                lat=list(clats)+[None,d['lat']], lon=list(clons)+[None,d['lon']],
-                mode='lines+markers', line=dict(color=d['color'], width=3),
-                marker=dict(size=[0]*len(clats)+[0,16], color=d['color']),
-                fill='toself', fillcolor='rgba(0,0,0,0)', name=d['name'][:30]
-            ))
-        fig_for_export.update_layout(
-            mapbox=dict(center=dict(lat=center_lat, lon=center_lon), zoom=dynamic_zoom, style="carto-darkmatter"),
-            margin=dict(l=0,r=0,t=0,b=0), height=500, showlegend=True,
-            legend=dict(bgcolor=legend_bg, font=dict(color=legend_text, size=11))
-        )
-        map_html_str = fig_for_export.to_html(full_html=False, include_plotlyjs='cdn', default_height='500px', default_width='100%')
-        station_rows = "".join(f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>{d['faa_ceiling']}</td><td>${d['cost']:,}</td></tr>" for d in active_drones)
-
-        logo_b64 = get_base64_of_bin_file("logo.png")
-        logo_html_str = f'<img src="data:image/png;base64,{logo_b64}" style="height:32px;">' if logo_b64 else '<div style="font-size:24px;font-weight:900;letter-spacing:3px;color:#fff;">BRINC</div>'
-
-        jurisdiction_list = ", ".join(selected_names) if selected_names else prop_city
-        all_station_types = df_stations_all['type'].dropna().unique().tolist() if 'type' in df_stations_all.columns else []
-        police_dept_names = [d['name'] for d in active_drones if '[Police]' in d['name']]
-        fire_dept_names   = [d['name'] for d in active_drones if '[Fire]' in d['name']]
-        ems_dept_names    = [d['name'] for d in active_drones if '[EMS]' in d['name']]
-
-        police_stations = [d['name'] for d in active_drones if 'Police' in d.get('name','') or (
-            'type' in df_stations_all.columns and
-            'Police' in str(df_stations_all[df_stations_all['name'].str.contains(
-                d['name'].split(']')[-1].strip(), na=False, regex=False
-            )]['type'].values[:1])
-        )]
-
-        dept_summary_parts = []
-        if police_dept_names: dept_summary_parts.append(f"{len(police_dept_names)} Police station{'s' if len(police_dept_names)>1 else ''}")
-        if fire_dept_names:   dept_summary_parts.append(f"{len(fire_dept_names)} Fire station{'s' if len(fire_dept_names)>1 else ''}")
-        if ems_dept_names:    dept_summary_parts.append(f"{len(ems_dept_names)} EMS station{'s' if len(ems_dept_names)>1 else ''}")
-        dept_summary = ", ".join(dept_summary_parts) if dept_summary_parts else f"{len(active_drones)} municipal stations"
-        police_names_str = (", ".join([n.replace('[Police] ','') for n in police_dept_names[:6]]) + ("..." if len(police_dept_names)>6 else "")) if police_dept_names else "municipal facilities"
-        total_fleet = actual_k_responder + actual_k_guardian
-        area_sq_mi_est = int((maxx - minx) * (maxy - miny) * 3280)
-
-        export_html = f"""<html><head><title>BRINC DFR Proposal — {prop_city}</title>
-        <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&display=swap" rel="stylesheet">
-        <style>
-        body {{ font-family: 'Manrope', Arial, sans-serif; color: #1e1e24; margin: 0; padding: 40px; background: #f4f6f9; }}
-        .page {{ max-width: 1000px; margin: 0 auto; background: #fff; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.08); overflow: hidden; }}
-        .header {{ background: #06060a; color: #fff; padding: 40px 50px; border-bottom: 4px solid #00D2FF; display: flex; justify-content: space-between; align-items: center; }}
-        .header h1 {{ margin: 0; font-size: 28px; font-weight: 800; letter-spacing: 0.5px; }}
-        .header-sub {{ font-size: 14px; color: #aaa; margin-top: 8px; font-family: monospace; letter-spacing: 1px; }}
-        .content {{ padding: 40px 50px; }}
-        h2 {{ color: #111; font-size: 22px; font-weight: 800; margin-top: 40px; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid #eee; }}
-        .kpi-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 40px; }}
-        .kpi-card {{ border: 1px solid #eaeaea; border-radius: 10px; padding: 25px; background: #fafafa; }}
-        .kpi-card h3 {{ margin: 0 0 20px 0; font-size: 16px; color: #444; text-transform: uppercase; letter-spacing: 1px; }}
-        .kpi-row {{ display: flex; justify-content: space-between; margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #eee; }}
-        .kpi-row:last-child {{ margin-bottom: 0; padding-bottom: 0; border-bottom: none; }}
-        .kpi-lbl {{ font-size: 13px; color: #666; font-weight: 600; }}
-        .kpi-val {{ font-size: 20px; font-weight: 800; color: #00D2FF; font-family: monospace; }}
-        table {{ width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 30px; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.03); }}
-        th, td {{ padding: 14px 15px; text-align: left; border-bottom: 1px solid #eee; }}
-        th {{ background: #f8f9fa; font-weight: 800; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; color: #555; }}
-        .map-container {{ border: 1px solid #eee; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }}
-        .disclaimer {{ background: #fff8e6; border-left: 4px solid #F0B429; padding: 15px 20px; font-size: 13px; color: #856404; border-radius: 0 8px 8px 0; margin-bottom: 25px; }}
-        p {{ line-height: 1.8; color: #444; font-size: 15px; margin-bottom: 15px; }}
-        .footer {{ background: #06060a; color: #888; padding: 40px 50px; text-align: center; font-size: 13px; }}
-        .footer a {{ color: #00D2FF; text-decoration: none; font-weight: 600; }}
-        </style>
-        </head><body><div class="page">
-        <div class="header">
-            <div>{logo_html_str}</div>
-            <div style="text-align:right;">
-                <h1>DFR Deployment Proposal</h1>
-                <div class="header-sub">{prop_city}, {prop_state} | Pop: {pop_metric:,}</div>
-                <div class="header-sub" style="color:#00D2FF;">Prepared by: {prop_name}</div>
-            </div>
-        </div>
-        <div class="content">
-            <div class="kpi-grid">
-                <div class="kpi-card">
-                    <h3>Financial Impact</h3>
-                    <div class="kpi-row"><span class="kpi-lbl">Fleet CapEx</span><span class="kpi-val">${fleet_capex:,.0f}</span></div>
-                    <div class="kpi-row"><span class="kpi-lbl">Annual Savings Capacity</span><span class="kpi-val">${annual_savings:,.0f}</span></div>
-                    <div class="kpi-row"><span class="kpi-lbl">Break-Even</span><span class="kpi-val" style="color:#F0B429;">{break_even_text}</span></div>
-                </div>
-                <div class="kpi-card">
-                    <h3>Operational Impact</h3>
-                    <div class="kpi-row"><span class="kpi-lbl">911 Call Coverage</span><span class="kpi-val">{calls_covered_perc:.1f}%</span></div>
-                    <div class="kpi-row"><span class="kpi-lbl">Avg Response Time</span><span class="kpi-val">{avg_resp_time:.1f} min</span></div>
-                    <div class="kpi-row"><span class="kpi-lbl">Time Saved vs Patrol</span><span class="kpi-val" style="color:#2ecc71;">{avg_time_saved:.1f} min</span></div>
-                </div>
-            </div>
-
-            <h2>Proposed Fleet</h2>
-            <table>
-                <tr><th>Type</th><th>Qty</th><th>Range</th><th>Unit Cost</th></tr>
-                <tr><td>BRINC Responder</td><td>{actual_k_responder}</td><td>{resp_radius_mi} mi</td><td>${CONFIG['RESPONDER_COST']:,}</td></tr>
-                <tr><td>BRINC Guardian</td><td>{actual_k_guardian}</td><td>{guard_radius_mi} mi</td><td>${CONFIG['GUARDIAN_COST']:,}</td></tr>
-            </table>
-
-            <h2>Coverage Map</h2>
-            <div class="map-container">{map_html_str}</div>
-
-            <h2>Deployment Locations</h2>
-            <table>
-                <tr><th>Station</th><th>Type</th><th>Avg Response</th><th>FAA Ceiling</th><th>CapEx</th></tr>
-                {station_rows}
-            </table>
-
-            <h2>Grant Narrative (AI Draft)</h2>
-            <div class="disclaimer"><strong>DISCLAIMER:</strong> AI-generated draft. Must be reviewed, localized, and fact-checked by your grants administrator before submission. All statistics are model estimates.</div>
-            <p><strong>Project Title:</strong> BRINC Drones Drone as a First Responder (DFR) Program — {jurisdiction_list}</p>
-            <p><strong>Executive Summary:</strong> The {jurisdiction_list} respectfully submits this application requesting funding to establish a BRINC Drones-powered Drone as a First Responder (DFR) program. This initiative will deploy a fleet of {total_fleet} purpose-built BRINC Drones aerial systems — comprising {actual_k_responder} BRINC Responder and {actual_k_guardian} BRINC Guardian units — across {dept_summary} serving a combined population of {pop_metric:,} residents across approximately {area_sq_mi_est:,} square miles in {prop_city}, {prop_state}.</p>
-            <p><strong>Statement of Need:</strong> The {jurisdiction_list} currently serves a population of {pop_metric:,} residents and responds to an estimated {st.session_state.get('total_original_calls', total_calls):,} calls for service annually. Ground-based patrol response times are constrained by traffic, geography, and unit availability. This proposal addresses a critical public safety gap: the need for immediate aerial situational awareness that arrives before ground units, enabling smarter, safer, and faster emergency response. BRINC Drones, the world leader in purpose-built DFR technology, provides the only fully integrated hardware, software, and operational support platform purpose-designed for law enforcement DFR deployment.</p>
-            <p><strong>Geographic Scope & Participating Agencies:</strong> The proposed DFR network covers the jurisdictions of <strong>{jurisdiction_list}</strong> ({prop_state}). Drone stations will be hosted at {dept_summary}, including facilities operated by: <em>{police_names_str}</em>. The deployment area encompasses an estimated {area_sq_mi_est:,} square miles of mixed urban and suburban terrain, with BRINC Drones units positioned to achieve {calls_covered_perc:.1f}% coverage of historical incident locations and {area_covered_perc:.1f}% geographic area coverage.</p>
-            <p><strong>Program Design:</strong> The proposed fleet consists of {actual_k_responder} <strong>BRINC Responder</strong> units (short-range tactical response, {resp_radius_mi}-mile operational radius) and {actual_k_guardian} <strong>BRINC Guardian</strong> units (long-range heavy-lift, {guard_radius_mi}-mile operational radius). All deployment sites have been pre-screened against FAA LAANC UAS Facility Maps. The BRINC Drones platform provides automated launch-on-dispatch, live-streaming HD/thermal video to dispatch and responding officers, and full chain-of-custody flight logging. Average aerial response time under this configuration is projected at <strong>{avg_resp_time:.1f} minutes</strong> — approximately <strong>{avg_time_saved:.1f} minutes faster</strong> than current vehicular patrol response for equivalent distances.</p>
-            <p><strong>Fiscal Impact & Return on Investment:</strong> Total program capital expenditure is <strong>${fleet_capex:,.0f}</strong>. Based on a {int(dfr_dispatch_rate*100)}% DFR dispatch rate and {int(deflection_rate*100)}% call resolution rate, the program is projected to generate <strong>${annual_savings:,.0f} in annual operational savings</strong> through reduced officer dispatch on drone-resolved incidents, reaching full cost recovery in <strong>{break_even_text.lower()}</strong>. At ${CONFIG["DRONE_COST_PER_CALL"]}/drone response versus ${CONFIG["OFFICER_COST_PER_CALL"]}/officer dispatch, the BRINC Drones platform delivers a demonstrated cost-per-response reduction of over {int((1 - CONFIG["DRONE_COST_PER_CALL"]/CONFIG["OFFICER_COST_PER_CALL"])*100)}%.</p>
-            <p><strong>About BRINC Drones:</strong> BRINC Drones, Inc. is the global leader in purpose-built Drone as a First Responder technology, with deployments across hundreds of law enforcement agencies in the United States. BRINC Drones designs, manufactures, and supports the only DFR platform built from the ground up for public safety — including the BRINC Responder for rapid tactical response and the BRINC Guardian for extended-range operations. BRINC provides full agency onboarding, FAA coordination support, pilot training, and ongoing operational guidance. Learn more at <a href="https://brincdrones.com" target="_blank">brincdrones.com</a>.</p>
-            <p style="background: #f8f9fa; padding: 15px; border-radius: 6px; border: 1px solid #eee;"><strong>Potential Grant Funding Sources:</strong><br>
-              <a href="https://bja.ojp.gov/program/jag/overview" target="_blank">DOJ Byrne JAG</a> — UAS and technology procurement eligible <br>
-              <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank">FEMA HSGP</a> — CapEx offset for tactical deployments <br>
-              <a href="https://cops.usdoj.gov/grants" target="_blank">DOJ COPS Office</a> — Law enforcement technology grants <br>
-              <a href="https://www.transportation.gov/grants" target="_blank">DOT RAISE</a> — Regional infrastructure and safety
-            </p>
-            <div style="margin-top: 50px; font-family:'Manrope', Arial, sans-serif !important;">
-                <div style="border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
-                    {{analytics_html_export}}
-                </div>
-            </div>
-        </div>
-        <div class="footer">
-            <div class="footer-logo">BRINC</div>
-            <div style="font-weight:bold; font-size:15px; margin-bottom:8px; color:#fff;">BRINC Drones, Inc.</div>
-            <div style="margin-bottom:15px;">Leading the world in purpose-built Drone as a First Responder technology.</div>
-            <div style="margin-bottom:10px; color:#aaa;">Prepared by: {prop_name} | <a href="mailto:{prop_email}">{prop_email}</a></div>
-            <div style="margin-bottom:15px;">
-                <a href="https://brincdrones.com" target="_blank">brincdrones.com</a> | <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> | +1 (855) 950-0226
-            </div>
-            <div style="color:#555;">
-                <a href="https://www.linkedin.com/company/brincdrones" target="_blank">LinkedIn</a> &nbsp;•&nbsp;
-                <a href="https://twitter.com/brincdrones" target="_blank">Twitter / X</a> &nbsp;•&nbsp;
-                <a href="https://www.youtube.com/c/brincdrones" target="_blank">YouTube</a>
-            </div>
-        </div>
-        </div></body></html>"""
-
-        # Needs to format the export_html with the analytics block safely since analytics contains curly braces
-        export_html = export_html.replace("{{analytics_html_export}}", analytics_html_export)
-
-        if st.sidebar.download_button("💾 Save Deployment Plan", data=json.dumps(export_dict),
-                                      file_name=f"Brinc_{safe_city}_{current_time_str}.brinc",
-                                      mime="application/json", use_container_width=True):
-            _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                          "BRINC", k_responder, k_guardian, calls_covered_perc,
-                          prop_name, prop_email)
-            _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                           "BRINC", k_responder, k_guardian, calls_covered_perc,
-                           prop_name, prop_email)
-
-        if st.sidebar.download_button("📄 Executive Summary (HTML)", data=export_html,
-                                      file_name=f"Brinc_{safe_city}_Proposal_{current_time_str}.html",
-                                      mime="text/html", use_container_width=True):
-            _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                          "HTML", k_responder, k_guardian, calls_covered_perc,
-                          prop_name, prop_email)
-            _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                           "HTML", k_responder, k_guardian, calls_covered_perc,
-                           prop_name, prop_email)
-
-        if active_drones:
-            if st.sidebar.download_button("🌏 Google Earth Briefing File", data=generate_kml(active_gdf, active_drones, calls_in_city),
-                                          file_name="drone_deployment.kml", mime="application/vnd.google-earth.kml+xml",
-                                          use_container_width=True):
-                _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                              "KML", k_responder, k_guardian, calls_covered_perc,
-                              prop_name, prop_email)
-                _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                               "KML", k_responder, k_guardian, calls_covered_perc,
-                               prop_name, prop_email)
-
     pop_metric = st.session_state.get('estimated_pop', 250000)
     grant_bracket = estimate_grants(pop_metric)
     st.sidebar.markdown(f"""
@@ -2684,8 +2468,7 @@ if st.session_state['csvs_ready']:
               <a href="https://cops.usdoj.gov/grants" target="_blank">DOJ COPS Office</a> — Law enforcement technology grants <br>
               <a href="https://www.transportation.gov/grants" target="_blank">DOT RAISE</a> — Regional infrastructure and safety
             </p>
-
-            <div style="margin-top: 50px;">
+            <div style="margin-top: 50px; font-family:'Manrope', Arial, sans-serif !important;">
                 <div style="border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
                     {{analytics_html_export}}
                 </div>
@@ -2700,8 +2483,8 @@ if st.session_state['csvs_ready']:
                 <a href="https://brincdrones.com" target="_blank">brincdrones.com</a> | <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> | +1 (855) 950-0226
             </div>
             <div style="color:#555;">
-                <a href="https://www.linkedin.com/company/brincdrones" target="_blank">LinkedIn</a> &nbsp;•&nbsp;
-                <a href="https://twitter.com/brincdrones" target="_blank">Twitter / X</a> &nbsp;•&nbsp;
+                <a href="https://www.linkedin.com/company/brincdrones" target="_blank">LinkedIn</a>  • 
+                <a href="https://twitter.com/brincdrones" target="_blank">Twitter / X</a>  • 
                 <a href="https://www.youtube.com/c/brincdrones" target="_blank">YouTube</a>
             </div>
         </div>
@@ -2740,239 +2523,3 @@ if st.session_state['csvs_ready']:
                 _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
                                "KML", k_responder, k_guardian, calls_covered_perc,
                                prop_name, prop_email)
-
-    pop_metric = st.session_state.get('estimated_pop', 250000)
-    grant_bracket = estimate_grants(pop_metric)
-    st.sidebar.markdown(f"""
-    <div style="margin-top:12px; background:{card_bg}; border:1px solid {budget_box_border}; padding:10px; border-radius:4px; margin-bottom:10px;">
-        <div style="font-size:0.68rem; color:{text_muted}; font-weight:bold; text-transform:uppercase;">Est. Grant Eligibility</div>
-        <div style="font-size:1.1rem; color:{budget_box_border}; font-weight:bold; font-family:monospace;">{grant_bracket}</div>
-    </div>
-    <div style="font-size:0.73rem; color:{text_muted}; line-height:1.5; margin-bottom:10px;">
-        <a href="https://bja.ojp.gov/program/jag/overview" target="_blank" style="color:{accent_color}; font-weight:bold;">DOJ Byrne JAG</a> — UAS procurement eligible<br>
-        <a href="https://www.fema.gov/grants/preparedness/homeland-security" target="_blank" style="color:{accent_color}; font-weight:bold;">FEMA HSGP</a> — CapEx offset for tactical deployments
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    if show_health:
-        norm_redundancy = min(overlap_perc/35.0, 1.0)*100
-        health_score = (calls_covered_perc*0.50) + (area_covered_perc*0.35) + (norm_redundancy*0.15)
-        h_color, h_label = (accent_color,"OPTIMAL") if health_score>=80 else ("#94c11f","GOOD") if health_score>=70 else ("#ffc107","MARGINAL") if health_score>=55 else ("#dc3545","ESSENTIAL")
-        st.markdown(f"""<div style="background:{card_bg}; border-left:5px solid {h_color}; border:1px solid {card_border};
-            padding:10px; border-radius:4px; color:{text_main}; margin-bottom:10px;
-            display:flex; align-items:center; justify-content:space-between;">
-            <span style="font-size:1.4em; font-weight:bold; color:{h_color};">Department Health Score: {health_score:.1f}%</span>
-            <span style="font-size:1.2em; background:rgba(128,128,128,0.15); padding:2px 10px; border-radius:4px;">{h_label}</span>
-            </div>""", unsafe_allow_html=True)
-
-    if simulate_traffic:
-        avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level/100)
-        eval_dist  = guard_radius_mi if active_guard_names else resp_radius_mi
-        eval_speed = CONFIG["GUARDIAN_SPEED"] if active_guard_names else CONFIG["RESPONDER_SPEED"]
-        if (active_resp_names or active_guard_names) and avg_ground_speed > 0:
-            time_saved = ((eval_dist*1.4/avg_ground_speed) - (eval_dist/eval_speed)) * 60
-            gain_val = f"{time_saved:.1f} min"
-        else:
-            gain_val = "N/A"
-    else:
-        gain_val = None
-
-    orig_calls = st.session_state.get('total_original_calls', total_calls)
-    call_str = f"{orig_calls:,}"
-    if orig_calls > total_calls:
-        call_str += f" <br><span style='font-size:0.5em;color:#888;'>(Sampled: {total_calls:,})</span>"
-
-    kpi_html = f"""
-    <div style="display:flex; justify-content:space-around; background:{card_bg}; border:1px solid {card_border}; border-radius:8px; padding:15px; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
-        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Total Incidents</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{call_str}</div></div>
-        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Response Capacity</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{calls_covered_perc:.1f}%</div></div>
-        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Land Covered</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{area_covered_perc:.1f}%</div></div>
-        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Overlap</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{overlap_perc:.1f}%</div></div>
-    """
-    if gain_val is not None:
-        kpi_html += f"""<div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Time Saved ({eval_dist:.0f}mi)</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{gain_val}</div></div>"""
-    kpi_html += "</div>"
-    st.markdown(kpi_html, unsafe_allow_html=True)
-    st.markdown(f"<div style='font-size:0.65rem;color:gray;margin-top:-12px;margin-bottom:12px;text-align:center;'>(Optimized via {total_calls:,} representative sample)</div>", unsafe_allow_html=True)
-
-    map_col, stats_col = st.columns([4.2, 1.8])
-
-    with map_col:
-        fig = go.Figure()
-
-        if show_boundaries and city_boundary_geom is not None and not city_boundary_geom.is_empty:
-            geoms_to_draw = [city_boundary_geom] if isinstance(city_boundary_geom, Polygon) else list(city_boundary_geom.geoms)
-            for gi, geom in enumerate(geoms_to_draw):
-                bx, by = geom.exterior.coords.xy
-                fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by),
-                    line=dict(color=map_boundary_color, width=2), name="Jurisdiction Boundary",
-                    hoverinfo='skip', showlegend=(gi==0)))
-
-        if show_heatmap and not display_calls.empty:
-            fig.add_trace(go.Densitymapbox(lat=display_calls.geometry.y, lon=display_calls.geometry.x,
-                z=np.ones(len(display_calls)), radius=12, colorscale='Inferno', opacity=0.6,
-                showscale=False, name="Heatmap", hoverinfo='skip'))
-
-        if not display_calls.empty:
-            fig.add_trace(go.Scattermapbox(lat=display_calls.geometry.y, lon=display_calls.geometry.x,
-                mode='markers', marker=dict(size=4, color=map_incident_color, opacity=0.4),
-                name="Incident Data", hoverinfo='skip'))
-
-        if show_faa and faa_geojson:
-            add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=not show_satellite)
-
-        for d in active_drones:
-            clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
-            lbl = f"{d['name'].split(',')[0]} ({'Resp' if d['type']=='RESPONDER' else 'Guard'})"
-            fig.add_trace(go.Scattermapbox(
-                lat=list(clats)+[None,d['lat']], lon=list(clons)+[None,d['lon']],
-                mode='lines+markers',
-                marker=dict(size=[0]*len(clats)+[0,20], color=d['color']),
-                line=dict(color=d['color'], width=4.5),
-                fill='toself', fillcolor='rgba(0,0,0,0)', name=lbl, hoverinfo='name'))
-
-            # Guardian 5-mile rapid response focus ring
-            if d['type'] == 'GUARDIAN' and d['radius_m']/1609.34 > 5.0:
-                f_lats, f_lons = get_circle_coords(d['lat'], d['lon'], r_mi=5.0)
-                fig.add_trace(go.Scattermapbox(
-                    lat=list(f_lats), lon=list(f_lons),
-                    mode='lines',
-                    line=dict(color=d['color'], width=1.5),
-                    opacity=0.5,
-                    fill='toself',
-                    fillcolor=f"rgba({int(d['color'][1:3],16)},{int(d['color'][3:5],16)},{int(d['color'][5:7],16)},0.06)",
-                    name=f"Focus Zone 5mi · {d['name'].split(',')[0]}",
-                    hoverinfo='text',
-                    text=f"⚡ Rapid Response Focus Zone — 5mi<br>{d['name'].split(',')[0]}",
-                    showlegend=False
-                ))
-
-            if simulate_traffic:
-                t_color = "#28a745" if traffic_level<35 else "#ffc107" if traffic_level<75 else "#dc3545"
-                t_fill  = f"rgba({'40,167,69' if traffic_level<35 else '255,193,7' if traffic_level<75 else '220,53,69'}, 0.15)"
-                t_label = "Light" if traffic_level<35 else "Moderate" if traffic_level<75 else "Heavy"
-                gs = CONFIG["DEFAULT_TRAFFIC_SPEED"]*(1-traffic_level/100)
-                if gs > 0:
-                    gr_mi = (gs/60) * (d['radius_m']/1609.34/d['speed_mph'])*60
-                    ga = np.linspace(0,2*np.pi,9)
-                    fig.add_trace(go.Scattermapbox(
-                        lat=list(d['lat']+(gr_mi/69.172)*np.sin(ga)),
-                        lon=list(d['lon']+(gr_mi/(69.172*np.cos(np.radians(d['lat']))))*np.cos(ga)),
-                        mode='lines', line=dict(color=t_color, width=2.5),
-                        fill='toself', fillcolor=t_fill,
-                        name=f"Ground ({t_label})", hoverinfo='skip'))
-
-        mapbox_cfg = dict(center=dict(lat=center_lat, lon=center_lon), zoom=dynamic_zoom, style=map_style)
-        if show_satellite:
-            mapbox_cfg["style"] = "carto-positron"
-            mapbox_cfg["layers"] = [{"below":"traces","sourcetype":"raster",
-                "sourceattribution":"Esri, Maxar, Earthstar Geographics",
-                "source":["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"]}]
-
-        fig.update_layout(uirevision="LOCKED_MAP", mapbox=mapbox_cfg,
-            margin=dict(l=0,r=0,t=0,b=0), height=800, font=dict(size=18),
-            showlegend=True,
-            legend=dict(yanchor="top", y=0.98, xanchor="left", x=0.02,
-                        bgcolor=legend_bg, bordercolor=accent_color, borderwidth=1,
-                        font=dict(size=12, color=legend_text), itemclick="toggle"))
-
-        st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
-
-    with stats_col:
-        st.markdown(f"<h4 style='margin-top:0; border-bottom:1px solid {card_border}; padding-bottom:8px; color:{text_main};'>Coverage Curve</h4>", unsafe_allow_html=True)
-
-        if not df_curve.empty:
-            fig_curve = go.Figure()
-            for col, color, dash in [('Responder (Calls)',accent_color,'solid'),('Guardian (Calls)','#FFD700','solid'),
-                                      ('Responder (Area)',accent_color,'dash'),('Guardian (Area)','#FFD700','dash')]:
-                y_data = df_curve[col].dropna()
-                x_data = df_curve.loc[y_data.index,'Drones']
-                if not y_data.empty:
-                    fig_curve.add_trace(go.Scatter(x=x_data, y=y_data, mode='lines+markers', name=col,
-                        line=dict(color=color,width=2,dash=dash), marker=dict(size=4)))
-                    if 'Calls' in col:
-                        idx_90 = y_data[y_data >= 90.0].first_valid_index()
-                        if idx_90 is not None:
-                            fig_curve.add_trace(go.Scatter(x=[int(x_data.loc[idx_90])], y=[y_data.loc[idx_90]],
-                                mode='markers', marker=dict(color=color,size=12,symbol='star',line=dict(color='white',width=1)),
-                                showlegend=False, hoverinfo='skip'))
-            fig_curve.update_layout(
-                xaxis_title="Drones", yaxis_title="Coverage %",
-                xaxis=dict(showgrid=True, gridcolor=card_border, tickfont=dict(color=text_muted)),
-                yaxis=dict(showgrid=True, gridcolor=card_border, tickfont=dict(color=text_muted),
-                           tickvals=[0,20,40,60,80,90,100], range=[0,105]),
-                legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1,
-                            font=dict(size=9,color=text_muted)),
-                margin=dict(l=10,r=10,t=20,b=10), height=260,
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
-            )
-            st.plotly_chart(fig_curve, use_container_width=True, config={'displayModeBar':False})
-
-        if show_cards:
-            st.markdown(f"<h4 style='margin-top:8px; border-bottom:1px solid {card_border}; padding-bottom:8px; color:{text_main};'>Unit Economics</h4>", unsafe_allow_html=True)
-            if not active_drones:
-                st.markdown(f"""
-                <div style="background:{card_bg}; border:1px dashed {card_border}; border-radius:6px;
-                     padding:24px; text-align:center; margin-top:10px;">
-                    <div style="font-size:2rem; margin-bottom:8px;">🚁</div>
-                    <div style="font-weight:700; color:{text_main}; margin-bottom:6px;">No drones deployed yet</div>
-                    <div style="font-size:0.8rem; color:{text_muted};">
-                        👈 Use the <b>Responder / Guardian Count</b> sliders in the <b>② Optimize Fleet</b> sidebar section to deploy drones and see per-unit economics here.
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                for i in range(0, len(active_drones), 2):
-                    cols = st.columns(2)
-                    for j in range(2):
-                        if i + j < len(active_drones):
-                            d = active_drones[i + j]
-                            short_name  = format_3_lines(d['name'])
-                            d_color     = d['color']
-                            d_type      = d['type']
-                            d_step      = d['deploy_step']
-                            d_savings   = d['annual_savings']
-                            d_flights   = d['marginal_flights']
-                            d_shared    = d['shared_flights']
-                            d_deflected = d['marginal_deflected']
-                            d_time      = d['avg_time_min']
-                            d_faa       = d['faa_ceiling']
-                            d_airport   = d['nearest_airport']
-                            d_cost      = d['cost']
-                            d_be        = d['be_text']
-                            cols[j].markdown(f"""
-<div style="background:{card_bg}; border-top:4px solid {d_color};
-     border-left:1px solid {card_border}; border-right:1px solid {card_border};
-     border-bottom:1px solid {card_border};
-     border-radius:4px; padding:12px; margin-bottom:12px;">
-    <div style="font-weight:700; font-size:0.73rem; color:{card_title}; margin-bottom:2px;">{short_name}</div>
-    <div style="font-size:0.58rem; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">{d_type} · Phase #{d_step}</div>
-    <div style="background:rgba(0,210,255,0.07); border-radius:4px; padding:8px; text-align:center; margin-bottom:8px;">
-        <div style="font-size:0.6rem; color:{text_muted}; text-transform:uppercase; letter-spacing:0.5px;">Annual Capacity Value</div>
-        <div style="font-size:1.25rem; font-weight:900; color:{accent_color};">${d_savings:,.0f}</div>
-    </div>
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:0.62rem;">
-        <div style="color:{text_muted};">Net Flights/day</div>
-        <div style="text-align:right; font-weight:700; color:{accent_color};">{d_flights:.1f}</div>
-        <div style="color:{text_muted};">Shared Flights/day</div>
-        <div style="text-align:right; font-weight:700; color:{card_title};">{d_shared:.1f}</div>
-        <div style="color:{text_muted};">Resolved/day</div>
-        <div style="text-align:right; font-weight:700; color:{card_title};">{d_deflected:.1f}</div>
-        <div style="color:{text_muted};">Avg Response</div>
-        <div style="text-align:right; font-weight:700; color:{card_title};">{d_time:.1f} min</div>
-        <div style="color:{text_muted};">FAA Ceiling</div>
-        <div style="text-align:right; font-weight:700; color:{card_title};">{d_faa}</div>
-        <div style="color:{text_muted};">Nearest Airfield</div>
-        <div style="text-align:right; font-weight:700; color:{card_title}; font-size:0.55rem;">{d_airport}</div>
-    </div>
-    <div style="border-top:1px dashed {card_border}; margin-top:8px; padding-top:6px;
-         display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:0.62rem;">
-        <div style="color:{text_muted};">CapEx</div>
-        <div style="text-align:right; font-weight:700; color:{card_title};">${d_cost:,.0f}</div>
-        <div style="color:{text_muted};">ROI</div>
-        <div style="text-align:right; font-weight:800; color:{accent_color};">{d_be}</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
