@@ -1004,8 +1004,151 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
 
 if not st.session_state['csvs_ready']:
 
+    # GRAB THE LOGO FOR THE UPLOAD PAGE
+    logo_b64 = get_base64_of_bin_file("logo.png")
+    hero_logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:48px; margin-bottom:15px; filter: brightness(0) invert(1);">' if logo_b64 else f'<div style="font-size:2.5rem; font-weight:900; letter-spacing:4px; color:#ffffff; margin-bottom:15px;">BRINC</div>'
+
     st.markdown(f"""
     <style>
+    @keyframes pulseGlow {{
+        0%, 100% {{ opacity: 0.55; }}
+        50%       {{ opacity: 1.0; }}
+    }}
+    @keyframes fadeUp {{
+        from {{ opacity:0; transform:translateY(14px); }}
+        to   {{ opacity:1; transform:translateY(0); }}
+    }}
+    .brinc-hero {{
+        position: relative;
+        text-align: center;
+        padding: 52px 24px 40px;
+        margin-bottom: 36px;
+        border-radius: 12px;
+        background: radial-gradient(ellipse at 50% 0%,
+            rgba(0,210,255,0.13) 0%, rgba(0,0,0,0) 68%);
+        border-bottom: 1px solid rgba(0,210,255,0.15);
+        overflow: hidden;
+        animation: fadeUp 0.5s ease both;
+    }}
+    .brinc-hero::before {{
+        content: '';
+        position: absolute; inset: 0;
+        background:
+            repeating-linear-gradient(0deg,
+                transparent, transparent 39px,
+                rgba(0,210,255,0.025) 39px,
+                rgba(0,210,255,0.025) 40px),
+            repeating-linear-gradient(90deg,
+                transparent, transparent 79px,
+                rgba(0,210,255,0.025) 79px,
+                rgba(0,210,255,0.025) 80px);
+        pointer-events: none;
+    }}
+    .brinc-eyebrow {{
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.62rem;
+        font-weight: 700;
+        letter-spacing: 4px;
+        color: {accent_color};
+        text-transform: uppercase;
+        opacity: 0.7;
+        margin-bottom: 12px;
+    }}
+    .brinc-h1 {{
+        font-family: 'Manrope', sans-serif;
+        font-size: clamp(2rem, 4vw, 3rem);
+        font-weight: 900;
+        color: #ffffff;
+        letter-spacing: -0.5px;
+        line-height: 1.08;
+        margin-bottom: 12px;
+    }}
+    .brinc-h1 em {{
+        font-style: normal;
+        color: {accent_color};
+    }}
+    .brinc-tagline {{
+        font-size: 0.88rem;
+        color: #666;
+        max-width: 500px;
+        margin: 0 auto 22px;
+        line-height: 1.65;
+    }}
+    .brinc-badges {{
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+        margin-top: 4px;
+    }}
+    .brinc-badge {{
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(0,210,255,0.07);
+        border: 1px solid rgba(0,210,255,0.2);
+        border-radius: 100px;
+        padding: 4px 13px;
+        font-size: 0.64rem;
+        font-weight: 700;
+        color: {accent_color};
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+    }}
+    .brinc-badge.pulse {{
+        animation: pulseGlow 3s ease-in-out infinite;
+    }}
+    .path-card {{
+        background: #080808;
+        border: 1px solid #1c1c1c;
+        border-radius: 10px;
+        padding: 22px 18px 16px;
+        position: relative;
+        overflow: hidden;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }}
+    .path-card::after {{
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0;
+        height: 3px;
+        background: var(--accent);
+        border-radius: 10px 10px 0 0;
+    }}
+    .path-card:hover {{
+        border-color: rgba(255,255,255,0.12);
+        box-shadow: 0 0 28px rgba(0,210,255,0.05);
+    }}
+    .pc-icon  {{ font-size: 1.5rem; display:block; margin-bottom:9px; }}
+    .pc-tag   {{ font-size:0.55rem; font-weight:800; letter-spacing:2.5px;
+                 text-transform:uppercase; color:var(--accent); margin-bottom:5px; }}
+    .pc-title {{ font-size:1rem; font-weight:800; color:#fff;
+                 line-height:1.25; margin-bottom:7px; }}
+    .pc-desc  {{ font-size:0.7rem; color:#555; line-height:1.6; margin-bottom:0; }}
+    .field-footnote {{
+        font-size: 0.63rem; color: #3a3a3a; line-height: 1.75;
+        margin-top: 10px; border-top: 1px solid #141414;
+        padding-top: 10px;
+    }}
+    .demo-cities {{
+        font-size: 0.65rem; color: #444; line-height: 1.9;
+        margin-top: 10px;
+    }}
+    .demo-cities b {{ color: #555; }}
+    .demo-check {{
+        font-size: 0.63rem; color: #333; line-height: 1.8;
+        margin-top: 12px; border-top: 1px solid #141414;
+        padding-top: 10px;
+    }}
+    .demo-check span {{ color: {accent_color}; margin-right: 5px; }}
+    </style>
+
+    <div class="brinc-hero">
+        {hero_logo_html}
+        <div class="brinc-eyebrow">BRINC Drones · DFR Platform</div>
+        <div class="brinc-h1">
+            Coverage. Operations.<br><em>Savings.</em>
+        </div>
     @keyframes pulseGlow {{
         0%, 100% {{ opacity: 0.55; }}
         50%       {{ opacity: 1.0; }}
