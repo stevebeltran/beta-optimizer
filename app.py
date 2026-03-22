@@ -95,6 +95,25 @@ FAA_CEILING_COLORS = {0: {"line": "rgba(255,  20,  20, 0.95)", "fill": "rgba(255
 FAA_DEFAULT_COLOR = {"line": "rgba(150,150,150,0.8)", "fill": "rgba(150,150,150,0.10)"}
 STATION_COLORS = ["#00D2FF", "#39FF14", "#FFD700", "#FF007F", "#FF4500", "#00FFCC", "#FF3333", "#7FFF00", "#00FFFF", "#FF9900"]
 
+# --- THEME VARIABLES ---
+bg_main = "#000000"
+bg_sidebar = "#111111"
+text_main = "#ffffff"
+text_muted = "#aaaaaa"
+accent_color = "#00D2FF"
+card_bg = "#111111"
+card_border = "#333333"
+card_text = "#eeeeee"
+card_title = "#ffffff"
+budget_box_bg = "#0a0a0a"
+budget_box_border = "#00D2FF"
+budget_box_shadow = "rgba(0, 210, 255, 0.15)"
+map_style = "carto-darkmatter"
+map_boundary_color = "#ffffff"
+map_incident_color = "#00D2FF"
+legend_bg = "rgba(0, 0, 0, 0.7)"
+legend_text = "#ffffff"
+
 HERO_MESSAGES = ["🚔 Building safer communities, one drone at a time…", "🛡️ Loading data because your officers deserve better tools…", "🫡 Honoring the men and women who answer the call every day…", "💙 Officers run toward danger so the rest of us don't have to…", "🚁 Optimizing so your team gets there first — every time…", "🌟 Every second we save is a life better protected…", "🤝 Technology in service of the community's greatest heroes…", "💪 Your officers deserve every advantage we can give them…", "🙏 Dedicated to the families who wait at home while heroes serve…", "🏅 Processing data worthy of those who wear the badge with pride…", "🌃 Mapping the city your officers protect through every shift…", "🔵 Building a network as reliable as the officers who depend on it…", "❤️ Because faster response means more lives saved…", "🌅 Creating tools that let officers come home safely every night…", "🦅 Guardian drones — always watching, always ready to assist…", "🏘️ Modeling coverage for the neighborhoods they protect and serve…", "📡 Connecting technology to the courage already on the streets…", "🧠 Smart systems for smarter, safer law enforcement…", "🌟 Every data point represents a community worth protecting…", "🚨 Fewer false alarms. More real backup. Better outcomes for all…"]
 FAA_MESSAGES = ["✈️ Checking FAA airspace — keeping your drones and your pilots safe…", "🛫 Loading LAANC data — because safe skies mean more missions completed…", "🗺️ Mapping controlled airspace — so every flight is a legal, safe one…", "✈️ FAA compliance check in progress — protecting officers on the ground and drones in the air…", "🛡️ Pulling airspace boundaries — safe operations start before takeoff…", "🌐 Verifying flight corridors — your pilots deserve a clear path forward…", "📡 Syncing with FAA LAANC — because your department deserves zero surprises in the sky…", "🛩️ Loading aviation data — the same skies your officers look up to every night…"]
 AIRFIELD_MESSAGES = ["🏗️ Locating nearby airfields — coordinating with the aviation community that shares your skies…", "📍 Mapping airports near each station — great neighbors make great operators…", "🛬 Finding local airfields — because your team coordinates with everyone keeping the community safe…", "✈️ Scanning for nearby aviation assets — your drones respect every aircraft they share the sky with…", "🗺️ Identifying airport proximity — so your officers always know what's overhead…", "🤝 Locating nearby airfields — collaboration between aviation and law enforcement saves lives…", "📡 Querying aviation infrastructure — the sky belongs to everyone who protects this community…"]
