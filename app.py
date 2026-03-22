@@ -252,8 +252,59 @@ HERO_MESSAGES = [
     "🚨 Fewer false alarms. More real backup. Better outcomes for all…",
 ]
 
+FAA_MESSAGES = [
+    "✈️ Checking FAA airspace — keeping your drones and your pilots safe…",
+    "🛫 Loading LAANC data — because safe skies mean more missions completed…",
+    "🗺️ Mapping controlled airspace — so every flight is a legal, safe one…",
+    "✈️ FAA compliance check in progress — protecting officers on the ground and drones in the air…",
+    "🛡️ Pulling airspace boundaries — safe operations start before takeoff…",
+    "🌐 Verifying flight corridors — your pilots deserve a clear path forward…",
+    "📡 Syncing with FAA LAANC — because your department deserves zero surprises in the sky…",
+    "🛩️ Loading aviation data — the same skies your officers look up to every night…",
+]
+
+AIRFIELD_MESSAGES = [
+    "🏗️ Locating nearby airfields — coordinating with the aviation community that shares your skies…",
+    "📍 Mapping airports near each station — great neighbors make great operators…",
+    "🛬 Finding local airfields — because your team coordinates with everyone keeping the community safe…",
+    "✈️ Scanning for nearby aviation assets — your drones respect every aircraft they share the sky with…",
+    "🗺️ Identifying airport proximity — so your officers always know what's overhead…",
+    "🤝 Locating nearby airfields — collaboration between aviation and law enforcement saves lives…",
+    "📡 Querying aviation infrastructure — the sky belongs to everyone who protects this community…",
+]
+
+JURISDICTION_MESSAGES = [
+    "🗺️ Identifying jurisdictions — every boundary represents a community counting on you…",
+    "📐 Loading geographic boundaries — the lines officers cross every shift to keep people safe…",
+    "🏙️ Mapping your jurisdiction — the streets your officers know better than anyone…",
+    "🌆 Matching data to boundaries — every block is someone's home, someone's neighborhood…",
+    "📍 Finding your coverage area — the community that trusts you with their safety…",
+    "🗺️ Resolving jurisdictions — where every call for help deserves an answer…",
+]
+
+SPATIAL_MESSAGES = [
+    "⚡ Crunching coverage geometry — because your officers deserve precision, not guesswork…",
+    "🧮 Computing spatial matrices — doing the math so your team can focus on what matters…",
+    "📊 Building coverage model — every calculation brings faster response one step closer…",
+    "🔬 Analyzing incident patterns — understanding the city so your officers can better protect it…",
+    "💡 Optimizing station geometry — smart placement means no neighborhood is left behind…",
+    "🧠 Modeling response zones — technology standing behind the officers who stand for us…",
+]
+
 def get_hero_message():
     return random.choice(HERO_MESSAGES)
+
+def get_faa_message():
+    return random.choice(FAA_MESSAGES)
+
+def get_airfield_message():
+    return random.choice(AIRFIELD_MESSAGES)
+
+def get_jurisdiction_message():
+    return random.choice(JURISDICTION_MESSAGES)
+
+def get_spatial_message():
+    return random.choice(SPATIAL_MESSAGES)
 
 def get_base64_of_bin_file(bin_file):
     try:
@@ -1234,7 +1285,7 @@ if not st.session_state['csvs_ready']:
                 if len(df_s) > 100:
                     df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
                 st.session_state['df_stations'] = df_s
-                with st.spinner(f"🌍 {get_hero_message()}"):
+                with st.spinner(get_jurisdiction_message()):
                     detected_state_full, detected_city = reverse_geocode_state(
                         df_c['lat'].iloc[0], df_c['lon'].iloc[0]
                     )
@@ -1395,7 +1446,7 @@ if st.session_state['csvs_ready']:
     df_calls = st.session_state['df_calls'].copy()
     df_stations_all = st.session_state['df_stations'].copy()
 
-    with st.spinner(f"🌍 {get_hero_message()}"):
+    with st.spinner(get_jurisdiction_message()):
         master_gdf = find_relevant_jurisdictions(df_calls, df_stations_all, SHAPEFILE_DIR)
 
     if master_gdf is None or master_gdf.empty:
@@ -1505,7 +1556,7 @@ if st.session_state['csvs_ready']:
     bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}_{resp_radius_mi}_{guard_radius_mi}"
 
     prog2 = st.sidebar.empty()
-    prog2.caption(f"⚡ {get_hero_message()}")
+    prog2.caption(get_spatial_message())
     calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls = precompute_spatial_data(
         df_calls, df_stations_all, city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash
     )
@@ -1529,8 +1580,10 @@ if st.session_state['csvs_ready']:
     max_r = min(max(1, get_max_drones('Responder (Calls)') + 4), n)
     max_g = min(max(1, get_max_drones('Guardian (Calls)') + 4), n)
 
-    faa_geojson = load_faa_parquet(minx, miny, maxx, maxy)
-    airfields = fetch_airfields(minx, miny, maxx, maxy)
+    with st.spinner(get_faa_message()):
+        faa_geojson = load_faa_parquet(minx, miny, maxx, maxy)
+    with st.spinner(get_airfield_message()):
+        airfields = fetch_airfields(minx, miny, maxx, maxy)
 
     st.sidebar.markdown('<div class="sidebar-section-header">③ Budget & Export</div>', unsafe_allow_html=True)
 
