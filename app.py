@@ -1594,9 +1594,14 @@ if st.session_state['csvs_ready']:
     max_resp_calc = min(n, int(math.ceil(area_sq_mi / (math.pi * (r_resp_est**2)))) + 5)
     max_guard_calc = min(n, int(math.ceil(area_sq_mi / (math.pi * (r_guard_est**2)))) + 5)
 
-    k_responder = st.sidebar.slider("🚁 Responder Count", 0, max(1, max_resp_calc), min(st.session_state.get('k_resp', 0), max_resp_calc),
+    # Default to 3 Responders (but don't exceed the max allowed by the area size)
+    default_r = min(3, max_resp_calc) 
+    k_responder = st.sidebar.slider("🚁 Responder Count", 0, max(1, max_resp_calc), min(st.session_state.get('k_resp', default_r), max_resp_calc),
                                     help="Short-range tactical drones (2-3mi radius).")
-    k_guardian  = st.sidebar.slider("🦅 Guardian Count",  0, max(1, max_guard_calc), min(st.session_state.get('k_guard', 0), max_guard_calc),
+    
+    # Default to 1 Guardian (but don't exceed the max allowed)
+    default_g = min(1, max_guard_calc)
+    k_guardian  = st.sidebar.slider("🦅 Guardian Count",  0, max(1, max_guard_calc), min(st.session_state.get('k_guard', default_g), max_guard_calc),
                                     help="Long-range heavy-lift drones (up to 8mi radius).")
     resp_radius_mi  = st.sidebar.slider("🚁 Responder Range (mi)", 2.0, 3.0, st.session_state.get('r_resp', 2.0), step=0.5)
     guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (mi)", 1, 8, int(st.session_state.get('r_guard', 8)))
