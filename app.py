@@ -949,19 +949,37 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         curve = [0.0]
         import heapq as hq
         geos_sub = geos[:n_st_area]
+        
+        # Calculate initial areas
         pq = [(-geos_sub[i].area, i) for i in range(len(geos_sub))]
         hq.heapify(pq)
+        
         for _ in range(len(geos_sub)):
             if not pq: break
-            _, idx = hq.heappop(pq)
-            try:
-                cand = current_union.union(geos_sub[idx])
-                gain = cand.area - current_union.area
-                if gain > 0:
-                    current_union = cand
+            best_s, best_gain = -1, -1
+            
+            # Recalculate true overlap gain dynamically (Lazy Greedy)
+            while pq:
+                neg_gain, idx = hq.heappop(pq)
+                try:
+                    actual_gain = current_union.union(geos_sub[idx]).area - current_union.area
+                except Exception:
+                    actual_gain = 0
+                    
+                if not pq or actual_gain >= -pq[0][0]:
+                    best_s, best_gain = idx, actual_gain
+                    break
+                else:
+                    hq.heappush(pq, (-actual_gain, idx))
+                    
+            if best_s != -1 and best_gain > 0:
+                try:
+                    current_union = current_union.union(geos_sub[best_s])
                     curve.append((current_union.area / total_area) * 100)
-            except Exception:
-                continue
+                except Exception:
+                    pass
+            else:
+                break
         return curve
 
     with ThreadPoolExecutor() as executor:
