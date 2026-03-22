@@ -2762,4 +2762,217 @@ if st.session_state['csvs_ready']:
         h_color, h_label = (accent_color,"OPTIMAL") if health_score>=80 else ("#94c11f","GOOD") if health_score>=70 else ("#ffc107","MARGINAL") if health_score>=55 else ("#dc3545","ESSENTIAL")
         st.markdown(f"""<div style="background:{card_bg}; border-left:5px solid {h_color}; border:1px solid {card_border};
             padding:10px; border-radius:4px; color:{text_main}; margin-bottom:10px;
-            display:flex; align-items:center; justify-
+            display:flex; align-items:center; justify-content:space-between;">
+            <span style="font-size:1.4em; font-weight:bold; color:{h_color};">Department Health Score: {health_score:.1f}%</span>
+            <span style="font-size:1.2em; background:rgba(128,128,128,0.15); padding:2px 10px; border-radius:4px;">{h_label}</span>
+            </div>""", unsafe_allow_html=True)
+
+    if simulate_traffic:
+        avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level/100)
+        eval_dist  = guard_radius_mi if active_guard_names else resp_radius_mi
+        eval_speed = CONFIG["GUARDIAN_SPEED"] if active_guard_names else CONFIG["RESPONDER_SPEED"]
+        if (active_resp_names or active_guard_names) and avg_ground_speed > 0:
+            time_saved = ((eval_dist*1.4/avg_ground_speed) - (eval_dist/eval_speed)) * 60
+            gain_val = f"{time_saved:.1f} min"
+        else:
+            gain_val = "N/A"
+    else:
+        gain_val = None
+
+    orig_calls = st.session_state.get('total_original_calls', total_calls)
+    call_str = f"{orig_calls:,}"
+    if orig_calls > total_calls:
+        call_str += f" <br><span style='font-size:0.5em;color:#888;'>(Sampled: {total_calls:,})</span>"
+
+    kpi_html = f"""
+    <div style="display:flex; justify-content:space-around; background:{card_bg}; border:1px solid {card_border}; border-radius:8px; padding:15px; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
+        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Total Incidents</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{call_str}</div></div>
+        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Response Capacity</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{calls_covered_perc:.1f}%</div></div>
+        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Land Covered</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{area_covered_perc:.1f}%</div></div>
+        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Overlap</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{overlap_perc:.1f}%</div></div>
+    """
+    if gain_val is not None:
+        kpi_html += f"""<div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Time Saved ({eval_dist:.0f}mi)</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{gain_val}</div></div>"""
+    kpi_html += "</div>"
+    st.markdown(kpi_html, unsafe_allow_html=True)
+    st.markdown(f"<div style='font-size:0.65rem;color:gray;margin-top:-12px;margin-bottom:12px;text-align:center;'>(Optimized via {total_calls:,} representative sample)</div>", unsafe_allow_html=True)
+
+    map_col, stats_col = st.columns([4.2, 1.8])
+
+    with map_col:
+        fig = go.Figure()
+
+        if show_boundaries and city_boundary_geom is not None and not city_boundary_geom.is_empty:
+            geoms_to_draw = [city_boundary_geom] if isinstance(city_boundary_geom, Polygon) else list(city_boundary_geom.geoms)
+            for gi, geom in enumerate(geoms_to_draw):
+                bx, by = geom.exterior.coords.xy
+                fig.add_trace(go.Scattermapbox(mode="lines", lon=list(bx), lat=list(by),
+                    line=dict(color=map_boundary_color, width=2), name="Jurisdiction Boundary",
+                    hoverinfo='skip', showlegend=(gi==0)))
+
+        if show_heatmap and not display_calls.empty:
+            fig.add_trace(go.Densitymapbox(lat=display_calls.geometry.y, lon=display_calls.geometry.x,
+                z=np.ones(len(display_calls)), radius=12, colorscale='Inferno', opacity=0.6,
+                showscale=False, name="Heatmap", hoverinfo='skip'))
+
+        if not display_calls.empty:
+            fig.add_trace(go.Scattermapbox(lat=display_calls.geometry.y, lon=display_calls.geometry.x,
+                mode='markers', marker=dict(size=4, color=map_incident_color, opacity=0.4),
+                name="Incident Data", hoverinfo='skip'))
+
+        if show_faa and faa_geojson:
+            add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=not show_satellite)
+
+        for d in active_drones:
+            clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
+            lbl = f"{d['name'].split(',')[0]} ({'Resp' if d['type']=='RESPONDER' else 'Guard'})"
+            fig.add_trace(go.Scattermapbox(
+                lat=list(clats)+[None,d['lat']], lon=list(clons)+[None,d['lon']],
+                mode='lines+markers',
+                marker=dict(size=[0]*len(clats)+[0,20], color=d['color']),
+                line=dict(color=d['color'], width=4.5),
+                fill='toself', fillcolor='rgba(0,0,0,0)', name=lbl, hoverinfo='name'))
+
+            # Guardian 5-mile rapid response focus ring
+            if d['type'] == 'GUARDIAN' and d['radius_m']/1609.34 > 5.0:
+                f_lats, f_lons = get_circle_coords(d['lat'], d['lon'], r_mi=5.0)
+                fig.add_trace(go.Scattermapbox(
+                    lat=list(f_lats), lon=list(f_lons),
+                    mode='lines',
+                    line=dict(color=d['color'], width=1.5),
+                    opacity=0.5,
+                    fill='toself',
+                    fillcolor=f"rgba({int(d['color'][1:3],16)},{int(d['color'][3:5],16)},{int(d['color'][5:7],16)},0.06)",
+                    name=f"Focus Zone 5mi · {d['name'].split(',')[0]}",
+                    hoverinfo='text',
+                    text=f"⚡ Rapid Response Focus Zone — 5mi<br>{d['name'].split(',')[0]}",
+                    showlegend=False
+                ))
+
+            if simulate_traffic:
+                t_color = "#28a745" if traffic_level<35 else "#ffc107" if traffic_level<75 else "#dc3545"
+                t_fill  = f"rgba({'40,167,69' if traffic_level<35 else '255,193,7' if traffic_level<75 else '220,53,69'}, 0.15)"
+                t_label = "Light" if traffic_level<35 else "Moderate" if traffic_level<75 else "Heavy"
+                gs = CONFIG["DEFAULT_TRAFFIC_SPEED"]*(1-traffic_level/100)
+                if gs > 0:
+                    gr_mi = (gs/60) * (d['radius_m']/1609.34/d['speed_mph'])*60
+                    ga = np.linspace(0,2*np.pi,9)
+                    fig.add_trace(go.Scattermapbox(
+                        lat=list(d['lat']+(gr_mi/69.172)*np.sin(ga)),
+                        lon=list(d['lon']+(gr_mi/(69.172*np.cos(np.radians(d['lat']))))*np.cos(ga)),
+                        mode='lines', line=dict(color=t_color, width=2.5),
+                        fill='toself', fillcolor=t_fill,
+                        name=f"Ground ({t_label})", hoverinfo='skip'))
+
+        mapbox_cfg = dict(center=dict(lat=center_lat, lon=center_lon), zoom=dynamic_zoom, style=map_style)
+        if show_satellite:
+            mapbox_cfg["style"] = "carto-positron"
+            mapbox_cfg["layers"] = [{"below":"traces","sourcetype":"raster",
+                "sourceattribution":"Esri, Maxar, Earthstar Geographics",
+                "source":["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"]}]
+
+        fig.update_layout(uirevision="LOCKED_MAP", mapbox=mapbox_cfg,
+            margin=dict(l=0,r=0,t=0,b=0), height=800, font=dict(size=18),
+            showlegend=True,
+            legend=dict(yanchor="top", y=0.98, xanchor="left", x=0.02,
+                        bgcolor=legend_bg, bordercolor=accent_color, borderwidth=1,
+                        font=dict(size=12, color=legend_text), itemclick="toggle"))
+
+        st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
+
+    with stats_col:
+        st.markdown(f"<h4 style='margin-top:0; border-bottom:1px solid {card_border}; padding-bottom:8px; color:{text_main};'>Coverage Curve</h4>", unsafe_allow_html=True)
+
+        if not df_curve.empty:
+            fig_curve = go.Figure()
+            for col, color, dash in [('Responder (Calls)',accent_color,'solid'),('Guardian (Calls)','#FFD700','solid'),
+                                      ('Responder (Area)',accent_color,'dash'),('Guardian (Area)','#FFD700','dash')]:
+                y_data = df_curve[col].dropna()
+                x_data = df_curve.loc[y_data.index,'Drones']
+                if not y_data.empty:
+                    fig_curve.add_trace(go.Scatter(x=x_data, y=y_data, mode='lines+markers', name=col,
+                        line=dict(color=color,width=2,dash=dash), marker=dict(size=4)))
+                    if 'Calls' in col:
+                        idx_90 = y_data[y_data >= 90.0].first_valid_index()
+                        if idx_90 is not None:
+                            fig_curve.add_trace(go.Scatter(x=[int(x_data.loc[idx_90])], y=[y_data.loc[idx_90]],
+                                mode='markers', marker=dict(color=color,size=12,symbol='star',line=dict(color='white',width=1)),
+                                showlegend=False, hoverinfo='skip'))
+            fig_curve.update_layout(
+                xaxis_title="Drones", yaxis_title="Coverage %",
+                xaxis=dict(showgrid=True, gridcolor=card_border, tickfont=dict(color=text_muted)),
+                yaxis=dict(showgrid=True, gridcolor=card_border, tickfont=dict(color=text_muted),
+                           tickvals=[0,20,40,60,80,90,100], range=[0,105]),
+                legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1,
+                            font=dict(size=9,color=text_muted)),
+                margin=dict(l=10,r=10,t=20,b=10), height=260,
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
+            )
+            st.plotly_chart(fig_curve, use_container_width=True, config={'displayModeBar':False})
+
+        if show_cards:
+            st.markdown(f"<h4 style='margin-top:8px; border-bottom:1px solid {card_border}; padding-bottom:8px; color:{text_main};'>Unit Economics</h4>", unsafe_allow_html=True)
+            if not active_drones:
+                st.markdown(f"""
+                <div style="background:{card_bg}; border:1px dashed {card_border}; border-radius:6px;
+                     padding:24px; text-align:center; margin-top:10px;">
+                    <div style="font-size:2rem; margin-bottom:8px;">🚁</div>
+                    <div style="font-weight:700; color:{text_main}; margin-bottom:6px;">No drones deployed yet</div>
+                    <div style="font-size:0.8rem; color:{text_muted};">
+                        👈 Use the <b>Responder / Guardian Count</b> sliders in the <b>② Optimize Fleet</b> sidebar section to deploy drones and see per-unit economics here.
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                for i in range(0, len(active_drones), 2):
+                    cols = st.columns(2)
+                    for j in range(2):
+                        if i + j < len(active_drones):
+                            d = active_drones[i + j]
+                            short_name  = format_3_lines(d['name'])
+                            d_color     = d['color']
+                            d_type      = d['type']
+                            d_step      = d['deploy_step']
+                            d_savings   = d['annual_savings']
+                            d_flights   = d['marginal_flights']
+                            d_shared    = d['shared_flights']
+                            d_deflected = d['marginal_deflected']
+                            d_time      = d['avg_time_min']
+                            d_faa       = d['faa_ceiling']
+                            d_airport   = d['nearest_airport']
+                            d_cost      = d['cost']
+                            d_be        = d['be_text']
+                            cols[j].markdown(f"""
+<div style="background:{card_bg}; border-top:4px solid {d_color};
+     border-left:1px solid {card_border}; border-right:1px solid {card_border};
+     border-bottom:1px solid {card_border};
+     border-radius:4px; padding:12px; margin-bottom:12px;">
+    <div style="font-weight:700; font-size:0.73rem; color:{card_title}; margin-bottom:2px;">{short_name}</div>
+    <div style="font-size:0.58rem; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">{d_type} · Phase #{d_step}</div>
+    <div style="background:rgba(0,210,255,0.07); border-radius:4px; padding:8px; text-align:center; margin-bottom:8px;">
+        <div style="font-size:0.6rem; color:{text_muted}; text-transform:uppercase; letter-spacing:0.5px;">Annual Capacity Value</div>
+        <div style="font-size:1.25rem; font-weight:900; color:{accent_color};">${d_savings:,.0f}</div>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:0.62rem;">
+        <div style="color:{text_muted};">Net Flights/day</div>
+        <div style="text-align:right; font-weight:700; color:{accent_color};">{d_flights:.1f}</div>
+        <div style="color:{text_muted};">Shared Flights/day</div>
+        <div style="text-align:right; font-weight:700; color:{card_title};">{d_shared:.1f}</div>
+        <div style="color:{text_muted};">Resolved/day</div>
+        <div style="text-align:right; font-weight:700; color:{card_title};">{d_deflected:.1f}</div>
+        <div style="color:{text_muted};">Avg Response</div>
+        <div style="text-align:right; font-weight:700; color:{card_title};">{d_time:.1f} min</div>
+        <div style="color:{text_muted};">FAA Ceiling</div>
+        <div style="text-align:right; font-weight:700; color:{card_title};">{d_faa}</div>
+        <div style="color:{text_muted};">Nearest Airfield</div>
+        <div style="text-align:right; font-weight:700; color:{card_title}; font-size:0.55rem;">{d_airport}</div>
+    </div>
+    <div style="border-top:1px dashed {card_border}; margin-top:8px; padding-top:6px;
+         display:grid; grid-template-columns:1fr 1fr; gap:4px; font-size:0.62rem;">
+        <div style="color:{text_muted};">CapEx</div>
+        <div style="text-align:right; font-weight:700; color:{card_title};">${d_cost:,.0f}</div>
+        <div style="color:{text_muted};">ROI</div>
+        <div style="text-align:right; font-weight:800; color:{accent_color};">{d_be}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
