@@ -1210,11 +1210,10 @@ if not st.session_state['csvs_ready']:
         <div class="path-card" style="--accent:#39FF14;">
             <span class="pc-icon">📂</span>
             <div class="pc-tag">Path 02</div>
-            <div class="pc-title">Upload<br>Any CAD Data</div>
+            <div class="pc-title">Upload CAD<br>or .brinc Save</div>
             <div class="pc-desc">
                 Drop <b>any</b> CAD export CSV — no renaming needed.
-                Optionally also drop a stations CSV; if omitted, stations are
-                auto-generated from OpenStreetMap (police, fire, schools).
+                Or, drop a previously saved <b>.brinc</b> file to instantly restore your deployment.
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -1225,14 +1224,15 @@ if not st.session_state['csvs_ready']:
             "Drop your CAD export (+ optional stations CSV)",
             accept_multiple_files=True,
             label_visibility="collapsed",
-            help="One file = raw CAD export (stations auto-generated from OSM). Two files = calls + stations. Column names are detected automatically."
+            help="One file = raw CAD export. Two files = calls + stations. OR drop a .brinc file to restore a previous session."
         )
 
         st.markdown("""
         <div class="field-footnote">
-            <b style='color:#555;'>1 file</b> — any CAD export; stations auto-built from OpenStreetMap<br>
-            <b style='color:#555;'>2+ files</b> — calls + stations (any column names, any file names)<br>
-            Max 25,000 calls · 100 stations · date/time/priority auto-detected
+            <b style='color:#555;'>1 file</b> — any CAD export; stations auto-built from OSM<br>
+            <b style='color:#555;'>2+ files</b> — calls + stations (any column names)<br>
+            <b style='color:#39FF14;'>.brinc file</b> — instantly restore a saved deployment<br>
+            Max 25,000 calls · 100 stations
         </div>
         """, unsafe_allow_html=True)
 
@@ -1241,6 +1241,38 @@ if not st.session_state['csvs_ready']:
             return any(k in n for k in ['station','dept','agency','facility','police','fire','loc'])
 
         if uploaded_files and len(uploaded_files) >= 1:
+            
+            # --- 1. CHECK FOR .BRINC FILE FIRST ---
+            brinc_files = [f for f in uploaded_files if f.name.lower().endswith('.brinc')]
+            if brinc_files:
+                with st.spinner("💾 Restoring saved deployment..."):
+                    try:
+                        save_data = json.loads(brinc_files[0].getvalue().decode('utf-8'))
+                        
+                        st.session_state['active_city'] = save_data.get('city', 'Unknown')
+                        st.session_state['active_state'] = save_data.get('state', 'US')
+                        st.session_state['k_resp'] = save_data.get('k_resp', 2)
+                        st.session_state['k_guard'] = save_data.get('k_guard', 0)
+                        st.session_state['r_resp'] = save_data.get('r_resp', 2.0)
+                        st.session_state['r_guard'] = save_data.get('r_guard', 8.0)
+                        st.session_state['dfr_rate'] = save_data.get('dfr_rate', 25)
+                        st.session_state['deflect_rate'] = save_data.get('deflect_rate', 30)
+                        
+                        if save_data.get('calls_data'):
+                            st.session_state['df_calls'] = pd.DataFrame(save_data['calls_data'])
+                            st.session_state['total_original_calls'] = len(st.session_state['df_calls'])
+                        
+                        if save_data.get('stations_data'):
+                            st.session_state['df_stations'] = pd.DataFrame(save_data['stations_data'])
+                            
+                        st.session_state['csvs_ready'] = True
+                        st.toast("✅ Deployment restored successfully!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error loading .brinc file: {e}")
+                        st.stop()
+
+            # --- 2. OTHERWISE, PROCESS AS NORMAL CSV CAD DATA ---
             f_list = list(uploaded_files)
             call_files = []
             station_file = None
