@@ -9,6 +9,8 @@ import os, itertools, glob, math, simplekml, heapq, re, random, json, io, dateti
 from concurrent.futures import ThreadPoolExecutor
 import pulp
 import urllib.request
+import urllib.parse
+import zipfile
 import streamlit.components.v1 as components
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -304,7 +306,6 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
                 else if (ratio >= 0.25) loadText = '<span style="color:#d4c000">■ MEDIUM</span> &mdash; Standard ops';
                 else loadText = '<span style="color:#2ecc71">■ LOW</span> &mdash; Light staffing';
                 
-                // Calculate best shift for THIS DAY
                 const hrArr = dateHourly[dk] || Array(24).fill(0);
                 let bestV = 0, bestS = 0;
                 for (let s=0; s<24; s++) {{
@@ -329,7 +330,6 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
                 
                 tt.style.display = 'block';
                 
-                // Adjust position to stay on screen
                 let left = ev.clientX + 15;
                 let top = ev.clientY - 20;
                 if (left + 220 > window.innerWidth) left = ev.clientX - 235;
@@ -346,97 +346,6 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
     </div>
     """
     return full_html
-    <div style="background:#000; color:#e8e8f2; font-family: 'Barlow', sans-serif; padding:15px; border-radius:8px;">
-        <style>
-            .day-cell:hover {{ transform: scale(1.15); z-index: 10; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }}
-            .day-peak {{ border-color: #cc0000 !important; font-weight: 700; }}
-            #dfr-tooltip {{ position: fixed; z-index: 9999; background: #09090f; border: 1px solid #252535; border-radius: 6px; padding: 12px 16px; font-family: monospace; font-size: 11px; color: #e8e8f2; pointer-events: none; box-shadow: 0 6px 24px rgba(0,0,0,0.8); display: none; min-width: 220px; }}
-        </style>
-        <div id="dfr-tooltip"></div>
-        <div style="color:#00D2FF; font-weight:900; letter-spacing:3px; font-size:14px; text-transform:uppercase; margin-bottom:20px; border-bottom:1px solid #1a1a26; padding-bottom:10px;">Data Ingestion Analytics</div>
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:20px;">
-            <div style="background:#0c0c12; border-left:4px solid #00D2FF; padding:15px; border-radius:4px; border-top:1px solid #1a1a26; border-right:1px solid #1a1a26; border-bottom:1px solid #1a1a26;">
-                <div style="color:#00D2FF; font-size:26px; font-weight:900; font-family:monospace;">{total_calls:,}</div>
-                <div style="color:#7777a0; font-size:10px; text-transform:uppercase; letter-spacing:1px; margin-top:4px;">Total Ingested Incidents</div>
-            </div>
-            <div style="background:#0c0c12; border-left:4px solid #F0B429; padding:15px; border-radius:4px; border-top:1px solid #1a1a26; border-right:1px solid #1a1a26; border-bottom:1px solid #1a1a26;">
-                <div style="color:#F0B429; font-size:26px; font-weight:900; font-family:monospace;">{int(df_ana['hour'].mode()[0]) if not df_ana['hour'].mode().empty else 0}:00</div>
-                <div style="color:#7777a0; font-size:10px; text-transform:uppercase; letter-spacing:1px; margin-top:4px;">Peak Activity Hour</div>
-            </div>
-        </div>
-        <div style="display:grid; grid-template-columns: 3fr 2fr; gap:15px; margin-bottom:25px;">
-            <div style="background:#06060a; border:1px solid #1a1a26; border-radius:6px; padding:15px;">
-                <div style="margin-bottom:12px; font-size:10px; color:#7777a0; text-transform:uppercase; letter-spacing:1px; font-weight:bold;">Optimized DFR Shift Windows</div>
-                {shift_html}
-            </div>
-            <div style="background:#06060a; border:1px solid #1a1a26; border-radius:6px; padding:15px; display:flex; flex-direction:column;">
-                <div style="margin-bottom:12px; font-size:10px; color:#7777a0; text-transform:uppercase; letter-spacing:1px; font-weight:bold;">Call Volume by Day of Week</div>
-                <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-grow:1; padding:10px 5px 0;">
-                    {dow_html}
-                </div>
-            </div>
-        </div>
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:5px; padding-top:15px; border-top:1px solid #1a1a26;">
-            <div style="font-size:14px; font-weight:800; color:#fff; letter-spacing:1px; text-transform:uppercase;">DFR Deployment Calendar</div>
-            <div style="display:flex; gap:12px; font-family:monospace; font-size:9px; color:#7777a0;">
-                <div style="display:flex; align-items:center; gap:5px;"><div style="width:8px; height:8px; background:#2ecc71; border-radius:2px;"></div>LOW</div>
-                <div style="display:flex; align-items:center; gap:5px;"><div style="width:8px; height:8px; background:#d4c000; border-radius:2px;"></div>MED</div>
-                <div style="display:flex; align-items:center; gap:5px;"><div style="width:8px; height:8px; background:#ff8c00; border-radius:2px;"></div>HIGH</div>
-                <div style="display:flex; align-items:center; gap:5px;"><div style="width:8px; height:8px; background:#ff4444; border-radius:2px;"></div>PEAK</div>
-            </div>
-        </div>
-        {cal_html}
-        <script>
-            const dateHourly = {json.dumps(date_hourly)};
-            const shiftHours = {shift_hours};
-            const dowNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-            function showTooltip(el, ev) {{
-                const cnt = parseInt(el.getAttribute('data-count'));
-                if (cnt === 0) return;
-                const dk = el.getAttribute('data-date');
-                const ratio = parseFloat(el.getAttribute('data-ratio'));
-                const mName = el.getAttribute('data-month');
-                const d = el.getAttribute('data-d');
-                const y = el.getAttribute('data-y');
-                const dow = parseInt(el.getAttribute('data-dow'));
-                let loadText = '';
-                if (ratio >= 0.85) loadText = '<span style="color:#ff4444">■ PEAK</span> &mdash; Full crew';
-                else if (ratio >= 0.55) loadText = '<span style="color:#ff8c00">■ HIGH</span> &mdash; Priority deploy';
-                else if (ratio >= 0.25) loadText = '<span style="color:#d4c000">■ MEDIUM</span> &mdash; Standard ops';
-                else loadText = '<span style="color:#2ecc71">■ LOW</span> &mdash; Light staffing';
-                const hrArr = dateHourly[dk] || Array(24).fill(0);
-                let bestV = 0, bestS = 0;
-                for (let s=0; s<24; s++) {{
-                    let v = 0;
-                    for (let h=0; h<shiftHours; h++) v += hrArr[(s+h)%24];
-                    if (v > bestV) {{ bestV = v; bestS = s; }}
-                }}
-                const dayPct = Math.round((bestV / cnt) * 100);
-                const eHr = (bestS + shiftHours) % 24;
-                const fmt = (h) => (h%12 || 12) + (h<12 ? 'AM' : 'PM');
-                const tt = document.getElementById('dfr-tooltip');
-                tt.innerHTML = `
-                    <div style="color:#00D2FF; margin-bottom:6px; font-size:12px; font-weight:bold; border-bottom:1px solid #252535; padding-bottom:4px;">${{mName}} ${{d}}, ${{y}} &middot; ${{dowNames[dow]}}</div>
-                    <div style="margin-bottom:8px; font-size:13px;">Calls: <span style="color:#fff; font-weight:bold;">${{cnt}}</span> &nbsp;&middot;&nbsp; ${{loadText}}</div>
-                    <div style="background:#1a1a26; padding:8px; border-radius:4px;">
-                        <div style="color:#7777a0; font-size:9px; letter-spacing:1px; text-transform:uppercase; margin-bottom:4px;">Best ${{shiftHours}}hr Shift</div>
-                        <div style="color:#00D2FF; font-size:14px; font-weight:bold; margin-bottom:2px;">${{fmt(bestS)}} &ndash; ${{fmt(eHr)}}</div>
-                        <div style="color:#aaa; font-size:10px;">Covers <span style="color:#fff;">${{dayPct}}%</span> of daily volume</div>
-                    </div>
-                `;
-                tt.style.display = 'block';
-                let left = ev.clientX + 15;
-                let top = ev.clientY - 20;
-                if (left + 220 > window.innerWidth) left = ev.clientX - 235;
-                if (top + 100 > window.innerHeight) top = ev.clientY - 110;
-                tt.style.left = left + 'px';
-                tt.style.top = top + 'px';
-            }}
-            function hideTooltip() {{ document.getElementById('dfr-tooltip').style.display = 'none'; }}
-        </script>
-    </div>
-    """
-    return full_html
 
 # ============================================================
 # AGGRESSIVE DATA PARSER
@@ -447,8 +356,8 @@ def aggressive_parse_calls(uploaded_files):
         'date': ['received date','incident date','call date','call creation date','calldatetime','call datetime','calltime','timestamp','date','datetime','dispatch date','time received','incdate'],
         'time': ['call creation time','call time','dispatch time','received time','time'],
         'priority': ['call priority','priority level','priority','pri','urgency'],
-        'lat': ['call original address latitude','address latitude','addresslatitude','latitude','lat','ycoor','y coor','ycoord','y coord','y coordinate','y-coordinate','addressy','ylat','lat y','coord y','coordy','geo lat','geolat','point y','pointy','address y'],
-        'lon': ['call original address longitude','address longitude','addresslongitude','longitude','lon','long','xcoor','x coor','xcoord','x coord','x coordinate','x-coordinate','lng','addressx','xlong','lon x','coord x','coordx','geo lon','geolon','point x','pointx','address x']
+        'lat': ['latitude','lat','ycoor','addressy','y coord'],
+        'lon': ['longitude','lon','long','xcoor','addressx','x coord']
     }
 
     def parse_priority(raw):
@@ -496,7 +405,6 @@ def aggressive_parse_calls(uploaded_files):
         
     if not all_calls_list: return pd.DataFrame()
     return pd.concat(all_calls_list, ignore_index=True).dropna(subset=['lat', 'lon'])
-
 
 def generate_stations_from_calls(df_calls, max_stations=100):
     """Auto-generate stations by querying OpenStreetMap."""
@@ -753,13 +661,13 @@ def estimate_grants(population):
     elif population > 250000: return "$250k - $500k"
     elif population > 100000: return "$100k - $250k"
     else: return "$25k - $100k"
-        
+
 def get_circle_coords(lat, lon, r_mi=2.0):
     angles = np.linspace(0, 2*np.pi, 100)
     c_lats = lat + (r_mi/69.172) * np.sin(angles)
     c_lons = lon + (r_mi/(69.172 * np.cos(np.radians(lat)))) * np.cos(angles)
     return c_lats, c_lons
-    
+
 def format_3_lines(name_str):
     match = re.search(r'\s(\d{1,5}\s+[A-Za-z])', name_str)
     if match:
@@ -1053,154 +961,9 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         'Guardian (Area)':   pad(a_g)
     })
 
-# ============================================================
-# THEME CSS
-# ============================================================
-bg_main = "#000000"
-bg_sidebar = "#111111"
-text_main = "#ffffff"
-text_muted = "#aaaaaa"
-accent_color = "#00D2FF"
-card_bg = "#111111"
-card_border = "#333333"
-card_text = "#eeeeee"
-card_title = "#ffffff"
-budget_box_bg = "#0a0a0a"
-budget_box_border = "#00D2FF"
-budget_box_shadow = "rgba(0, 210, 255, 0.15)"
-map_style = "carto-darkmatter"
-map_boundary_color = "#ffffff"
-map_incident_color = "#00D2FF"
-legend_bg = "rgba(0, 0, 0, 0.7)"
-legend_text = "#ffffff"
+# --- PAGE CONFIG ---
+# (Already defined at top)
 
-theme_css = f"""
-.stApp, .main {{ background-color: {bg_main} !important; }}
-html, body, [class*="css"], p, label, li, h1, h2, h3, h4, h5, h6 {{ font-family: 'Manrope', sans-serif !important; color: {text_main} !important; }}
-[data-testid="stSidebar"] {{ background-color: {bg_sidebar} !important; border-right: 1px solid {card_border}; }}
-[data-testid="stSidebar"] img {{ filter: invert(1) brightness(2); }}
-[data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small {{ color: {text_muted} !important; }}
-[data-testid="stFileUploader"] section {{ background-color: #111111 !important; border-color: #333333 !important; }}
-div[data-testid="stMetricValue"] {{ font-family: 'IBM Plex Mono', monospace !important; color: {accent_color} !important; }}
-div[data-testid="stMetricLabel"] * {{ color: {text_muted} !important; }}
-div[data-testid="stExpander"] details {{ background-color: #111111 !important; border-color: #333333 !important; }}
-div[data-testid="stExpander"] summary {{ background-color: #111111 !important; color: #ffffff !important; }}
-div[data-testid="stExpander"] summary:hover {{ background-color: #222222 !important; }}
-div[data-testid="stForm"] {{ background-color: #111111 !important; border-color: #333333 !important; }}
-div[data-baseweb="select"] > div {{ background-color: #222222 !important; border-color: #444444 !important; color: #ffffff !important; }}
-div[data-baseweb="select"] > div input {{ color: #ffffff !important; }}
-div[data-baseweb="select"] span[data-baseweb="tag"] {{ background-color: #333333 !important; color: #ffffff !important; border: 1px solid #555555 !important; }}
-div[data-baseweb="select"] span[data-baseweb="tag"] span {{ color: #ffffff !important; }}
-div[data-baseweb="popover"] ul {{ background-color: #222222 !important; color: #ffffff !important; }}
-div[data-baseweb="popover"] li:hover {{ background-color: #444444 !important; }}
-div[data-testid="stTextInput"] div[data-baseweb="input"] {{ background-color: #222222 !important; border-color: #444444 !important; }}
-div[data-testid="stTextInput"] div[data-baseweb="input"] > div {{ background-color: transparent !important; }}
-div[data-testid="stTextInput"] div[data-baseweb="input"] input {{ color: #ffffff !important; background-color: transparent !important; -webkit-text-fill-color: #ffffff !important; caret-color: #ffffff !important; }}
-div[data-testid="stButton"] button, div[data-testid="stFormSubmitButton"] button, div[data-testid="stDownloadButton"] button {{
-    background-color: #222222 !important; border: 1px solid #444444 !important; color: #ffffff !important;
-}}
-div[data-testid="stButton"] button p, div[data-testid="stFormSubmitButton"] button p, div[data-testid="stDownloadButton"] button p {{ color: #ffffff !important; }}
-div[data-testid="stButton"] button:hover, div[data-testid="stFormSubmitButton"] button:hover, div[data-testid="stDownloadButton"] button:hover {{
-    background-color: #ffffff !important; border-color: #ffffff !important;
-}}
-div[data-testid="stButton"] button:hover p, div[data-testid="stFormSubmitButton"] button:hover p, div[data-testid="stDownloadButton"] button:hover p {{ color: #000000 !important; }}
-div[data-testid="stButton"] button:hover svg, div[data-testid="stFormSubmitButton"] button:hover svg, div[data-testid="stDownloadButton"] button:hover svg {{ fill: #000000 !important; color: #000000 !important; }}
-div[data-testid="stToast"] {{ background-color: #222222 !important; border-color: #444444 !important; }}
-div[data-testid="stToast"] span, div[data-testid="stToast"] div {{ color: #ffffff !important; }}
-.sidebar-section-header {{
-    font-size: 0.65rem !important; font-weight: 800 !important; letter-spacing: 1.5px !important;
-    text-transform: uppercase !important; color: {accent_color} !important;
-    border-top: 1px solid {card_border}; padding-top: 12px; margin-top: 4px; margin-bottom: 8px;
-}}
-div[data-testid="stTooltipIcon"] svg {{ stroke: {accent_color} !important; fill: transparent !important; }}
-div[data-testid="stTooltipHoverTarget"] {{ color: {accent_color} !important; }}
-div[data-testid="stTooltipContent"] {{ background-color: #222222 !important; border: 1px solid {accent_color} !important; border-radius: 4px !important; }}
-div[data-testid="stTooltipContent"] * {{ color: #ffffff !important; font-size: 0.8rem !important; }}
-.card-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }}
-.econ-card {{
-    background: {card_bg}; border-radius: 6px; padding: 12px;
-    border-top: 4px solid var(--card-accent); border-left: 1px solid {card_border};
-    border-right: 1px solid {card_border}; border-bottom: 1px solid {card_border};
-    display: flex; flex-direction: column; gap: 6px;
-}}
-.econ-card .headline {{ font-size: 1.1rem; font-weight: 800; color: {accent_color}; text-align: center; padding: 4px 0; }}
-.econ-card .kv {{ display: flex; justify-content: space-between; font-size: 0.65rem; }}
-.econ-card .kv .k {{ color: {text_muted}; }}
-.econ-card .kv .v {{ font-weight: 700; color: {card_title}; }}
-.econ-card .kv .v-accent {{ font-weight: 700; color: {accent_color}; }}
-@media (max-width: 900px) {{
-    div[data-testid="stHorizontalBlock"] {{ flex-direction: column !important; }}
-    div[data-testid="stColumn"] {{ width: 100% !important; max-width: 100% !important; }}
-}}
-@media print {{
-    section[data-testid="stSidebar"], header[data-testid="stHeader"], .stSlider, button, div[data-testid="stToolbar"] {{ display: none !important; }}
-    * {{ -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }}
-    .block-container, .stApp, .main, div {{ max-width: 100% !important; width: 100% !important; padding: 0 !important; margin: 0 !important; overflow: visible !important; height: auto !important; }}
-    div[data-testid="stHorizontalBlock"] {{ display: block !important; width: 100% !important; }}
-    div[data-testid="stColumn"] {{ width: 100% !important; max-width: 100% !important; flex: 0 0 100% !important; display: block !important; margin-bottom: 20px !important; }}
-    .js-plotly-plot, .plot-container {{ width: 100% !important; page-break-inside: avoid !important; margin-bottom: 30px !important; }}
-}}
-"""
-
-st.markdown(f"""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=Manrope:wght@400;600;700&display=swap');
-{theme_css}
-.stRadio label p, .stMultiSelect label p, .stSlider label p, .stToggle label p, .stCheckbox label p {{
-    font-weight: 600 !important; font-size: 0.85rem !important;
-}}
-div[role="radiogroup"] {{ gap: 0.5rem !important; }}
-</style>
-""", unsafe_allow_html=True)
-
-components.html("""
-<script>
-window.addEventListener('beforeunload', function(e) {
-    if (window._brincHasData) {
-        e.preventDefault();
-        e.returnValue = 'You have an active session. Download your .brinc scenario first to save your work.';
-    }
-});
-</script>
-""", height=0)
-
-try:
-    st.sidebar.image("logo.png", use_container_width=True)
-except FileNotFoundError:
-    st.sidebar.markdown(f"<div style='font-size:1.4rem;font-weight:900;letter-spacing:3px;color:{accent_color};padding:10px 0;'>BRINC</div>", unsafe_allow_html=True)
-
-# ============================================================
-# SCENARIO LOADER (sidebar, pre-map)
-# ============================================================
-if not st.session_state['csvs_ready']:
-    with st.sidebar.expander("💾 Load Saved Scenario", expanded=False):
-        uploaded_scenario = st.file_uploader("Load .brinc file", type=['brinc','json'], label_visibility="collapsed")
-        if uploaded_scenario is not None and st.session_state.get('last_loaded_scenario') != uploaded_scenario.file_id:
-            try:
-                scenario_data = json.loads(uploaded_scenario.getvalue().decode("utf-8"))
-                for k in ['active_city','active_state','k_resp','k_guard','r_resp','r_guard','dfr_rate','deflect_rate']:
-                    if k in scenario_data: st.session_state[k] = scenario_data[k]
-                calls_data = scenario_data.get('calls_data')
-                stations_data = scenario_data.get('stations_data')
-                st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
-                if calls_data and stations_data:
-                    st.session_state['df_calls'] = pd.DataFrame(calls_data)
-                    st.session_state['df_stations'] = pd.DataFrame(stations_data)
-                    st.session_state['total_original_calls'] = len(calls_data)
-                    st.session_state['csvs_ready'] = True
-                    st.toast(f"✅ Loaded scenario for {st.session_state['active_city']}!")
-                    st.rerun()
-                else:
-                    st.session_state['trigger_sim'] = True
-                    st.toast(f"✅ Loaded synthetic scenario for {st.session_state['active_city']}!")
-                    st.rerun()
-            except Exception:
-                st.error("Failed to load file — it may be corrupted or incorrectly formatted.")
-                st.session_state['last_loaded_scenario'] = uploaded_scenario.file_id
-
-# ============================================================
-# ONBOARDING / LANDING PAGE
-# ============================================================
 if not st.session_state['csvs_ready']:
 
     st.markdown(f"""
@@ -1244,7 +1007,7 @@ if not st.session_state['csvs_ready']:
         font-size: 0.62rem;
         font-weight: 700;
         letter-spacing: 4px;
-        color: {accent_color};
+        color: #00D2FF;
         text-transform: uppercase;
         opacity: 0.7;
         margin-bottom: 12px;
@@ -1260,7 +1023,7 @@ if not st.session_state['csvs_ready']:
     }}
     .brinc-h1 em {{
         font-style: normal;
-        color: {accent_color};
+        color: #00D2FF;
     }}
     .brinc-tagline {{
         font-size: 0.88rem;
@@ -1286,7 +1049,7 @@ if not st.session_state['csvs_ready']:
         padding: 4px 13px;
         font-size: 0.64rem;
         font-weight: 700;
-        color: {accent_color};
+        color: #00D2FF;
         letter-spacing: 0.8px;
         text-transform: uppercase;
     }}
@@ -1320,10 +1083,6 @@ if not st.session_state['csvs_ready']:
     .pc-title {{ font-size:1rem; font-weight:800; color:#fff;
                  line-height:1.25; margin-bottom:7px; }}
     .pc-desc  {{ font-size:0.7rem; color:#555; line-height:1.6; margin-bottom:0; }}
-    code.inline {{
-        background:#151515; border-radius:3px;
-        padding:1px 5px; font-size:0.68rem; color:#aaa;
-    }}
     .field-footnote {{
         font-size: 0.63rem; color: #3a3a3a; line-height: 1.75;
         margin-top: 10px; border-top: 1px solid #141414;
@@ -1339,7 +1098,7 @@ if not st.session_state['csvs_ready']:
         margin-top: 12px; border-top: 1px solid #141414;
         padding-top: 10px;
     }}
-    .demo-check span {{ color: {accent_color}; margin-right: 5px; }}
+    .demo-check span {{ color: #00D2FF; margin-right: 5px; }}
     </style>
 
     <div class="brinc-hero">
@@ -1365,7 +1124,7 @@ if not st.session_state['csvs_ready']:
 
     with path_sim_col:
         st.markdown(f"""
-        <div class="path-card" style="--accent:{accent_color};">
+        <div class="path-card" style="--accent:#00D2FF;">
             <span class="pc-icon">🗺</span>
             <div class="pc-tag">Path 01</div>
             <div class="pc-title">Simulate Any<br>US Region</div>
@@ -1449,7 +1208,6 @@ if not st.session_state['csvs_ready']:
                 else:
                     call_files.append(f)
             
-            # If nothing looked like a station file but there are 2 files, try size heuristic
             if len(f_list) == 2 and not station_file:
                 f0, f1 = f_list
                 f0.seek(0); sz0 = len(f0.read()); f0.seek(0)
@@ -1469,6 +1227,8 @@ if not st.session_state['csvs_ready']:
                     st.error("❌ Calls file error: Could not parse valid coordinates.")
                     st.stop()
 
+                st.session_state['total_original_calls'] = len(df_c)
+                
                 # Sample if too large
                 if len(df_c) > 25000:
                     df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
@@ -1506,7 +1266,6 @@ if not st.session_state['csvs_ready']:
                 if len(df_s) > 100:
                     df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
 
-                # Outlier filter based on stations bounding box + padding
                 lat_min, lat_max = df_s['lat'].min(), df_s['lat'].max()
                 lon_min, lon_max = df_s['lon'].min(), df_s['lon'].max()
                 df_c = df_c[
@@ -1516,7 +1275,6 @@ if not st.session_state['csvs_ready']:
 
                 st.session_state['df_calls']             = df_c
                 st.session_state['df_stations']          = df_s
-                st.session_state['total_original_calls'] = len(df_c)
 
                 with st.spinner(get_jurisdiction_message()):
                     detected_state_full, detected_city = reverse_geocode_state(
@@ -1647,7 +1405,6 @@ if not st.session_state['csvs_ready']:
         np.random.seed(42)
         call_points = generate_clustered_calls(city_poly, simulated_points_count)
         
-        # Generate fake dates over the last 30 days for testing analytics
         base_date = datetime.datetime.now() - datetime.timedelta(days=30)
         fake_dts = [(base_date + datetime.timedelta(days=random.randint(0, 30), hours=random.randint(0, 23), minutes=random.randint(0, 59))) for _ in range(simulated_points_count)]
         
@@ -1784,9 +1541,17 @@ if st.session_state['csvs_ready']:
 
     n = len(df_stations_all)
 
-    k_responder = st.sidebar.slider("🚁 Responder Count", 0, max(1, n), min(st.session_state.get('k_resp', 0), n),
+    # Dynamic Sliders based on Area Size
+    area_sq_mi = city_m.area / 2589988.11 if city_m and not city_m.is_empty else 100.0
+    r_resp_est = st.session_state.get('r_resp', 2.0)
+    r_guard_est = st.session_state.get('r_guard', 8.0)
+    
+    max_resp_calc = min(n, int(math.ceil(area_sq_mi / (math.pi * (r_resp_est**2)))) + 5)
+    max_guard_calc = min(n, int(math.ceil(area_sq_mi / (math.pi * (r_guard_est**2)))) + 5)
+
+    k_responder = st.sidebar.slider("🚁 Responder Count", 0, max(1, max_resp_calc), min(st.session_state.get('k_resp', 0), max_resp_calc),
                                     help="Short-range tactical drones (2-3mi radius).")
-    k_guardian  = st.sidebar.slider("🦅 Guardian Count",  0, max(1, n), min(st.session_state.get('k_guard', 0), n),
+    k_guardian  = st.sidebar.slider("🦅 Guardian Count",  0, max(1, max_guard_calc), min(st.session_state.get('k_guard', 0), max_guard_calc),
                                     help="Long-range heavy-lift drones (up to 8mi radius).")
     resp_radius_mi  = st.sidebar.slider("🚁 Responder Range (mi)", 2.0, 3.0, st.session_state.get('r_resp', 2.0), step=0.5)
     guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (mi)", 1, 8, int(st.session_state.get('r_guard', 8)))
@@ -1814,9 +1579,6 @@ if st.session_state['csvs_ready']:
         idx_99 = series[series >= 99.0].first_valid_index()
         fallback = series.index[-1]
         return int(df_curve.loc[idx_99 if idx_99 is not None else fallback, 'Drones'])
-
-    max_r = min(max(1, get_max_drones('Responder (Calls)') + 4), n)
-    max_g = min(max(1, get_max_drones('Guardian (Calls)') + 4), n)
 
     with st.spinner(get_faa_message()):
         faa_geojson = load_faa_parquet(minx, miny, maxx, maxy)
@@ -2129,7 +1891,6 @@ if st.session_state['csvs_ready']:
         logo_b64 = get_base64_of_bin_file("logo.png")
         logo_html_str = f'<img src="data:image/png;base64,{logo_b64}" style="height:40px;">' if logo_b64 else '<div style="font-size:28px;font-weight:900;letter-spacing:3px;color:#111;">BRINC</div>'
 
-        # ── GRANT NARRATIVE VARIABLES ─────────────────────────────────────
         jurisdiction_list = ", ".join(selected_names) if selected_names else prop_city
         all_station_types = df_stations_all['type'].dropna().unique().tolist() if 'type' in df_stations_all.columns else []
         police_dept_names = [d['name'] for d in active_drones if '[Police]' in d['name']]
@@ -2152,7 +1913,8 @@ if st.session_state['csvs_ready']:
         total_fleet = actual_k_responder + actual_k_guardian
         area_sq_mi_est = int((maxx - minx) * (maxy - miny) * 3280)
 
-        analytics_html_block = generate_command_center_html(df_calls, export_mode=True)
+        # Build Analytics Block for Export
+        analytics_html_block = generate_command_center_html(df_calls, total_orig_calls=st.session_state.get('total_original_calls', total_calls), export_mode=True)
 
         export_html = f"""<html><head><title>BRINC DFR Proposal — {prop_city}</title>
         <style>
@@ -2310,9 +2072,14 @@ if st.session_state['csvs_ready']:
     else:
         gain_val = None
 
+    orig_calls = st.session_state.get('total_original_calls', total_calls)
+    call_str = f"{orig_calls:,}"
+    if orig_calls > total_calls:
+        call_str += f" <br><span style='font-size:0.5em;color:#888;'>(Sampled: {total_calls:,})</span>"
+
     kpi_html = f"""
     <div style="display:flex; justify-content:space-around; background:{card_bg}; border:1px solid {card_border}; border-radius:8px; padding:15px; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
-        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Total Incidents</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{st.session_state.get('total_original_calls',total_calls):,}</div></div>
+        <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Total Incidents</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{call_str}</div></div>
         <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Response Capacity</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{calls_covered_perc:.1f}%</div></div>
         <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Land Covered</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{area_covered_perc:.1f}%</div></div>
         <div style="text-align:center;"><div style="font-size:0.75rem; color:{text_muted}; text-transform:uppercase;">Overlap</div><div style="font-size:1.6rem; font-weight:800; color:{accent_color}; font-family:'IBM Plex Mono', monospace;">{overlap_perc:.1f}%</div></div>
@@ -2676,11 +2443,9 @@ if st.session_state['csvs_ready']:
 
     # ── COMMAND CENTER ANALYTICS DASHBOARD ──
     st.markdown("---")
-    st.markdown(f"<h3 style='color:{text_main};'>📊 CAD Ingestion Analytics</h3>", unsafe_allow_html=True)
-    st.markdown(f"<div style='font-size:0.82rem; color:{text_muted}; margin-bottom:10px;'>Temporal patterns derived from your uploaded CAD data — hourly volumes, day-of-week distribution, optimal DFR shift windows, and an interactive call-volume calendar.</div>", unsafe_allow_html=True)
-
-    show_cad_analytics = st.toggle("📈 Show Data Analytics Heatmaps", value=True)
-    analytics_html_block = generate_command_center_html(df_calls)
-
+    
+    show_cad_analytics = st.toggle("📈 Show CAD Analytics Dashboard", value=False)
+    analytics_html_block = generate_command_center_html(df_calls, total_orig_calls=st.session_state.get('total_original_calls', total_calls))
+    
     if show_cad_analytics:
         components.html(analytics_html_block, height=850, scrolling=True)
