@@ -1653,6 +1653,7 @@ if st.session_state['csvs_ready']:
 
     # ── OPTIMIZATION ──────────────────────────────────────────────────
     active_resp_names, active_guard_names = [], []
+    active_resp_idx, active_guard_idx = [], []  # <-- This prevents the NameError!
     chrono_r, chrono_g = [], []
     best_combo = None
 
