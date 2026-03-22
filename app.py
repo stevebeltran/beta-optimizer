@@ -1974,8 +1974,8 @@ if st.session_state['csvs_ready']:
 
     # 1. THE SINGLE-LINE EXECUTIVE HEADER
     logo_b64 = get_base64_of_bin_file("logo.png")
-    main_logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:24px; vertical-align:middle; margin-right:15px;">' if logo_b64 else f'<span style="font-size:1.5rem; font-weight:900; letter-spacing:2px; color:{accent_color}; margin-right:15px;">BRINC</span>'
-
+    # Applied the invert filter to make it pure white, and changed fallback text to white
+    main_logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:24px; vertical-align:middle; margin-right:15px; filter: brightness(0) invert(1);">' if logo_b64 else f'<span style="font-size:1.5rem; font-weight:900; letter-spacing:2px; color:#ffffff; margin-right:15px;">BRINC</span>'
     header_html = f"""
     <div style="margin-top: 5px; margin-bottom: 15px; padding-bottom: 12px; border-bottom: 1px solid {card_border}; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
         <div style="display: flex; align-items: center; flex-wrap: wrap; font-size: 0.9rem;">
