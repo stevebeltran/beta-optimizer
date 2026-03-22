@@ -1974,10 +1974,9 @@ if st.session_state['csvs_ready']:
     else:
         gain_val = None
 
+    # Set the total calls without the "Sampled" text
     orig_calls = st.session_state.get('total_original_calls', total_calls)
     call_str = f"{orig_calls:,}"
-    if orig_calls > total_calls:
-        call_str += f" <br><span style='font-size:0.55em;color:#888;'>(Sampled: {total_calls:,})</span>"
 
     # Calculate Date Range of CAD data (if available)
     date_range_str = "Simulated / Unknown"
@@ -2013,36 +2012,36 @@ if st.session_state['csvs_ready']:
     """
     st.markdown(header_html, unsafe_allow_html=True)
 
-    # 2. THE STREAMLINED OPERATIONAL KPI BAR
+    # 2. THE STREAMLINED OPERATIONAL KPI BAR (RESIZED & CLEANED)
     kpi_html = f"""
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); background: {card_bg}; border: 1px solid {card_border}; border-radius: 8px; padding: 15px; margin-bottom: 15px; gap: 10px;">
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); background: {card_bg}; border: 1px solid {card_border}; border-radius: 8px; padding: 20px; margin-bottom: 15px; gap: 10px;">
         <div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">
-            <div style="font-size: 0.65rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Total Incidents</div>
-            <div style="font-size: 1.6rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{call_str}</div>
+            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Total Incidents</div>
+            <div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{call_str}</div>
         </div>
         <div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">
-            <div style="font-size: 0.65rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Call Coverage</div>
-            <div style="font-size: 1.6rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{calls_covered_perc:.1f}%</div>
+            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Call Coverage</div>
+            <div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{calls_covered_perc:.1f}%</div>
         </div>
         <div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">
-            <div style="font-size: 0.65rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Land Covered</div>
-            <div style="font-size: 1.6rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{area_covered_perc:.1f}%</div>
+            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Land Covered</div>
+            <div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{area_covered_perc:.1f}%</div>
         </div>
         <div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">
-            <div style="font-size: 0.65rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Overlap</div>
-            <div style="font-size: 1.6rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{overlap_perc:.1f}%</div>
+            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Overlap</div>
+            <div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{overlap_perc:.1f}%</div>
         </div>
         <div style="{'' if gain_val is None else 'border-right: 1px solid #222; padding-right: 10px;'} text-align: center;">
-            <div style="font-size: 0.65rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Est. Avg Response</div>
-            <div style="font-size: 1.6rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{avg_resp_time:.1f}m</div>
+            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Est. Avg Response</div>
+            <div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{avg_resp_time:.1f}m</div>
         </div>
     """
     
     if gain_val is not None:
         kpi_html += f"""
         <div style="text-align: center;">
-            <div style="font-size: 0.65rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Time Saved ({eval_dist:.0f}mi)</div>
-            <div style="font-size: 1.6rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{gain_val}</div>
+            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Time Saved ({eval_dist:.0f}mi)</div>
+            <div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{gain_val}</div>
         </div>"""
         
     kpi_html += "</div>"
