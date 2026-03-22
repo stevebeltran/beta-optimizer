@@ -486,6 +486,19 @@ def generate_stations_from_calls(df_calls, max_stations=100):
     if not rows: return None, "No police/fire/school stations found near this area on OpenStreetMap."
 
     df_s = pd.DataFrame(rows).drop_duplicates(subset=['lat', 'lon']).reset_index(drop=True)
+    
+    # ENFORCE UNIQUE NAMES FOR OSM DATA
+    counts = {}
+    new_names = []
+    for n in df_s['name']:
+        if n in counts:
+            counts[n] += 1
+            new_names.append(f"{n} ({counts[n]})")
+        else:
+            counts[n] = 0
+            new_names.append(n)
+    df_s['name'] = new_names
+
     if len(df_s) > max_stations:
         priority_order = {'Police': 0, 'Fire': 1, 'School': 2}
         df_s['_pri'] = df_s['type'].map(priority_order).fillna(3)
@@ -1730,13 +1743,14 @@ if st.session_state['csvs_ready']:
             r_best, g_best = best_combo
             active_resp_names  = [station_metadata[i]['name'] for i in r_best]
             active_guard_names = [station_metadata[i]['name'] for i in g_best]
+            active_resp_idx  = list(r_best)
+            active_guard_idx = list(g_best)
         else:
             active_resp_names, active_guard_names = [], []
+            active_resp_idx, active_guard_idx = [], []
 
     # ── METRICS ───────────────────────────────────────────────────────
     area_covered_perc = overlap_perc = calls_covered_perc = 0.0
-    active_resp_idx  = [i for i,s in enumerate(station_metadata) if s['name'] in active_resp_names]
-    active_guard_idx = [i for i,s in enumerate(station_metadata) if s['name'] in active_guard_names]
 
     ordered_deployments_raw = []
     for idx in chrono_g:
@@ -1751,7 +1765,7 @@ if st.session_state['csvs_ready']:
     active_color_map = {}
     c_idx = 0
     for idx, d_type in ordered_deployments_raw:
-        key = f"{station_metadata[idx]['name']}_{d_type}"
+        key = f"{idx}_{d_type}" # Using strictly unique index instead of name
         if key not in active_color_map:
             active_color_map[key] = STATION_COLORS[c_idx % len(STATION_COLORS)]
             c_idx += 1
@@ -1840,7 +1854,7 @@ if st.session_state['csvs_ready']:
             cov_array = guard_matrix[idx]; cost = CONFIG["GUARDIAN_COST"]
             speed_mph = CONFIG["GUARDIAN_SPEED"]; avg_dist = station_metadata[idx]['avg_dist_g']
             radius_m  = guard_radius_mi * 1609.34
-        map_color    = active_color_map[f"{station_metadata[idx]['name']}_{d_type}"]
+        map_color    = active_color_map[f"{idx}_{d_type}"]
         avg_time_min = (avg_dist / speed_mph) * 60
         d_lat = station_metadata[idx]['lat']; d_lon = station_metadata[idx]['lon']
 
