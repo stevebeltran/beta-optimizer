@@ -1740,11 +1740,29 @@ if not st.session_state['csvs_ready']:
         prog.progress(55, text="🚔 Modeling 911 calls — every one represents someone who needed help…")
         np.random.seed(42)
         call_points = generate_clustered_calls(city_poly, simulated_points_count)
-        st.session_state['df_calls'] = pd.DataFrame({
+        
+        # 1. Generate fake dates over the last 30 days
+        base_date = datetime.datetime.now() - datetime.timedelta(days=30)
+        fake_dts = [(base_date + datetime.timedelta(days=random.randint(0, 30), hours=random.randint(0, 23), minutes=random.randint(0, 59))) for _ in range(simulated_points_count)]
+        
+        # 2. Build the base DataFrame
+        df_demo = pd.DataFrame({
             'lat':      [p[0] for p in call_points],
             'lon':      [p[1] for p in call_points],
-            'priority': np.random.choice(['High', 'Medium', 'Low'], simulated_points_count)
+            'priority': np.random.choice([1, 2, 3], simulated_points_count, p=[0.15, 0.35, 0.50]),
+            'date':     [d.strftime('%Y-%m-%d') for d in fake_dts],
+            'time':     [d.strftime('%H:%M:%S') for d in fake_dts]
         })
+        st.session_state['df_calls'] = df_demo
+
+        # 3. Enrich the data so the new Analytics Calendar & Charts recognize it
+        df_enriched = df_demo.copy()
+        df_enriched['datetime'] = pd.to_datetime(df_enriched['date'] + ' ' + df_enriched['time'])
+        df_enriched['hour'] = df_enriched['datetime'].dt.hour
+        df_enriched['dow'] = df_enriched['datetime'].dt.dayofweek
+        df_enriched['date_key'] = df_enriched['datetime'].dt.strftime('%Y-%m-%d')
+        df_enriched['month_key'] = df_enriched['datetime'].dt.strftime('%Y-%m')
+        st.session_state['df_calls_enriched'] = df_enriched
 
         prog.progress(80, text="🏅 Placing stations — giving officers the best possible backup…")
         station_points = generate_random_points_in_polygon(city_poly, 100)
