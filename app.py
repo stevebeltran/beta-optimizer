@@ -2019,6 +2019,8 @@ if st.session_state['csvs_ready']:
     st.markdown(kpi_html, unsafe_allow_html=True)
     st.markdown(f"<div style='font-size:0.65rem;color:gray;margin-top:-10px;margin-bottom:12px;text-align:right;'>(Optimization modeled via {total_calls:,} representative CAD samples)</div>", unsafe_allow_html=True)
 
+    map_col, stats_col = st.columns([4.2, 1.8])
+
     with map_col:
         fig = go.Figure()
 
