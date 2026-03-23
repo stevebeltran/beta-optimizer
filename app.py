@@ -2373,7 +2373,9 @@ if st.session_state['csvs_ready']:
                 legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1,
                             font=dict(size=9,color=text_muted)),
                 margin=dict(l=10,r=10,t=20,b=10), height=260,
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                # Force the hover tooltip to use the dark theme colors!
+                hoverlabel=dict(bgcolor=card_bg, font_size=13, font_color=text_main, bordercolor=accent_color)
             )
             st.plotly_chart(fig_curve, use_container_width=True, config={'displayModeBar':False})
 
