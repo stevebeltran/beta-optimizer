@@ -2148,39 +2148,41 @@ if st.session_state['csvs_ready']:
     """
     st.markdown(header_html, unsafe_allow_html=True)
 
-    # 2. THE STREAMLINED OPERATIONAL KPI BAR (RESIZED & CLEANED)
-    kpi_html = f"""
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); background: {card_bg}; border: 1px solid {card_border}; border-radius: 8px; padding: 20px; margin-bottom: 15px; gap: 10px;">
-        <div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">
-            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Total Incidents</div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{call_str}</div>
-        </div>
-        <div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">
-            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Call Coverage</div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{calls_covered_perc:.1f}%</div>
-        </div>
-        <div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">
-            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Land Covered</div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{area_covered_perc:.1f}%</div>
-        </div>
-        <div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">
-            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Overlap</div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{overlap_perc:.1f}%</div>
-        </div>
-        <div style="{'' if gain_val is None else 'border-right: 1px solid #222; padding-right: 10px;'} text-align: center;">
-            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Est. Avg Response</div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{avg_resp_time:.1f}m</div>
-        </div>
-    """
-    
+    # 2. THE STREAMLINED OPERATIONAL KPI BAR
+    # If traffic simulation is on, nest the time saved right inside the Avg Response box!
     if gain_val is not None:
-        kpi_html += f"""
-        <div style="text-align: center;">
-            <div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Time Saved ({eval_dist:.0f}mi)</div>
-            <div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: 'IBM Plex Mono', monospace;">{gain_val}</div>
-        </div>"""
-        
-    kpi_html += "</div>"
+        resp_content = (
+            f'<div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: \'IBM Plex Mono\', monospace; line-height: 1.1;">{avg_resp_time:.1f}m</div>'
+            f'<div style="font-size: 0.7rem; color: #39FF14; font-weight: 800; text-transform: uppercase; margin-top: 4px;">▼ Saves {gain_val}</div>'
+        )
+    else:
+        resp_content = f'<div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: \'IBM Plex Mono\', monospace;">{avg_resp_time:.1f}m</div>'
+
+    kpi_html = (
+        f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); background: {card_bg}; border: 1px solid {card_border}; border-radius: 8px; padding: 20px; margin-bottom: 15px; gap: 10px;">'
+        f'<div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">'
+        f'<div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Total Incidents</div>'
+        f'<div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: \'IBM Plex Mono\', monospace;">{call_str}</div>'
+        f'</div>'
+        f'<div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">'
+        f'<div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Call Coverage</div>'
+        f'<div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: \'IBM Plex Mono\', monospace;">{calls_covered_perc:.1f}%</div>'
+        f'</div>'
+        f'<div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">'
+        f'<div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Land Covered</div>'
+        f'<div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: \'IBM Plex Mono\', monospace;">{area_covered_perc:.1f}%</div>'
+        f'</div>'
+        f'<div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">'
+        f'<div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Overlap</div>'
+        f'<div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: \'IBM Plex Mono\', monospace;">{overlap_perc:.1f}%</div>'
+        f'</div>'
+        f'<div style="text-align: center;">'
+        f'<div style="font-size: 0.75rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px;">Est. Avg Response</div>'
+        f'{resp_content}'
+        f'</div>'
+        f'</div>'
+    )
+    
     st.markdown(kpi_html, unsafe_allow_html=True)
     st.markdown(f"<div style='font-size:0.65rem;color:gray;margin-top:-10px;margin-bottom:12px;text-align:right;'>(Optimization modeled via {total_calls:,} representative CAD samples)</div>", unsafe_allow_html=True)
 
