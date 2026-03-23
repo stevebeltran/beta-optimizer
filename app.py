@@ -2288,7 +2288,7 @@ if st.session_state['csvs_ready']:
         if show_faa and faa_geojson:
             add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=not show_satellite)
 
-        ffor d in active_drones:
+        for d in active_drones:
             clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
             lbl = f"{d['name'].split(',')[0]} ({'Resp' if d['type']=='RESPONDER' else 'Guard'})"
             
