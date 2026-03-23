@@ -2295,17 +2295,17 @@ if st.session_state['csvs_ready']:
             # Determine if this is an extended Guardian (so we can relax the outer ring)
             is_extended_guardian = (d['type'] == 'GUARDIAN' and d['radius_m']/1609.34 > 5.0)
             
-            # The outer ring becomes relaxed (dotted, thinner) if > 5 miles
-            outer_width = 2 if is_extended_guardian else 4.5
-            outer_dash = 'dot' if is_extended_guardian else 'solid'
-            outer_opac = 0.6 if is_extended_guardian else 1.0
+            # The outer ring becomes relaxed (thinner, more transparent) if > 5 miles
+            # Note: We removed 'dash' because Mapbox does not support it!
+            outer_width = 1.5 if is_extended_guardian else 4.5
+            outer_opac = 0.4 if is_extended_guardian else 1.0
             
             fig.add_trace(go.Scattermapbox(
                 lat=list(clats)+[None,d['lat']], lon=list(clons)+[None,d['lon']],
                 mode='lines+markers',
                 opacity=outer_opac,
                 marker=dict(size=[0]*len(clats)+[0,20], color=d['color']),
-                line=dict(color=d['color'], width=outer_width, dash=outer_dash),
+                line=dict(color=d['color'], width=outer_width),
                 fill='toself', fillcolor='rgba(0,0,0,0)', name=lbl, hoverinfo='name'))
 
             # The 5-mile Rapid Response ring gets the "Important" styling (thick, solid, heavier fill)
@@ -2314,7 +2314,7 @@ if st.session_state['csvs_ready']:
                 fig.add_trace(go.Scattermapbox(
                     lat=list(f_lats), lon=list(f_lons),
                     mode='lines',
-                    line=dict(color=d['color'], width=4.5, dash='solid'),
+                    line=dict(color=d['color'], width=4.5),
                     opacity=1.0,
                     fill='toself',
                     fillcolor=f"rgba({int(d['color'][1:3],16)},{int(d['color'][3:5],16)},{int(d['color'][5:7],16)},0.12)",
