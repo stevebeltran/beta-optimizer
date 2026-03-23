@@ -2357,8 +2357,10 @@ if st.session_state['csvs_ready']:
                 y_data = df_curve[col].dropna()
                 x_data = df_curve.loc[y_data.index,'Drones']
                 if not y_data.empty:
+                    # We added the hovertemplate with <extra></extra> to kill the unreadable side-box!
                     fig_curve.add_trace(go.Scatter(x=x_data, y=y_data, mode='lines+markers', name=col,
-                        line=dict(color=color,width=2,dash=dash), marker=dict(size=4)))
+                        line=dict(color=color,width=2,dash=dash), marker=dict(size=4),
+                        hovertemplate=f"<b>{col}</b><br>Drones: %{{x}}<br>Coverage: %{{y:.1f}}%<extra></extra>"))
                     if 'Calls' in col:
                         idx_90 = y_data[y_data >= 90.0].first_valid_index()
                         if idx_90 is not None:
