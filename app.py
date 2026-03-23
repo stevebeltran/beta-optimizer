@@ -198,23 +198,6 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False):
         cal_html += "</div></div>"
     cal_html += "</div>"
 
-    brinc_info = """
-    <div style="margin-bottom:20px; background:#0c0c12; border:1px solid #1a1a26; border-radius:4px; padding:18px 22px; display:grid; grid-template-columns:1fr auto; gap:18px; align-items:start;">
-        <div style="font-family:monospace; font-size:11px; color:#7777a0; line-height:1.85;">
-            <strong style="color:#00D2FF;font-weight:400;">BRINC</strong> is the largest drone manufacturer focused exclusively on public safety, trusted by <strong style="color:#00D2FF;font-weight:400;">900+ police and fire agencies across all 50 states</strong>. Founded by Blake Resnick and headquartered in <strong style="color:#00D2FF;font-weight:400;">Seattle, WA</strong>, BRINC designs NDAA & CJIS compliant systems built entirely in the USA. The Responder drone reaches 911 calls in under <strong style="color:#00D2FF;font-weight:400;">70 seconds</strong> — arriving before ground units to deliver live video, two-way communication, and real-time situational awareness. BRINC DFR integrates with CAD, RTCC, ALPR, gunshot detection, 911, and evidence management. Agencies resolve approximately <strong style="color:#00D2FF;font-weight:400;">25% of calls for service</strong> without dispatching officers.<br>
-            <span style="color:#44445a;font-size:9px;">brincdrones.com · Seattle, WA · NDAA & CJIS Compliant · Made in USA · Backed by Sam Altman & Motorola Solutions</span>
-        </div>
-        <div style="display:flex; flex-direction:column; gap:5px;">
-            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">LEMUR 2 · Indoor Tactical</div>
-            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">RESPONDER · DFR Platform</div>
-            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">BRINC BALL · Compact Response</div>
-            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">GUARDIAN · Perimeter ISR</div>
-            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">LIVEOPS · Fleet Operations</div>
-            <div style="font-family:monospace; font-size:9px; letter-spacing:1px; padding:3px 9px; border-radius:2px; text-transform:uppercase; white-space:nowrap; background:rgba(0,210,255,0.06); border:1px solid rgba(0,210,255,0.15); color:#00D2FF;">RESPONDER STATION · Auto Dock</div>
-        </div>
-    </div>
-    """
-
     controls_html = f"""
     <div style="display:flex; gap:20px; align-items:center; background:#0c0c12; border:1px solid #1a1a26; padding:12px 18px; border-radius:6px; margin-bottom:20px;">
         <div style="display:flex; align-items:center; gap:10px;">
@@ -246,7 +229,6 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False):
         <div style="color:#00D2FF; font-weight:900; letter-spacing:3px; font-size:14px; text-transform:uppercase; margin-bottom:20px; border-bottom:1px solid #1a1a26; padding-bottom:10px;">Data Ingestion Analytics</div>
         
         {controls_html}
-        {brinc_info}
         
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:20px;">
             <div style="background:#0c0c12; border-left:4px solid #00D2FF; padding:15px; border-radius:4px; border-top:1px solid #1a1a26; border-right:1px solid #1a1a26; border-bottom:1px solid #1a1a26;">
@@ -2396,7 +2378,23 @@ if st.session_state['csvs_ready']:
             st.plotly_chart(fig_curve, use_container_width=True, config={'displayModeBar':False})
 
         if show_cards:
-            st.markdown(f"<h4 style='margin-top:8px; border-bottom:1px solid {card_border}; padding-bottom:8px; color:{text_main};'>Unit Economics</h4>", unsafe_allow_html=True)
+            st.markdown(f"""
+            <h4 style='margin-top:8px; border-bottom:1px solid {card_border}; padding-bottom:8px; color:{text_main};'>Unit Economics</h4>
+            <style>
+            /* This CSS creates the smooth pop-out hover effect */
+            .unit-card {{
+                transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+                position: relative;
+                z-index: 1;
+            }}
+            .unit-card:hover {{
+                transform: scale(1.08);
+                box-shadow: 0 12px 24px rgba(0,210,255,0.15);
+                z-index: 10;
+            }}
+            </style>
+            """, unsafe_allow_html=True)
+            
             if not active_drones:
                 st.markdown(f"""
                 <div style="background:{card_bg}; border:1px dashed {card_border}; border-radius:6px;
@@ -2428,10 +2426,10 @@ if st.session_state['csvs_ready']:
                             d_cost      = d['cost']
                             d_be        = d['be_text']
                             cols[j].markdown(f"""
-<div style="background:{card_bg}; border-top:4px solid {d_color};
+<div class="unit-card" style="background:{card_bg}; border-top:4px solid {d_color};
      border-left:1px solid {card_border}; border-right:1px solid {card_border};
      border-bottom:1px solid {card_border};
-     border-radius:4px; padding:12px; margin-bottom:12px;">
+     border-radius:4px; padding:12px; margin-bottom:12px; cursor:default;">
     <div style="font-weight:700; font-size:0.73rem; color:{card_title}; margin-bottom:2px;">{short_name}</div>
     <div style="font-size:0.58rem; color:#888; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px;">{d_type} · Phase #{d_step}</div>
     <div style="background:rgba(0,210,255,0.07); border-radius:4px; padding:8px; text-align:center; margin-bottom:8px;">
