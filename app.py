@@ -135,81 +135,51 @@ def get_base64_of_bin_file(bin_file):
 # ============================================================
 # COMMAND CENTER ANALYTICS GENERATOR
 # ============================================================
-def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_hours=8):
-    """Generates the full Command Center visual suite with interactive Calendar tooltips."""
+# ============================================================
+# COMMAND CENTER ANALYTICS GENERATOR
+# ============================================================
+def generate_command_center_html(df, total_orig_calls, export_mode=False):
+    """Generates the full Command Center visual suite with interactive Javascript filtering."""
     if df is None or df.empty or 'date' not in df.columns:
         return "<div style='color:gray; padding:20px;'>Analytics unavailable. Missing date/time fields.</div>"
     
     import calendar as _cal
+    import json
     
     df_ana = df.copy()
     df_ana['dt_obj'] = pd.to_datetime(df_ana['date'] + ' ' + df_ana.get('time', '00:00:00'), errors='coerce')
     df_ana = df_ana.dropna(subset=['dt_obj'])
     if df_ana.empty: return "<div>No valid dates found in data.</div>"
     
-    df_ana['hour'] = df_ana['dt_obj'].dt.hour
-    df_ana['dow'] = df_ana['dt_obj'].dt.dayofweek # Mon=0, Sun=6
-    df_ana['date_key'] = df_ana['dt_obj'].dt.strftime('%Y-%m-%d')
-    df_ana['month_key'] = df_ana['dt_obj'].dt.strftime('%Y-%m')
-    
-    total_calls = len(df_ana)
-    orig_calls_display = f"{total_orig_calls:,}" if total_orig_calls > 0 else f"{total_calls:,}"
-    if total_orig_calls > total_calls:
-        orig_calls_display += f" <br><span style='font-size:12px;color:#888;'>(Sampled: {total_calls:,})</span>"
-    
-    date_counts = df_ana['date_key'].value_counts().to_dict()
-    date_hourly = {}
-    for d, grp in df_ana.groupby('date_key'):
-        date_hourly[d] = grp['hour'].value_counts().reindex(range(24), fill_value=0).tolist()
+    # 1. Parse dates and build a lightweight records array for JavaScript
+    records = []
+    for _, r in df_ana.iterrows():
+        dt = r['dt_obj']
+        p_val = str(r['priority']).upper().strip() if 'priority' in r else 'UNKNOWN'
+        if p_val == 'NAN' or not p_val: p_val = 'UNKNOWN'
+        records.append({
+            'd': dt.strftime('%Y-%m-%d'),
+            'h': dt.hour,
+            'dow': dt.dayofweek, # Mon=0, Sun=6
+            'p': p_val
+        })
         
-    hourly_counts = df_ana['hour'].value_counts().reindex(range(24), fill_value=0).tolist()
-    shift_html = ""
-    for win in [8, 10, 12]:
-        best_v, best_s = 0, 0
-        for s in range(24):
-            v = sum(hourly_counts[(s + h) % 24] for h in range(win))
-            if v > best_v: best_v, best_s = v, s
-        pct = (best_v / max(total_calls, 1)) * 100
-        
-        is_active = (win == shift_hours)
-        bg_color = "rgba(0,210,255,0.08)" if is_active else "#0c0c12"
-        br_color = "#00D2FF" if is_active else "#252535"
-        badge_html = "<div style='font-size:8px; color:#00D2FF; margin-left:10px; border:1px solid #00D2FF; padding:1px 4px; border-radius:2px;'>SELECTED</div>" if is_active else ""
-        
-        shift_html += f"""
-        <div style="display:flex; align-items:center; background:{bg_color}; border:1px solid {br_color}; padding:8px; margin-bottom:5px; border-radius:4px; transition:all 0.2s;">
-            <div style="width:50px; font-weight:800; color:#fff; font-size:13px;">{win}hr</div>
-            <div style="width:110px; font-family:monospace; color:#00D2FF; font-size:12px;">{best_s:02d}:00 - {(best_s+win)%24:02d}:00</div>
-            <div style="flex-grow:1; background:#1a1a26; height:8px; border-radius:4px; margin:0 15px; position:relative;">
-                <div style="position:absolute; left:{(best_s/24)*100}%; width:{(win/24)*100}%; background:#00D2FF; height:100%; border-radius:4px; opacity:0.6;"></div>
-            </div>
-            <div style="width:50px; text-align:right; font-family:monospace; color:#00D2FF; font-size:13px;">{pct:.1f}%</div>
-            {badge_html}
-        </div>"""
+    # 2. Dynamically identify all priority types
+    unique_pris = sorted(list(set(r['p'] for r in records)))
+    options_html = '<option value="ALL">ALL PRIORITIES</option>'
+    for p in unique_pris:
+        # Clean up the display name slightly
+        display_p = f"PRIORITY {p}" if len(p) <= 2 else p
+        options_html += f'<option value="{p}">{display_p}</option>'
 
-    dow_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-    dow_colors = ['#4ECDC4', '#45B7D1', '#F0B429', '#96CEB4', '#DDA0DD', '#FF9A8B', '#FF6B6B']
-    dow_counts_list = df_ana['dow'].value_counts().reindex(range(7), fill_value=0).tolist()
-    max_dow = max(dow_counts_list) if dow_counts_list else 1
-    
-    dow_html = "".join([f"""
-        <div style="flex:1; display:flex; flex-direction:column; align-items:center;">
-            <div style="background:#1a1a26; width:22px; height:80px; position:relative; border-radius:2px;">
-                <div style="position:absolute; bottom:0; width:100%; height:{(v/max_dow)*100}%; background:{dow_colors[i]}; border-radius:2px;"></div>
-            </div>
-            <span style="font-size:10px; color:#7777a0; margin-top:6px; font-family:monospace;">{dow_names[i]}</span>
-        </div>""" for i, v in enumerate(dow_counts_list)])
-
-    month_keys = sorted(df_ana['month_key'].dropna().unique())
+    # 3. Build the initial HTML shell (JS will populate the numbers)
+    month_keys = sorted(list(set(r['d'][:7] for r in records)))
     cal_html = "<div style='display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:15px; margin-top:20px;'>"
     
     for mk in month_keys[:12]:
         yr, mo = int(mk.split('-')[0]), int(mk.split('-')[1])
-        m_data = df_ana[df_ana['month_key'] == mk]
-        m_max = max([date_counts.get(k, 0) for k in m_data['date_key'].unique()] + [1])
-        
         cal_html += f"<div style='background:#0c0c12; border:1px solid #1a1a26; border-radius:6px; padding:12px;'>"
-        cal_html += f"<div style='display:flex; justify-content:space-between; align-items:baseline; border-bottom:1px solid #252535; padding-bottom:6px; margin-bottom:8px;'><span style='color:#00D2FF; font-weight:800; font-size:12px; text-transform:uppercase; letter-spacing:1px;'>{_cal.month_name[mo]} {yr}</span><span style='color:#7777a0; font-size:10px; font-family:monospace;'>{len(m_data):,} calls</span></div>"
+        cal_html += f"<div style='display:flex; justify-content:space-between; align-items:baseline; border-bottom:1px solid #252535; padding-bottom:6px; margin-bottom:8px;'><span style='color:#00D2FF; font-weight:800; font-size:12px; text-transform:uppercase; letter-spacing:1px;'>{_cal.month_name[mo]} {yr}</span><span id='month-total-{mk}' style='color:#7777a0; font-size:10px; font-family:monospace;'>0 calls</span></div>"
         
         cal_html += "<div style='display:grid; grid-template-columns:repeat(7, 1fr); gap:2px; margin-bottom:4px;'>"
         for i, dname in enumerate(['Su','Mo','Tu','We','Th','Fr','Sa']):
@@ -218,30 +188,15 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
         cal_html += "</div>"
         
         cal_html += "<div style='display:grid; grid-template-columns:repeat(7, 1fr); gap:2px;'>"
-        first_dow = _cal.weekday(yr, mo, 1) # Mon=0, Sun=6
-        first_dow_sun = (first_dow + 1) % 7
+        first_dow_sun = (_cal.weekday(yr, mo, 1) + 1) % 7
         last_day = _cal.monthrange(yr, mo)[1]
         
         for _ in range(first_dow_sun): cal_html += "<div></div>"
             
         for d in range(1, last_day + 1):
             dk = f"{yr}-{mo:02d}-{d:02d}"
-            cnt = date_counts.get(dk, 0)
-            ratio = cnt / m_max if m_max > 0 else 0
-            
-            if cnt == 0: bg, fc, cls = '#08080f', '#333', 'day-zero'
-            elif ratio >= 0.85: bg, fc, cls = '#3d0a0a', '#ff4444', 'day-peak'
-            elif ratio >= 0.55: bg, fc, cls = '#3d1a00', '#ff8c00', 'day-high'
-            elif ratio >= 0.25: bg, fc, cls = '#2d2d00', '#d4c000', 'day-med'
-            else: bg, fc, cls = '#0d3320', '#2ecc71', 'day-low'
-            
             dow_idx = (_cal.weekday(yr, mo, d) + 1) % 7 
-            stripe_color = ['#FF6B6B','#4ECDC4','#45B7D1','#F0B429','#96CEB4','#DDA0DD','#FF9A8B'][dow_idx]
-            
-            stripe_html = f"<div style='position:absolute; bottom:0; left:0; right:0; height:2px; background:{stripe_color}; opacity:0.7; border-radius:0 0 2px 2px;'></div>" if cnt > 0 else ""
-            cnt_html = f"<span style='font-size:8px; opacity:0.7; margin-top:1px;'>{cnt}</span>" if cnt > 0 else ""
-            
-            cal_html += f"<div class='day-cell {cls}' data-date='{dk}' data-count='{cnt}' data-ratio='{ratio}' data-month='{_cal.month_name[mo]}' data-d='{d}' data-y='{yr}' data-dow='{dow_idx}' style='aspect-ratio:1; background:{bg}; border-radius:2px; display:flex; flex-direction:column; align-items:center; justify-content:center; color:{fc}; position:relative; font-family:monospace; cursor:default; border:1px solid transparent; transition:transform 0.1s;' onmouseover='showTooltip(this, event)' onmouseout='hideTooltip()'><span style='font-size:11px; z-index:1; font-weight:bold;'>{d}</span>{cnt_html}{stripe_html}</div>"
+            cal_html += f"<div class='day-cell' data-date='{dk}' data-mkey='{mk}' data-month='{_cal.month_name[mo]}' data-d='{d}' data-y='{yr}' data-dow='{dow_idx}' style='aspect-ratio:1; border-radius:2px; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative; font-family:monospace; cursor:default; border:1px solid transparent; transition:transform 0.1s;' onmouseover='showTooltip(this, event)' onmouseout='hideTooltip()'></div>"
             
         cal_html += "</div></div>"
     cal_html += "</div>"
@@ -263,6 +218,25 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
     </div>
     """
 
+    controls_html = f"""
+    <div style="display:flex; gap:20px; align-items:center; background:#0c0c12; border:1px solid #1a1a26; padding:12px 18px; border-radius:6px; margin-bottom:20px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span style="font-size:10px; color:#7777a0; font-weight:bold; letter-spacing:1px; text-transform:uppercase;">Priority Filter:</span>
+            <select id="pri-select" onchange="currentPri=this.value; updateDashboard();" style="background:#1a1a26; color:#00D2FF; border:1px solid #252535; padding:6px 12px; border-radius:4px; font-weight:bold; cursor:pointer;">
+                {options_html}
+            </select>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px;">
+            <span style="font-size:10px; color:#7777a0; font-weight:bold; letter-spacing:1px; text-transform:uppercase;">Shift Length:</span>
+            <select id="shift-select" onchange="currentShift=parseInt(this.value); updateDashboard();" style="background:#1a1a26; color:#00D2FF; border:1px solid #252535; padding:6px 12px; border-radius:4px; font-weight:bold; cursor:pointer;">
+                <option value="8" selected>8 HOURS</option>
+                <option value="10">10 HOURS</option>
+                <option value="12">12 HOURS</option>
+            </select>
+        </div>
+    </div>
+    """
+
     full_html = f"""
     <div style="background:#000; color:#e8e8f2; font-family: 'Barlow', sans-serif; padding:15px; border-radius:8px;">
         <style>
@@ -272,16 +246,18 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
         </style>
         
         <div id="dfr-tooltip"></div>
-        
         <div style="color:#00D2FF; font-weight:900; letter-spacing:3px; font-size:14px; text-transform:uppercase; margin-bottom:20px; border-bottom:1px solid #1a1a26; padding-bottom:10px;">Data Ingestion Analytics</div>
+        
+        {controls_html}
         {brinc_info}
+        
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:20px;">
             <div style="background:#0c0c12; border-left:4px solid #00D2FF; padding:15px; border-radius:4px; border-top:1px solid #1a1a26; border-right:1px solid #1a1a26; border-bottom:1px solid #1a1a26;">
-                <div style="color:#00D2FF; font-size:26px; font-weight:900; font-family:monospace;">{orig_calls_display}</div>
-                <div style="color:#7777a0; font-size:10px; text-transform:uppercase; letter-spacing:1px; margin-top:4px;">Total Ingested Incidents</div>
+                <div style="color:#00D2FF; font-size:26px; font-weight:900; font-family:monospace;" id="kpi-total-val">0</div>
+                <div style="color:#7777a0; font-size:10px; text-transform:uppercase; letter-spacing:1px; margin-top:4px;">Displayed Incidents</div>
             </div>
             <div style="background:#0c0c12; border-left:4px solid #F0B429; padding:15px; border-radius:4px; border-top:1px solid #1a1a26; border-right:1px solid #1a1a26; border-bottom:1px solid #1a1a26;">
-                <div style="color:#F0B429; font-size:26px; font-weight:900; font-family:monospace;">{int(df_ana['hour'].mode()[0]) if not df_ana['hour'].mode().empty else 0}:00</div>
+                <div style="color:#F0B429; font-size:26px; font-weight:900; font-family:monospace;" id="kpi-peak-val">0:00</div>
                 <div style="color:#7777a0; font-size:10px; text-transform:uppercase; letter-spacing:1px; margin-top:4px;">Peak Activity Hour</div>
             </div>
         </div>
@@ -289,13 +265,11 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
         <div style="display:grid; grid-template-columns: 3fr 2fr; gap:15px; margin-bottom:25px;">
             <div style="background:#06060a; border:1px solid #1a1a26; border-radius:6px; padding:15px;">
                 <div style="margin-bottom:12px; font-size:10px; color:#7777a0; text-transform:uppercase; letter-spacing:1px; font-weight:bold;">Optimized DFR Shift Windows</div>
-                {shift_html}
+                <div id="shift-container"></div>
             </div>
             <div style="background:#06060a; border:1px solid #1a1a26; border-radius:6px; padding:15px; display:flex; flex-direction:column;">
                 <div style="margin-bottom:12px; font-size:10px; color:#7777a0; text-transform:uppercase; letter-spacing:1px; font-weight:bold;">Call Volume by Day of Week</div>
-                <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-grow:1; padding:10px 5px 0;">
-                    {dow_html}
-                </div>
+                <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-grow:1; padding:10px 5px 0;" id="dow-container"></div>
             </div>
         </div>
         
@@ -312,10 +286,132 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
         {cal_html}
         
         <script>
-            const dateHourly = {json.dumps(date_hourly)};
-            const shiftHours = {shift_hours};
-            const dowNames = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-            
+            const rawData = {json.dumps(records)};
+            let currentShift = 8;
+            let currentPri = 'ALL';
+            window.dateHourly = {{}};
+            const dowNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+            const dowColors = ['#4ECDC4','#45B7D1','#F0B429','#96CEB4','#DDA0DD','#FF9A8B','#FF6B6B'];
+            const stripeColors = ['#FF6B6B','#4ECDC4','#45B7D1','#F0B429','#96CEB4','#DDA0DD','#FF9A8B'];
+
+            function updateDashboard() {{
+                let filtered = rawData;
+                if(currentPri !== 'ALL') {{
+                    filtered = rawData.filter(d => String(d.p) === currentPri);
+                }}
+
+                let total = filtered.length;
+                document.getElementById('kpi-total-val').innerHTML = total.toLocaleString();
+
+                let hourly = new Array(24).fill(0);
+                let daily = {{}};
+                let dowCounts = new Array(7).fill(0);
+                window.dateHourly = {{}};
+                let mTotal = {{}};
+                let mMax = {{}};
+
+                filtered.forEach(r => {{
+                    hourly[r.h]++;
+                    daily[r.d] = (daily[r.d] || 0) + 1;
+                    dowCounts[r.dow]++;
+                    
+                    if(!window.dateHourly[r.d]) window.dateHourly[r.d] = new Array(24).fill(0);
+                    window.dateHourly[r.d][r.h]++;
+                    
+                    let m = r.d.substring(0,7);
+                    mTotal[m] = (mTotal[m] || 0) + 1;
+                    if(!mMax[m] || daily[r.d] > mMax[m]) mMax[m] = daily[r.d];
+                }});
+
+                // Peak Hour
+                let peakHr = hourly.indexOf(Math.max(...hourly));
+                if(total === 0) peakHr = 0;
+                document.getElementById('kpi-peak-val').innerText = peakHr + ':00';
+
+                // Shifts
+                let shiftHtml = "";
+                [8, 10, 12].forEach(win => {{
+                    let bestV = 0, bestS = 0;
+                    for(let s=0; s<24; s++) {{
+                        let v = 0;
+                        for(let h=0; h<win; h++) v += hourly[(s+h)%24];
+                        if(v > bestV) {{ bestV = v; bestS = s; }}
+                    }}
+                    let pct = total > 0 ? (bestV/total)*100 : 0;
+                    let isActive = (win === currentShift);
+                    let bgColor = isActive ? "rgba(0,210,255,0.08)" : "#0c0c12";
+                    let brColor = isActive ? "#00D2FF" : "#252535";
+                    let badge = isActive ? "<div style='font-size:8px; color:#00D2FF; margin-left:10px; border:1px solid #00D2FF; padding:1px 4px; border-radius:2px;'>SELECTED</div>" : "";
+                    let eHr = (bestS + win) % 24;
+                    let pS = String(bestS).padStart(2,'0');
+                    let pE = String(eHr).padStart(2,'0');
+                    
+                    shiftHtml += `<div style="display:flex; align-items:center; background:${{bgColor}}; border:1px solid ${{brColor}}; padding:8px; margin-bottom:5px; border-radius:4px; transition:all 0.2s;">
+                        <div style="width:50px; font-weight:800; color:#fff; font-size:13px;">${{win}}hr</div>
+                        <div style="width:110px; font-family:monospace; color:#00D2FF; font-size:12px;">${{pS}}:00 - ${{pE}}:00</div>
+                        <div style="flex-grow:1; background:#1a1a26; height:8px; border-radius:4px; margin:0 15px; position:relative;">
+                            <div style="position:absolute; left:${{(bestS/24)*100}}%; width:${{(win/24)*100}}%; background:#00D2FF; height:100%; border-radius:4px; opacity:0.6;"></div>
+                        </div>
+                        <div style="width:50px; text-align:right; font-family:monospace; color:#00D2FF; font-size:13px;">${{pct.toFixed(1)}}%</div>
+                        ${{badge}}
+                    </div>`;
+                }});
+                document.getElementById('shift-container').innerHTML = shiftHtml;
+
+                // DOW
+                let maxDow = Math.max(...dowCounts, 1);
+                let dowHtml = "";
+                for(let i=0; i<7; i++) {{
+                    let hPct = (dowCounts[i]/maxDow)*100;
+                    dowHtml += `<div style="flex:1; display:flex; flex-direction:column; align-items:center;">
+                        <div style="background:#1a1a26; width:22px; height:80px; position:relative; border-radius:2px;">
+                            <div style="position:absolute; bottom:0; width:100%; height:${{hPct}}%; background:${{dowColors[i]}}; border-radius:2px; transition:height 0.3s;"></div>
+                        </div>
+                        <span style="font-size:10px; color:#7777a0; margin-top:6px; font-family:monospace;">${{dowNames[i]}}</span>
+                    </div>`;
+                }}
+                document.getElementById('dow-container').innerHTML = dowHtml;
+
+                // Month Headers
+                document.querySelectorAll('[id^="month-total-"]').forEach(el => {{
+                    let m = el.id.replace('month-total-','');
+                    let cnt = mTotal[m] || 0;
+                    el.innerText = cnt.toLocaleString() + ' calls';
+                }});
+
+                // Calendar Cells
+                document.querySelectorAll('.day-cell').forEach(cell => {{
+                    if(!cell.hasAttribute('data-date')) return;
+                    let d = cell.getAttribute('data-date');
+                    let mkey = cell.getAttribute('data-mkey');
+                    let cnt = daily[d] || 0;
+                    let max = mMax[mkey] || 1;
+                    let ratio = max > 0 ? cnt / max : 0;
+                    
+                    let bg, fc, cls;
+                    if (cnt === 0) {{ bg='#08080f'; fc='#333'; cls='day-zero'; }}
+                    else if (ratio >= 0.85) {{ bg='#3d0a0a'; fc='#ff4444'; cls='day-peak'; }}
+                    else if (ratio >= 0.55) {{ bg='#3d1a00'; fc='#ff8c00'; cls='day-high'; }}
+                    else if (ratio >= 0.25) {{ bg='#2d2d00'; fc='#d4c000'; cls='day-med'; }}
+                    else {{ bg='#0d3320'; fc='#2ecc71'; cls='day-low'; }}
+
+                    cell.className = 'day-cell ' + cls;
+                    cell.style.background = bg;
+                    cell.style.color = fc;
+                    cell.setAttribute('data-count', cnt);
+                    cell.setAttribute('data-ratio', ratio);
+                    
+                    let domD = cell.getAttribute('data-d');
+                    let html = `<span style='font-size:11px; z-index:1; font-weight:bold;'>${{domD}}</span>`;
+                    if(cnt > 0) {{
+                        html += `<span style='font-size:8px; opacity:0.7; margin-top:1px;'>${{cnt}}</span>`;
+                        let dowIdx = parseInt(cell.getAttribute('data-dow'));
+                        html += `<div style='position:absolute; bottom:0; left:0; right:0; height:2px; background:${{stripeColors[dowIdx]}}; opacity:0.7; border-radius:0 0 2px 2px;'></div>`;
+                    }}
+                    cell.innerHTML = html;
+                }});
+            }}
+
             function showTooltip(el, ev) {{
                 const cnt = parseInt(el.getAttribute('data-count'));
                 if (cnt === 0) return;
@@ -333,23 +429,23 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
                 else if (ratio >= 0.25) loadText = '<span style="color:#d4c000">■ MEDIUM</span> — Standard ops';
                 else loadText = '<span style="color:#2ecc71">■ LOW</span> — Light staffing';
                 
-                const hrArr = dateHourly[dk] || Array(24).fill(0);
+                const hrArr = window.dateHourly[dk] || Array(24).fill(0);
                 let bestV = 0, bestS = 0;
                 for (let s=0; s<24; s++) {{
                     let v = 0;
-                    for (let h=0; h<shiftHours; h++) v += hrArr[(s+h)%24];
+                    for (let h=0; h<currentShift; h++) v += hrArr[(s+h)%24];
                     if (v > bestV) {{ bestV = v; bestS = s; }}
                 }}
-                const dayPct = Math.round((bestV / cnt) * 100);
-                const eHr = (bestS + shiftHours) % 24;
+                const dayPct = cnt > 0 ? Math.round((bestV / cnt) * 100) : 0;
+                const eHr = (bestS + currentShift) % 24;
                 const fmt = (h) => (h%12 || 12) + (h<12 ? 'AM' : 'PM');
                 
                 const tt = document.getElementById('dfr-tooltip');
                 tt.innerHTML = `
                     <div style="color:#00D2FF; margin-bottom:6px; font-size:12px; font-weight:bold; border-bottom:1px solid #252535; padding-bottom:4px;">${{mName}} ${{d}}, ${{y}} · ${{dowNames[dow]}}</div>
-                    <div style="margin-bottom:8px; font-size:13px;">Calls: <span style="color:#fff; font-weight:bold;">${{cnt}}</span>  ·  ${{loadText}}</div>
+                    <div style="margin-bottom:8px; font-size:13px;">Calls: <span style="color:#fff; font-weight:bold;">${{cnt}}</span> &nbsp;·&nbsp; ${{loadText}}</div>
                     <div style="background:#1a1a26; padding:8px; border-radius:4px;">
-                        <div style="color:#7777a0; font-size:9px; letter-spacing:1px; text-transform:uppercase; margin-bottom:4px;">Best ${{shiftHours}}hr Shift</div>
+                        <div style="color:#7777a0; font-size:9px; letter-spacing:1px; text-transform:uppercase; margin-bottom:4px;">Best ${{currentShift}}hr Shift</div>
                         <div style="color:#00D2FF; font-size:14px; font-weight:bold; margin-bottom:2px;">${{fmt(bestS)}} – ${{fmt(eHr)}}</div>
                         <div style="color:#aaa; font-size:10px;">Covers <span style="color:#fff;">${{dayPct}}%</span> of daily volume</div>
                     </div>
@@ -369,6 +465,9 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False, shift_
             function hideTooltip() {{
                 document.getElementById('dfr-tooltip').style.display = 'none';
             }}
+
+            // Run once to populate the dashboard on load
+            updateDashboard();
         </script>
     </div>
     """
@@ -1710,19 +1809,24 @@ if st.session_state['csvs_ready']:
 
     st.sidebar.markdown('<div class="sidebar-section-header">③ Budget & Export</div>', unsafe_allow_html=True)
 
-    inferred_daily = st.session_state.get('inferred_daily_calls_override', max(1, int(total_calls/365)))
-    calls_per_day = st.sidebar.slider("Total Daily Calls (citywide)", 1, max(100, inferred_daily*3), inferred_daily)
+    # We use the strat_expander we defined earlier in the sidebar to inject the sliders
+    with strat_expander:
+        st.markdown("---")
+        inferred_daily = st.session_state.get('inferred_daily_calls_override', max(1, int(total_calls/365)))
+        calls_per_day = st.slider("Total Daily Calls (citywide)", 1, max(100, inferred_daily*3), inferred_daily)
 
-    st.sidebar.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>DFR Dispatch Rate (%)</div>", unsafe_allow_html=True)
-    st.sidebar.markdown(f"<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>What % of in-range calls will the drone be sent to?</div>", unsafe_allow_html=True)
-    dfr_dispatch_rate = st.sidebar.slider("DFR Dispatch Rate", 1, 100, st.session_state.get('dfr_rate',25), label_visibility="collapsed") / 100.0
+        st.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>DFR Dispatch Rate (%)</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>What % of in-range calls will the drone be sent to?</div>", unsafe_allow_html=True)
+        dfr_dispatch_rate = st.slider("DFR Dispatch Rate", 1, 100, st.session_state.get('dfr_rate',25), label_visibility="collapsed") / 100.0
 
-    st.sidebar.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>Calls Resolved Without Officer Dispatch (%)</div>", unsafe_allow_html=True)
-    st.sidebar.markdown(f"<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>Of drone-attended calls, what % close without a patrol car?</div>", unsafe_allow_html=True)
-    deflection_rate = st.sidebar.slider("Resolution Rate", 0, 100, st.session_state.get('deflect_rate',30), label_visibility="collapsed") / 100.0
+        st.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>Calls Resolved Without Officer Dispatch (%)</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>Of drone-attended calls, what % close without a patrol car?</div>", unsafe_allow_html=True)
+        deflection_rate = st.slider("Resolution Rate", 0, 100, st.session_state.get('deflect_rate',30), label_visibility="collapsed") / 100.0
 
-    st.session_state['dfr_rate']    = int(dfr_dispatch_rate * 100)
-    st.session_state['deflect_rate'] = int(deflection_rate * 100)
+        st.session_state['dfr_rate']    = int(dfr_dispatch_rate * 100)
+        st.session_state['deflect_rate'] = int(deflection_rate * 100)
+
+    # ... (Optimization algorithm logic continues smoothly below here as normal)
 
     # ── OPTIMIZATION ──────────────────────────────────────────────────
     active_resp_names, active_guard_names = [], []
@@ -2436,27 +2540,12 @@ if st.session_state['csvs_ready']:
     st.markdown(f"<h3 style='color:{text_main};'>📊 CAD Ingestion Analytics</h3>", unsafe_allow_html=True)
     st.markdown(f"<div style='font-size:0.82rem; color:{text_muted}; margin-bottom:10px;'>Temporal patterns derived from your uploaded CAD data — hourly volumes, day-of-week distribution, optimal DFR shift windows, and an interactive call-volume calendar.</div>", unsafe_allow_html=True)
 
-    ctrl_col1, ctrl_col2, _ = st.columns([1.5, 1.5, 2])
-    with ctrl_col1:
-        ana_shift = st.radio("Shift Length", [8, 10, 12], index=0, horizontal=True, format_func=lambda x: f"{x} HR")
-    with ctrl_col2:
-        ana_pri = st.radio("Priority Filter", ["ALL", "P1-3", "P1-2", "P1 ONLY"], index=0, horizontal=True)
-
-    df_ana_display = df_calls.copy()
-    if 'priority' in df_ana_display.columns:
-        if ana_pri == "P1-3":
-            df_ana_display = df_ana_display[df_ana_display['priority'] <= 3]
-        elif ana_pri == "P1-2":
-            df_ana_display = df_ana_display[df_ana_display['priority'] <= 2]
-        elif ana_pri == "P1 ONLY":
-            df_ana_display = df_ana_display[df_ana_display['priority'] == 1]
-
     show_cad_analytics = st.toggle("📈 Show Data Analytics Heatmaps", value=False)
     
-    analytics_html_block = generate_command_center_html(df_ana_display, total_orig_calls=st.session_state.get('total_original_calls', total_calls), shift_hours=ana_shift)
-    
     if show_cad_analytics:
-        components.html(analytics_html_block, height=850, scrolling=True)
+        analytics_html_block = generate_command_center_html(df_calls, total_orig_calls=st.session_state.get('total_original_calls', total_calls))
+        # Removed scrolling=True, set a large height to allow the component to natively expand
+        components.html(analytics_html_block, height=1600, scrolling=False)
 
     # ── EXPORT BUTTONS ──
     if fleet_capex > 0:
