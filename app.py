@@ -2621,8 +2621,8 @@ if st.session_state['csvs_ready']:
         total_fleet = actual_k_responder + actual_k_guardian
         area_sq_mi_est = int((maxx - minx) * (maxy - miny) * 3280)
 
-        # Build Analytics Block for Export (Ensure same filters are passed)
-        analytics_html_export = generate_command_center_html(df_ana_display, total_orig_calls=st.session_state.get('total_original_calls', total_calls), export_mode=True, shift_hours=ana_shift)
+        # Build Analytics Block for Export
+        analytics_html_export = generate_command_center_html(df_calls, total_orig_calls=st.session_state.get('total_original_calls', total_calls), export_mode=True)
 
         export_html = f"""<html><head><title>BRINC DFR Proposal — {prop_city}</title>
         <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&display=swap" rel="stylesheet">
