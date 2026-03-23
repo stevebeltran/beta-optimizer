@@ -2288,27 +2288,37 @@ if st.session_state['csvs_ready']:
         if show_faa and faa_geojson:
             add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=not show_satellite)
 
-        for d in active_drones:
+        ffor d in active_drones:
             clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
             lbl = f"{d['name'].split(',')[0]} ({'Resp' if d['type']=='RESPONDER' else 'Guard'})"
+            
+            # Determine if this is an extended Guardian (so we can relax the outer ring)
+            is_extended_guardian = (d['type'] == 'GUARDIAN' and d['radius_m']/1609.34 > 5.0)
+            
+            # The outer ring becomes relaxed (dotted, thinner) if > 5 miles
+            outer_width = 2 if is_extended_guardian else 4.5
+            outer_dash = 'dot' if is_extended_guardian else 'solid'
+            outer_opac = 0.6 if is_extended_guardian else 1.0
+            
             fig.add_trace(go.Scattermapbox(
                 lat=list(clats)+[None,d['lat']], lon=list(clons)+[None,d['lon']],
                 mode='lines+markers',
+                opacity=outer_opac,
                 marker=dict(size=[0]*len(clats)+[0,20], color=d['color']),
-                line=dict(color=d['color'], width=4.5),
+                line=dict(color=d['color'], width=outer_width, dash=outer_dash),
                 fill='toself', fillcolor='rgba(0,0,0,0)', name=lbl, hoverinfo='name'))
 
-            # Guardian 5-mile rapid response focus ring
-            if d['type'] == 'GUARDIAN' and d['radius_m']/1609.34 > 5.0:
+            # The 5-mile Rapid Response ring gets the "Important" styling (thick, solid, heavier fill)
+            if is_extended_guardian:
                 f_lats, f_lons = get_circle_coords(d['lat'], d['lon'], r_mi=5.0)
                 fig.add_trace(go.Scattermapbox(
                     lat=list(f_lats), lon=list(f_lons),
                     mode='lines',
-                    line=dict(color=d['color'], width=1.5),
-                    opacity=0.5,
+                    line=dict(color=d['color'], width=4.5, dash='solid'),
+                    opacity=1.0,
                     fill='toself',
-                    fillcolor=f"rgba({int(d['color'][1:3],16)},{int(d['color'][3:5],16)},{int(d['color'][5:7],16)},0.06)",
-                    name=f"Focus Zone 5mi · {d['name'].split(',')[0]}",
+                    fillcolor=f"rgba({int(d['color'][1:3],16)},{int(d['color'][3:5],16)},{int(d['color'][5:7],16)},0.12)",
+                    name=f"Rapid Response 5mi · {d['name'].split(',')[0]}",
                     hoverinfo='text',
                     text=f"⚡ Rapid Response Focus Zone — 5mi<br>{d['name'].split(',')[0]}",
                     showlegend=False
