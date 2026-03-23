@@ -1734,18 +1734,16 @@ if st.session_state['csvs_ready']:
     logo_b64 = get_base64_of_bin_file("logo.png")
     if logo_b64:
         st.sidebar.markdown(f"""
-        <div style="background-color: transparent; padding: 40px 20px 10px 20px; margin: -60px -20px 20px -20px; text-align: center;">
+        <div style="background-color: transparent; padding: 40px 20px 10px 20px; margin: -60px -20px 20px -20px; text-align: center; pointer-events: none;">
             <img src="data:image/png;base64,{logo_b64}" style="height: 36px; filter: brightness(0) invert(1);">
         </div>
         """, unsafe_allow_html=True)
     else:
         st.sidebar.markdown(f"""
-        <div style="background-color: transparent; padding: 40px 20px 10px 20px; margin: -60px -20px 20px -20px; text-align: center;">
+        <div style="background-color: transparent; padding: 40px 20px 10px 20px; margin: -60px -20px 20px -20px; text-align: center; pointer-events: none;">
             <div style="font-size:26px; font-weight:900; letter-spacing:3px; color:#ffffff;">BRINC</div>
         </div>
         """, unsafe_allow_html=True)
-
-    st.sidebar.markdown('<div class="sidebar-section-header">① Configure</div>', unsafe_allow_html=True)
 
     total_pts = master_gdf['data_count'].sum()
     master_gdf['LABEL'] = master_gdf['DISPLAY_NAME'] + " (" + (master_gdf['data_count']/total_pts*100).round(1).astype(str) + "%)"
