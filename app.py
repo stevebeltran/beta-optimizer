@@ -135,9 +135,6 @@ def get_base64_of_bin_file(bin_file):
 # ============================================================
 # COMMAND CENTER ANALYTICS GENERATOR
 # ============================================================
-# ============================================================
-# COMMAND CENTER ANALYTICS GENERATOR
-# ============================================================
 def generate_command_center_html(df, total_orig_calls, export_mode=False):
     """Generates the full Command Center visual suite with interactive Javascript filtering."""
     if df is None or df.empty or 'date' not in df.columns:
@@ -609,6 +606,19 @@ def generate_stations_from_calls(df_calls, max_stations=100):
 # CACHED DATA FUNCTIONS
 # ============================================================
 @st.cache_data
+def forward_geocode(address_str):
+    import urllib.parse
+    url = f"https://nominatim.openstreetmap.org/search?format=json&q={urllib.parse.quote(address_str)}&limit=1"
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            if data:
+                return float(data[0]['lat']), float(data[0]['lon'])
+    except Exception: pass
+    return None, None
+
+@st.cache_data
 def reverse_geocode_state(lat, lon):
     url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=10&addressdetails=1"
     try:
@@ -1010,9 +1020,10 @@ def solve_mclp(resp_matrix, guard_matrix, dist_r, dist_g, num_resp, num_guard, a
     return curr_r, curr_g, chrono_r, chrono_g
 
 @st.cache_resource
-def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash, max_stations=30):
+def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geos_g, total_area, _bounds_hash, max_stations=100):
     n_st_calls = min(_resp_matrix.shape[0], max_stations)
-    n_st_area  = min(_resp_matrix.shape[0], max_stations * 2)
+    n_st_area_r = min(len(_geos_r), 25)
+    n_st_area_g = min(len(_geos_g), 25)
 
     def greedy_calls(matrix):
         uncovered = np.ones(n_calls, dtype=bool)
@@ -1041,12 +1052,12 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
                 break
         return curve
 
-    def greedy_area(geos):
-        if total_area <= 0: return [0.0]
+    def greedy_area(geos, limit):
+        if total_area <= 0 or limit <= 0: return [0.0]
         current_union = Polygon()
         curve = [0.0]
         import heapq as hq
-        geos_sub = geos[:n_st_area]
+        geos_sub = geos[:limit]
         
         pq = [(-geos_sub[i].area, i) for i in range(len(geos_sub))]
         hq.heapify(pq)
@@ -1081,8 +1092,8 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
     with ThreadPoolExecutor() as executor:
         f_cr = executor.submit(greedy_calls, _resp_matrix[:n_st_calls])
         f_cg = executor.submit(greedy_calls, _guard_matrix[:n_st_calls])
-        f_ar = executor.submit(greedy_area, _geos_r)
-        f_ag = executor.submit(greedy_area, _geos_g)
+        f_ar = executor.submit(greedy_area, _geos_r, n_st_area_r)
+        f_ag = executor.submit(greedy_area, _geos_g, n_st_area_g)
         c_r, c_g, a_r, a_g = f_cr.result(), f_cg.result(), f_ar.result(), f_ag.result()
 
     max_len = max(len(c_r), len(c_g), len(a_r), len(a_g))
@@ -1098,8 +1109,9 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         'Guardian (Area)':   pad(a_g)
     })
 
-# --- PAGE CONFIG ---
-# (Already defined at top)
+# ============================================================
+# APP FLOW 
+# ============================================================
 
 if not st.session_state['csvs_ready']:
 
@@ -1296,6 +1308,14 @@ if not st.session_state['csvs_ready']:
             else:
                 st.session_state['target_cities'].append({"city": c_name, "state": s_name})
 
+        st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+        st.file_uploader(
+            "Optional: Custom stations (CSV)",
+            type=['csv'],
+            key="sim_station_uploader",
+            help="Include 'lat'/'lon' OR 'address' columns. Max ~20 locations for auto-geocoding."
+        )
+
         col_add, col_run = st.columns([1, 1])
         if st.session_state.city_count < 10:
             if col_add.button("＋ City", use_container_width=True, key="add_city_btn"):
@@ -1322,6 +1342,7 @@ if not st.session_state['csvs_ready']:
         uploaded_files = st.file_uploader(
             "Drop your CAD export (+ optional stations CSV)",
             accept_multiple_files=True,
+            type=['csv', 'brinc', 'json', 'txt'],
             label_visibility="collapsed",
             help="One file = raw CAD export. Two files = calls + stations. OR drop a .brinc file to restore a previous session."
         )
@@ -1341,12 +1362,27 @@ if not st.session_state['csvs_ready']:
 
         if uploaded_files and len(uploaded_files) >= 1:
             
-            # --- 1. CHECK FOR .BRINC FILE FIRST ---
-            brinc_files = [f for f in uploaded_files if f.name.lower().endswith('.brinc')]
-            if brinc_files:
+            # --- 1. INTELLIGENTLY CHECK FOR .BRINC FILE ---
+            # Browsers sometimes append .json to .brinc files on download
+            brinc_file = None
+            for f in uploaded_files:
+                fname = f.name.lower()
+                if '.brinc' in fname or fname.endswith('.json'):
+                    try:
+                        # Quick peek inside to see if it has our save data keys
+                        f.seek(0)
+                        peek = json.loads(f.getvalue().decode('utf-8'))
+                        if 'k_resp' in peek and 'calls_data' in peek:
+                            brinc_file = f
+                            break
+                    except:
+                        pass
+
+            if brinc_file:
                 with st.spinner("💾 Restoring saved deployment..."):
                     try:
-                        save_data = json.loads(brinc_files[0].getvalue().decode('utf-8'))
+                        brinc_file.seek(0)
+                        save_data = json.loads(brinc_file.getvalue().decode('utf-8'))
                         
                         st.session_state['active_city'] = save_data.get('city', 'Unknown')
                         st.session_state['active_state'] = save_data.get('state', 'US')
@@ -1358,11 +1394,18 @@ if not st.session_state['csvs_ready']:
                         st.session_state['deflect_rate'] = save_data.get('deflect_rate', 30)
                         
                         if save_data.get('calls_data'):
-                            st.session_state['df_calls'] = pd.DataFrame(save_data['calls_data'])
-                            st.session_state['total_original_calls'] = len(st.session_state['df_calls'])
+                            df_c = pd.DataFrame(save_data['calls_data'])
+                            # Safely cast to numeric so the map geometry doesn't crash
+                            if 'lat' in df_c.columns: df_c['lat'] = pd.to_numeric(df_c['lat'], errors='coerce')
+                            if 'lon' in df_c.columns: df_c['lon'] = pd.to_numeric(df_c['lon'], errors='coerce')
+                            st.session_state['df_calls'] = df_c
+                            st.session_state['total_original_calls'] = len(df_c)
                         
                         if save_data.get('stations_data'):
-                            st.session_state['df_stations'] = pd.DataFrame(save_data['stations_data'])
+                            df_s = pd.DataFrame(save_data['stations_data'])
+                            if 'lat' in df_s.columns: df_s['lat'] = pd.to_numeric(df_s['lat'], errors='coerce')
+                            if 'lon' in df_s.columns: df_s['lon'] = pd.to_numeric(df_s['lon'], errors='coerce')
+                            st.session_state['df_stations'] = df_s
                             
                         st.session_state['csvs_ready'] = True
                         st.toast("✅ Deployment restored successfully!")
@@ -1371,118 +1414,119 @@ if not st.session_state['csvs_ready']:
                         st.error(f"❌ Error loading .brinc file: {e}")
                         st.stop()
 
-            # --- 2. OTHERWISE, PROCESS AS NORMAL CSV CAD DATA ---
-            f_list = list(uploaded_files)
-            call_files = []
-            station_file = None
+            else:
+                # --- 2. OTHERWISE, PROCESS AS NORMAL CSV CAD DATA ---
+                f_list = list(uploaded_files)
+                call_files = []
+                station_file = None
 
-            for f in f_list:
-                if _looks_like_stations(f.name):
-                    station_file = f
-                else:
-                    call_files.append(f)
-            
-            if len(f_list) == 2 and not station_file:
-                f0, f1 = f_list
-                f0.seek(0); sz0 = len(f0.read()); f0.seek(0)
-                f1.seek(0); sz1 = len(f1.read()); f1.seek(0)
-                if sz0 >= sz1:
-                    call_files = [f0]
-                    station_file = f1
-                else:
-                    call_files = [f1]
-                    station_file = f0
-
-            if call_files:
-                with st.spinner("🔍 Detecting column types in CAD export…"):
-                    df_c = aggressive_parse_calls(call_files)
-
-                if df_c is None or df_c.empty:
-                    st.error("❌ Calls file error: Could not parse valid coordinates.")
-                    st.stop()
-
-                st.session_state['total_original_calls'] = len(df_c)
+                for f in f_list:
+                    if _looks_like_stations(f.name):
+                        station_file = f
+                    else:
+                        call_files.append(f)
                 
-                if len(df_c) > 25000:
-                    df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
-                    st.toast("⚠️ Sampled to 25,000 calls for performance.")
-                else:
-                    df_c = df_c.reset_index(drop=True)
+                if len(f_list) == 2 and not station_file:
+                    f0, f1 = f_list
+                    f0.seek(0); sz0 = len(f0.read()); f0.seek(0)
+                    f1.seek(0); sz1 = len(f1.read()); f1.seek(0)
+                    if sz0 >= sz1:
+                        call_files = [f0]
+                        station_file = f1
+                    else:
+                        call_files = [f1]
+                        station_file = f0
 
-                if station_file is not None:
-                    with st.spinner("🔍 Reading stations file…"):
-                        try:
-                            df_s = pd.read_csv(station_file)
-                            df_s.columns = [str(c).lower().strip() for c in df_s.columns]
-                            if 'latitude' in df_s.columns: df_s = df_s.rename(columns={'latitude':'lat'})
-                            if 'longitude' in df_s.columns: df_s = df_s.rename(columns={'longitude':'lon'})
-                            if 'station_name' in df_s.columns: df_s = df_s.rename(columns={'station_name':'name'})
-                            if 'station_type' in df_s.columns: df_s = df_s.rename(columns={'station_type':'type'})
-                            
-                            if 'lat' in df_s.columns and 'lon' in df_s.columns:
-                                df_s['lat'] = pd.to_numeric(df_s['lat'], errors='coerce')
-                                df_s['lon'] = pd.to_numeric(df_s['lon'], errors='coerce')
-                            else:
-                                raise ValueError("Could not find lat/lon columns.")
+                if call_files:
+                    with st.spinner("🔍 Detecting column types in CAD export…"):
+                        df_c = aggressive_parse_calls(call_files)
 
-                            if 'name' not in df_s.columns: 
-                                df_s['name'] = [f"Site {i+1}" for i in range(len(df_s))]
-                            else:
-                                df_s['name'] = df_s['name'].fillna('').astype(str).str.strip()
-                                df_s['name'] = df_s['name'].replace(r'(?i)^(null|<null>|nan|none)$', '', regex=True)
-                                df_s['name'] = [n if n else f"Site {i+1}" for i, n in enumerate(df_s['name'])]
+                    if df_c is None or df_c.empty:
+                        st.error("❌ Calls file error: Could not parse valid coordinates.")
+                        st.stop()
 
-                            counts = {}
-                            new_names = []
-                            for n in df_s['name']:
-                                if n in counts:
-                                    counts[n] += 1
-                                    new_names.append(f"{n} ({counts[n]})")
+                    st.session_state['total_original_calls'] = len(df_c)
+                    
+                    if len(df_c) > 25000:
+                        df_c = df_c.sample(25000, random_state=42).reset_index(drop=True)
+                        st.toast("⚠️ Sampled to 25,000 calls for performance.")
+                    else:
+                        df_c = df_c.reset_index(drop=True)
+
+                    if station_file is not None:
+                        with st.spinner("🔍 Reading stations file…"):
+                            try:
+                                df_s = pd.read_csv(station_file)
+                                df_s.columns = [str(c).lower().strip() for c in df_s.columns]
+                                if 'latitude' in df_s.columns: df_s = df_s.rename(columns={'latitude':'lat'})
+                                if 'longitude' in df_s.columns: df_s = df_s.rename(columns={'longitude':'lon'})
+                                if 'station_name' in df_s.columns: df_s = df_s.rename(columns={'station_name':'name'})
+                                if 'station_type' in df_s.columns: df_s = df_s.rename(columns={'station_type':'type'})
+                                
+                                if 'lat' in df_s.columns and 'lon' in df_s.columns:
+                                    df_s['lat'] = pd.to_numeric(df_s['lat'], errors='coerce')
+                                    df_s['lon'] = pd.to_numeric(df_s['lon'], errors='coerce')
                                 else:
-                                    counts[n] = 0
-                                    new_names.append(n)
-                            df_s['name'] = new_names
+                                    raise ValueError("Could not find lat/lon columns.")
 
-                            if 'type' not in df_s.columns: df_s['type'] = 'Police'
-                            df_s = df_s.dropna(subset=['lat', 'lon']).reset_index(drop=True)
-                            osm_note = "Loaded stations from file."
-                        except Exception as e:
-                            df_s, osm_note = None, f"Failed: {e}"
-                    if df_s is None or df_s.empty:
-                        st.error(f"❌ Stations file error: {osm_note}")
-                        st.stop()
-                else:
-                    with st.spinner("🌐 No stations file detected — querying OpenStreetMap for police, fire & schools…"):
-                        df_s, osm_note = generate_stations_from_calls(df_c)
-                    if df_s is None:
-                        st.error(f"❌ Could not auto-generate stations: {osm_note}")
-                        st.stop()
-                    st.toast(f"✅ {osm_note}")
+                                if 'name' not in df_s.columns: 
+                                    df_s['name'] = [f"Site {i+1}" for i in range(len(df_s))]
+                                else:
+                                    df_s['name'] = df_s['name'].fillna('').astype(str).str.strip()
+                                    df_s['name'] = df_s['name'].replace(r'(?i)^(null|<null>|nan|none)$', '', regex=True)
+                                    df_s['name'] = [n if n else f"Site {i+1}" for i, n in enumerate(df_s['name'])]
 
-                if len(df_s) > 100:
-                    df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
+                                counts = {}
+                                new_names = []
+                                for n in df_s['name']:
+                                    if n in counts:
+                                        counts[n] += 1
+                                        new_names.append(f"{n} ({counts[n]})")
+                                    else:
+                                        counts[n] = 0
+                                        new_names.append(n)
+                                df_s['name'] = new_names
 
-                lat_min, lat_max = df_s['lat'].min(), df_s['lat'].max()
-                lon_min, lon_max = df_s['lon'].min(), df_s['lon'].max()
-                df_c = df_c[
-                    (df_c['lat'] >= lat_min - 0.5) & (df_c['lat'] <= lat_max + 0.5) &
-                    (df_c['lon'] >= lon_min - 0.5) & (df_c['lon'] <= lon_max + 0.5)
-                ].reset_index(drop=True)
+                                if 'type' not in df_s.columns: df_s['type'] = 'Police'
+                                df_s = df_s.dropna(subset=['lat', 'lon']).reset_index(drop=True)
+                                osm_note = "Loaded stations from file."
+                            except Exception as e:
+                                df_s, osm_note = None, f"Failed: {e}"
+                        if df_s is None or df_s.empty:
+                            st.error(f"❌ Stations file error: {osm_note}")
+                            st.stop()
+                    else:
+                        with st.spinner("🌐 No stations file detected — querying OpenStreetMap for police, fire & schools…"):
+                            df_s, osm_note = generate_stations_from_calls(df_c)
+                        if df_s is None:
+                            st.error(f"❌ Could not auto-generate stations: {osm_note}")
+                            st.stop()
+                        st.toast(f"✅ {osm_note}")
 
-                st.session_state['df_calls']             = df_c
-                st.session_state['df_stations']          = df_s
+                    if len(df_s) > 100:
+                        df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
 
-                with st.spinner(get_jurisdiction_message()):
-                    detected_state_full, detected_city = reverse_geocode_state(
-                        df_c['lat'].iloc[0], df_c['lon'].iloc[0]
-                    )
-                    if detected_state_full and detected_state_full in US_STATES_ABBR:
-                        st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
-                        if detected_city and detected_city != 'Unknown City':
-                            st.session_state['active_city'] = detected_city
-                        st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
-                st.session_state['csvs_ready'] = True
-                st.rerun()
+                    lat_min, lat_max = df_s['lat'].min(), df_s['lat'].max()
+                    lon_min, lon_max = df_s['lon'].min(), df_s['lon'].max()
+                    df_c = df_c[
+                        (df_c['lat'] >= lat_min - 0.5) & (df_c['lat'] <= lat_max + 0.5) &
+                        (df_c['lon'] >= lon_min - 0.5) & (df_c['lon'] <= lon_max + 0.5)
+                    ].reset_index(drop=True)
+
+                    st.session_state['df_calls']             = df_c
+                    st.session_state['df_stations']          = df_s
+
+                    with st.spinner(get_jurisdiction_message()):
+                        detected_state_full, detected_city = reverse_geocode_state(
+                            df_c['lat'].iloc[0], df_c['lon'].iloc[0]
+                        )
+                        if detected_state_full and detected_state_full in US_STATES_ABBR:
+                            st.session_state['active_state'] = US_STATES_ABBR[detected_state_full]
+                            if detected_city and detected_city != 'Unknown City':
+                                st.session_state['active_city'] = detected_city
+                            st.toast(f"📍 Detected: {st.session_state['active_city']}, {st.session_state['active_state']}")
+                    st.session_state['csvs_ready'] = True
+                    st.rerun()
 
     with path_demo_col:
         st.markdown(f"""
@@ -1613,15 +1657,71 @@ if not st.session_state['csvs_ready']:
         })
         st.session_state['df_calls'] = df_demo
 
-        prog.progress(80, text="🏅 Placing stations — giving officers the best possible backup…")
-        station_points = generate_random_points_in_polygon(city_poly, 100)
-        types = ['Police', 'Fire', 'EMS'] * 34
-        st.session_state['df_stations'] = pd.DataFrame({
-            'name': [f'Station {i+1}' for i in range(len(station_points))],
-            'lat':  [p[0] for p in station_points],
-            'lon':  [p[1] for p in station_points],
-            'type': types[:len(station_points)]
-        })
+        # --- PROCESS OPTIONAL CUSTOM STATIONS ---
+        custom_stations_used = False
+        sim_uploader = st.session_state.get('sim_station_uploader')
+        
+        if sim_uploader is not None:
+            prog.progress(80, text="🏅 Geocoding custom stations from CSV…")
+            import time
+            try:
+                sim_uploader.seek(0)
+                s_df = pd.read_csv(sim_uploader)
+                s_df.columns = [str(c).lower().strip() for c in s_df.columns]
+                
+                # Detect what columns the user provided
+                lat_col = next((c for c in s_df.columns if c in ['lat', 'latitude', 'y']), None)
+                lon_col = next((c for c in s_df.columns if c in ['lon', 'long', 'longitude', 'x']), None)
+                addr_col = next((c for c in s_df.columns if any(a in c for a in ['address', 'street', 'location'])), None)
+                name_col = next((c for c in s_df.columns if any(n in c for n in ['name', 'station', 'facility', 'dept'])), None)
+                type_col = next((c for c in s_df.columns if any(t in c for t in ['type', 'category'])), None)
+                
+                parsed_stations = []
+                for idx, row in s_df.iterrows():
+                    s_name = str(row[name_col]) if name_col and pd.notna(row[name_col]) else f"Custom Station {idx+1}"
+                    s_type = str(row[type_col]) if type_col and pd.notna(row[type_col]) else 'Custom'
+                    s_lat, s_lon = None, None
+                    
+                    if lat_col and lon_col and pd.notna(row[lat_col]) and pd.notna(row[lon_col]):
+                        s_lat, s_lon = float(row[lat_col]), float(row[lon_col])
+                    elif addr_col and pd.notna(row[addr_col]):
+                        addr_str = str(row[addr_col])
+                        # Attempt geocoding
+                        s_lat, s_lon = forward_geocode(addr_str)
+                        if s_lat is None:
+                            # Fallback: Try appending the city and state to the address string
+                            s_lat, s_lon = forward_geocode(f"{addr_str}, {active_targets[0]['city']}, {active_targets[0]['state']}")
+                        if s_lat is None:
+                            st.toast(f"⚠️ Could not geocode: {addr_str}")
+                        time.sleep(1) # Slow down requests slightly to prevent API blocking
+                        
+                    if s_lat and s_lon:
+                        parsed_stations.append({
+                            'name': s_name,
+                            'lat': s_lat,
+                            'lon': s_lon,
+                            'type': s_type
+                        })
+                        
+                if parsed_stations:
+                    st.session_state['df_stations'] = pd.DataFrame(parsed_stations)
+                    custom_stations_used = True
+                else:
+                    st.warning("⚠️ Could not geocode or parse your custom stations. Falling back to 100 random stations.")
+            except Exception as e:
+                st.warning(f"⚠️ Error reading custom stations: {e}. Falling back to random stations.")
+
+        # --- FALLBACK: GENERATE RANDOM STATIONS ---
+        if not custom_stations_used:
+            prog.progress(80, text="🏅 Placing stations — giving officers the best possible backup…")
+            station_points = generate_random_points_in_polygon(city_poly, 100)
+            types = ['Police', 'Fire', 'EMS'] * 34
+            st.session_state['df_stations'] = pd.DataFrame({
+                'name': [f'Station {i+1}' for i in range(len(station_points))],
+                'lat':  [p[0] for p in station_points],
+                'lon':  [p[1] for p in station_points],
+                'type': types[:len(station_points)]
+            })
 
         prog.progress(100, text="✅ Ready — built for the communities they protect and serve.")
         st.session_state['inferred_daily_calls_override'] = int(annual_cfs / 365)
@@ -1752,10 +1852,6 @@ if st.session_state['csvs_ready']:
 
     n = len(df_stations_all)
 
-    area_sq_mi = city_m.area / 2589988.11 if city_m and not city_m.is_empty else 100.0
-    r_resp_est = st.session_state.get('r_resp', 2.0)
-    r_guard_est = st.session_state.get('r_guard', 8.0)
-    
     # Dynamic Sliders based on Area Size
     area_sq_mi = city_m.area / 2589988.11 if city_m and not city_m.is_empty else 100.0
     r_resp_est = st.session_state.get('r_resp', 2.0)
@@ -1773,7 +1869,6 @@ if st.session_state['csvs_ready']:
     k_guardian  = st.sidebar.slider("🦅 Guardian Count",  0, max(1, max_guard_calc), val_g,
                                     help="Long-range heavy-lift drones (up to 8mi radius).")
     
-    # THESE TWO LINES WERE MISSING!
     resp_radius_mi  = st.sidebar.slider("🚁 Responder Range (mi)", 2.0, 3.0, st.session_state.get('r_resp', 2.0), step=0.5)
     guard_radius_mi = st.sidebar.slider("🦅 Guardian Range (mi)", 1, 8, int(st.session_state.get('r_guard', 8)))
 
@@ -1791,7 +1886,7 @@ if st.session_state['csvs_ready']:
         [s['clipped_2m'] for s in station_metadata],
         [s['clipped_guard'] for s in station_metadata],
         city_m.area if city_m else 1.0, bounds_hash,
-        max_stations=30
+        max_stations=100
     )
     prog2.empty()
 
@@ -1826,11 +1921,9 @@ if st.session_state['csvs_ready']:
         st.session_state['dfr_rate']    = int(dfr_dispatch_rate * 100)
         st.session_state['deflect_rate'] = int(deflection_rate * 100)
 
-    # ... (Optimization algorithm logic continues smoothly below here as normal)
-
     # ── OPTIMIZATION ──────────────────────────────────────────────────
     active_resp_names, active_guard_names = [], []
-    active_resp_idx, active_guard_idx = [], []  # <-- This prevents the NameError!
+    active_resp_idx, active_guard_idx = [], []  
     chrono_r, chrono_g = [], []
     best_combo = None
 
@@ -2098,19 +2191,20 @@ if st.session_state['csvs_ready']:
             <span style="font-size:1.2em; background:rgba(128,128,128,0.15); padding:2px 10px; border-radius:4px;">{h_label}</span>
             </div>""", unsafe_allow_html=True)
 
+    # Safely compute traffic impacts with strict float casting to prevent any TypeErrors
     if simulate_traffic:
-        avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level/100)
-        eval_dist  = guard_radius_mi if active_guard_names else resp_radius_mi
-        eval_speed = CONFIG["GUARDIAN_SPEED"] if active_guard_names else CONFIG["RESPONDER_SPEED"]
+        avg_ground_speed = float(CONFIG["DEFAULT_TRAFFIC_SPEED"]) * (1 - float(traffic_level) / 100.0)
+        eval_dist  = float(guard_radius_mi if active_guard_names else resp_radius_mi)
+        eval_speed = float(CONFIG["GUARDIAN_SPEED"] if active_guard_names else CONFIG["RESPONDER_SPEED"])
+        
         if (active_resp_names or active_guard_names) and avg_ground_speed > 0:
-            time_saved = ((eval_dist*1.4/avg_ground_speed) - (eval_dist/eval_speed)) * 60
+            time_saved = ((eval_dist * 1.4 / avg_ground_speed) - (eval_dist / eval_speed)) * 60
             gain_val = f"{time_saved:.1f} min"
         else:
             gain_val = "N/A"
     else:
         gain_val = None
 
-    # Set the total calls without the "Sampled" text
     orig_calls = st.session_state.get('total_original_calls', total_calls)
     call_str = f"{orig_calls:,}"
 
@@ -2128,7 +2222,6 @@ if st.session_state['csvs_ready']:
 
     # 1. THE SINGLE-LINE EXECUTIVE HEADER
     logo_b64 = get_base64_of_bin_file("logo.png")
-    # Applied the invert filter to make it pure white, and changed fallback text to white
     main_logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:24px; vertical-align:middle; margin-right:15px; filter: brightness(0) invert(1);">' if logo_b64 else f'<span style="font-size:1.5rem; font-weight:900; letter-spacing:2px; color:#ffffff; margin-right:15px;">BRINC</span>'
 
     header_html = f"""
@@ -2148,7 +2241,9 @@ if st.session_state['csvs_ready']:
     """
     st.markdown(header_html, unsafe_allow_html=True)
 
-    # 2. THE STREAMLINED OPERATIONAL KPI BAR
+    # Cleanly evaluate dynamic CSS to avoid f-string syntax errors
+    border_css = 'border-right: 1px solid #222; padding-right: 10px;' if gain_val is not None else ''
+
     # If traffic simulation is on, nest the time saved right inside the Avg Response box!
     if gain_val is not None:
         resp_content = (
@@ -2158,6 +2253,7 @@ if st.session_state['csvs_ready']:
     else:
         resp_content = f'<div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: \'IBM Plex Mono\', monospace;">{avg_resp_time:.1f}m</div>'
 
+    # 2. THE STREAMLINED OPERATIONAL KPI BAR (FLATTENED TO PREVENT MARKDOWN ERRORS)
     kpi_html = (
         f'<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); background: {card_bg}; border: 1px solid {card_border}; border-radius: 8px; padding: 20px; margin-bottom: 15px; gap: 10px;">'
         f'<div style="border-right: 1px solid #222; padding-right: 10px; text-align: center;">'
