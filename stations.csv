@@ -1,0 +1,15 @@
+NAME,TYPE,ADDRESS,CAPACITY,NOTES,LAT,LON
+Sample 1 Police Station,Police,"420 W State St, Rockford, IL 61101",2,Primary downtown dispatch hub,42.2711,-89.0940
+Sample 2 Police Station,Police,"3401 N Main St, Rockford, IL 61103",2,North side patrol base,42.3105,-89.0887
+Sample 3 Police Station,Police,"1707 S Mulford Rd, Rockford, IL 61108",1,Southeast corridor coverage,42.2488,-88.9998
+Sample 4 Police Station,Police,"4340 W State St, Rockford, IL 61102",1,West side rapid response unit,42.2712,-89.1241
+Sample 1 Fire Station,Fire,"708 Clinton St, Rockford, IL 61101",2,Central fire dispatch - Station 1,42.2720,-89.0898
+Sample 2 Fire Station,Fire,"1402 N Court St, Rockford, IL 61103",1,North Rockford fire coverage,42.2951,-89.0826
+Sample 3 Fire Station,Fire,"2250 S Alpine Rd, Rockford, IL 61108",1,South Alpine fire response,42.2401,-88.9964
+Sample 4 Fire Station,Fire,"5285 Safford Rd, Rockford, IL 61101",1,West district fire station,42.2698,-89.1402
+Sample 1 EMS Station,EMS,"1401 E State St, Rockford, IL 61104",2,East side EMS rapid response,42.2694,-89.0621
+Sample 2 EMS Station,EMS,"3720 Charles St, Rockford, IL 61108",1,Southeast EMS coverage zone,42.2522,-89.0058
+Sample 3 EMS Station,EMS,"4825 N Bell School Rd, Rockford, IL 61107",1,Northeast EMS response hub,42.3021,-88.9891
+Sample 1 Gov Station,Government,"425 E State St, Rockford, IL 61104",1,Winnebago County admin building,42.2715,-89.0848
+Sample 2 Gov Station,Government,"300 W State St, Rockford, IL 61101",1,City Hall - Rockford municipal center,42.2711,-89.0957
+Sample 3 Gov Station,Government,"650 W State St, Rockford, IL 61102",1,Public works and emergency mgmt,42.2713,-89.1018
