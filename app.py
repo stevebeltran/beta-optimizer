@@ -3424,16 +3424,16 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
   <div style="font-size:0.62rem;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
     <a href="{gmaps_url}" target="_blank" style="color:{accent_color};text-decoration:none;opacity:0.85;">📍 {d_address} ↗</a>
   </div>
-  <!-- Response time hero -->
-  <div style="background:rgba(255,255,255,0.05);border:1px solid {card_border};border-radius:6px;padding:7px 10px;text-align:center;margin-bottom:6px;">
-    <div style="font-size:0.58rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.3px;margin-bottom:1px;">Avg Aerial Response<span class="tip" data-tip="Average travel time from this station to incidents in its zone, based on drone speed and straight-line distance with a 1.4x routing factor.">?</span></div>
-    <div style="font-size:1.6rem;font-weight:900;color:{card_title};line-height:1.1;">{d_time:.1f}<span style="font-size:0.9rem;font-weight:600;"> min</span></div>
+  <!-- Annual Value hero -->
+  <div style="background:rgba(0,210,255,0.07);border:1px solid rgba(0,210,255,0.25);border-radius:6px;padding:7px 10px;text-align:center;margin-bottom:6px;">
+    <div style="font-size:0.58rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.3px;margin-bottom:1px;">Annual Value<span class="tip" data-tip="Best-case annual savings from calls this drone resolves without sending a ground unit. Includes both exclusive and concurrent zone coverage.">?</span></div>
+    <div style="font-size:1.6rem;font-weight:900;color:{accent_color};line-height:1.1;">${d_best:,.0f}</div>
   </div>
   <!-- 2x2 key metrics -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:6px;">
-    <div style="background:rgba(0,210,255,0.07);border:1px solid rgba(0,210,255,0.18);border-radius:5px;padding:6px 8px;text-align:center;">
-      <div style="font-size:0.57rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.3px;">Annual Value<span class="tip" data-tip="Best-case annual savings from calls this drone resolves without sending a ground unit. Includes both exclusive and concurrent zone coverage.">?</span></div>
-      <div style="font-size:0.95rem;font-weight:900;color:{accent_color};">${d_best:,.0f}</div>
+    <div style="background:rgba(255,255,255,0.05);border:1px solid {card_border};border-radius:5px;padding:6px 8px;text-align:center;">
+      <div style="font-size:0.57rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.3px;">Aerial Response<span class="tip" data-tip="Average travel time from this station to incidents in its zone, based on drone speed and straight-line distance with a 1.4x routing factor.">?</span></div>
+      <div style="font-size:0.95rem;font-weight:900;color:{card_title};">{d_time:.1f} min</div>
     </div>
     <div style="background:rgba(0,210,255,0.07);border:1px solid rgba(0,210,255,0.18);border-radius:5px;padding:6px 8px;text-align:center;">
       <div style="font-size:0.57rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.3px;">Break-Even<span class="tip" data-tip="Months to recover the unit CapEx from annual capacity savings at current DFR and deflection rates.">?</span></div>
@@ -7308,20 +7308,6 @@ if st.session_state['csvs_ready']:
             <span style="font-size:1.2em; background:rgba(128,128,128,0.15); padding:2px 10px; border-radius:4px;">{h_label}</span>
             </div>""", unsafe_allow_html=True)
 
-    # Safely compute traffic impacts with strict float casting to prevent any TypeErrors
-    if simulate_traffic:
-        avg_ground_speed = float(CONFIG["DEFAULT_TRAFFIC_SPEED"]) * (1 - float(traffic_level) / 100.0)
-        eval_dist  = float(guard_radius_mi if active_guard_names else resp_radius_mi)
-        eval_speed = float(CONFIG["GUARDIAN_SPEED"] if active_guard_names else CONFIG["RESPONDER_SPEED"])
-        
-        if (active_resp_names or active_guard_names) and avg_ground_speed > 0:
-            time_saved = ((eval_dist * 1.4 / avg_ground_speed) - (eval_dist / eval_speed)) * 60
-            gain_val = f"{time_saved:.1f} min"
-        else:
-            gain_val = "N/A"
-    else:
-        gain_val = None
-
     orig_calls = int(st.session_state.get('total_original_calls', full_total_calls or (len(df_calls_full) if df_calls_full is not None else total_calls)) or total_calls)
     modeled_calls = int(st.session_state.get('total_modeled_calls', total_calls) or total_calls)
     displayed_points = len(display_calls) if display_calls is not None else 0
@@ -7342,15 +7328,29 @@ if st.session_state['csvs_ready']:
             pass
 
     avg_resp_time = sum(d['avg_time_min'] for d in active_drones) / len(active_drones) if active_drones else 0.0
-    # Keep executive-summary time-saved metric available before later export blocks.
+
+    # Ground speed: only apply congestion reduction when traffic toggle is on.
+    # Both avg_time_saved and gain_val use the same per-drone avg_time_min basis so
+    # the drone and ground numbers are directly comparable (no full-radius inflation).
+    _base_ground_speed = float(CONFIG["DEFAULT_TRAFFIC_SPEED"])
+    _effective_ground_speed = _base_ground_speed * (1.0 - float(traffic_level) / 100.0) if simulate_traffic else _base_ground_speed
+
     try:
-        _avg_ground_speed_exec = float(CONFIG["DEFAULT_TRAFFIC_SPEED"]) * (1 - float(traffic_level) / 100.0)
-        # Ground time = same avg distance drone covers, but at road speed with 1.4× road-tortuosity factor.
-        # avg_time_min = (avg_dist / speed_mph)*60  →  avg_dist = avg_time_min * speed_mph / 60
-        # ground_time  = avg_dist * 1.4 / ground_speed * 60 = avg_time_min * speed_mph * 1.4 / ground_speed
-        avg_time_saved = (max(0.0, (sum(d['avg_time_min'] * d['speed_mph'] * 1.4 / _avg_ground_speed_exec for d in active_drones) / len(active_drones)) - avg_resp_time)) if active_drones and _avg_ground_speed_exec > 0 else 0.0
+        if active_drones and _effective_ground_speed > 0:
+            _fleet_gnd_time = (sum(d['avg_time_min'] * d['speed_mph'] * 1.4 / _effective_ground_speed
+                                   for d in active_drones) / len(active_drones))
+            avg_time_saved = max(0.0, _fleet_gnd_time - avg_resp_time)
+        else:
+            avg_time_saved = 0.0
     except Exception:
         avg_time_saved = 0.0
+
+    # gain_val: sub-label shown on the Avg Response KPI cell only when traffic toggle is on
+    if simulate_traffic:
+        gain_val = f"{avg_time_saved:.1f} min" if active_drones and _effective_ground_speed > 0 else "N/A"
+    else:
+        gain_val = None
+
     # ── Persist live deployment metrics so the apprehension table reads real values ──
     st.session_state['avg_time_saved_min'] = avg_time_saved
     st.session_state['avg_resp_time_min']  = avg_resp_time
@@ -7388,13 +7388,34 @@ if st.session_state['csvs_ready']:
     else:
         resp_content = f'<div style="font-size: 2.2rem; font-weight: 800; color: {accent_color}; font-family: \'IBM Plex Mono\', monospace;">{avg_resp_time:.1f}m</div>'
 
+    # ── Pre-compute Fleet Summary impact sub-values ───────────────────────
+    _annual_resolved = int(daily_drone_only_calls * 365) if daily_drone_only_calls > 0 else 0
+    _covered_calls_abs = int(calls_covered_perc / 100.0 * total_calls) if total_calls else 0
+    _land_sqmi = int(area_covered_perc / 100.0 * area_sq_mi) if area_sq_mi else 0
+
+    _impact_incidents  = f"~{_annual_resolved:,} resolved/yr" if _annual_resolved > 0 else None
+    _impact_coverage   = f"{_covered_calls_abs:,} calls" if _covered_calls_abs > 0 else None
+    _impact_land       = f"~{_land_sqmi:,} sq mi" if _land_sqmi > 0 else None
+    _impact_overlap    = f"{len(active_drones)} drone{'s' if len(active_drones) != 1 else ''}" if active_drones else None
+
+    if simulate_traffic and gain_val and gain_val != "N/A":
+        _t_label = "Light" if traffic_level < 35 else "Moderate" if traffic_level < 75 else "Heavy"
+        _impact_resp = f"saves {gain_val} w/ {_t_label} traffic"
+    elif avg_time_saved > 0:
+        _impact_resp = f"saves {avg_time_saved:.1f}m vs gnd"
+    else:
+        _impact_resp = None
+
     # 2. SPLIT KPI BAR — Guardian row + Responder row + combined summary
-    def _kpi_cell(label, value, color=accent_color, border=True):
+    def _kpi_cell(label, value, color=accent_color, border=True, impact=None):
         br = f"border-right: 1px solid #222; padding-right: 10px;" if border else ""
+        _imp = (f'<div style="font-size:0.65rem; color:#39FF14; font-weight:700; margin-top:2px;">({impact})</div>'
+                if impact else '')
         return (
             f'<div style="{br} text-align: center;">'
             f'<div style="font-size: 0.68rem; color: {text_muted}; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom:2px;">{label}</div>'
             f'<div style="font-size: 1.9rem; font-weight: 800; color: {color}; font-family: \'IBM Plex Mono\', monospace;">{value}</div>'
+            f'{_imp}'
             f'</div>'
         )
 
@@ -7407,11 +7428,11 @@ if st.session_state['csvs_ready']:
         f'<div style="background:{card_bg}; border:1px solid {card_border}; border-radius:8px; padding:16px 20px; margin-bottom:8px;">'
         f'<div style="font-size:0.65rem; color:{text_muted}; text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">Fleet Summary</div>'
         f'<div style="display:grid; grid-template-columns:repeat(5,1fr); gap:8px;">'
-        + _kpi_cell("Total Incidents", call_str)
-        + _kpi_cell("Combined Coverage", f"{calls_covered_perc:.1f}%", _COMB_COL)
-        + _kpi_cell("Land Covered", f"{area_covered_perc:.1f}%", _COMB_COL)
-        + _kpi_cell("Zone Overlap", f"{overlap_perc:.1f}%", text_muted)
-        + _kpi_cell("Avg Response", f"{avg_resp_time:.1f}m", accent_color, border=False)
+        + _kpi_cell("Total Incidents", call_str, impact=_impact_incidents)
+        + _kpi_cell("Combined Coverage", f"{calls_covered_perc:.1f}%", _COMB_COL, impact=_impact_coverage)
+        + _kpi_cell("Land Covered", f"{area_covered_perc:.1f}%", _COMB_COL, impact=_impact_land)
+        + _kpi_cell("Zone Overlap", f"{overlap_perc:.1f}%", text_muted, impact=_impact_overlap)
+        + _kpi_cell("Avg Response", f"{avg_resp_time:.1f}m", accent_color, border=False, impact=_impact_resp)
         + f'</div></div>'
 
         # ── Row 2: Guardian-specific metrics ──────────────────────────────
@@ -8049,8 +8070,9 @@ if st.session_state['csvs_ready']:
             _dur_min = ''
 
         avg_resp_time    = sum(d['avg_time_min'] for d in active_drones) / len(active_drones) if active_drones else 0.0
-        avg_ground_speed = CONFIG["DEFAULT_TRAFFIC_SPEED"] * (1 - traffic_level / 100)
-        avg_time_saved   = (max(0.0, (sum(d['avg_time_min'] * d['speed_mph'] * 1.4 / avg_ground_speed for d in active_drones) / len(active_drones)) - avg_resp_time)) if active_drones and avg_ground_speed > 0 else 0.0
+        _exp_base_gs     = float(CONFIG["DEFAULT_TRAFFIC_SPEED"])
+        _exp_eff_gs      = _exp_base_gs * (1.0 - float(traffic_level) / 100.0) if simulate_traffic else _exp_base_gs
+        avg_time_saved   = (max(0.0, (sum(d['avg_time_min'] * d['speed_mph'] * 1.4 / _exp_eff_gs for d in active_drones) / len(active_drones)) - avg_resp_time)) if active_drones and _exp_eff_gs > 0 else 0.0
         _calls_lons = (df_calls_full if df_calls_full is not None else df_calls)['lon'].dropna()
         _calls_lats = (df_calls_full if df_calls_full is not None else df_calls)['lat'].dropna()
         minx = float(_calls_lons.min()) if len(_calls_lons) else 0
