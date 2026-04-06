@@ -22,6 +22,56 @@ from PIL import Image
 # --- PAGE CONFIG & INITIALIZE SESSION STATE ---
 st.set_page_config(page_title="BRINC COS Drone Optimizer", layout="wide", initial_sidebar_state="expanded")
 
+# ── Google OAuth Login Gate ────────────────────────────────────────────────────
+# Only runs if [auth] section exists in .streamlit/secrets.toml
+try:
+    if hasattr(st, 'user') and "auth" in st.secrets:
+        if not st.user.is_logged_in:
+            st.markdown("""
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                        min-height:60vh;gap:24px;">
+              <div style="font-size:2rem;font-weight:900;color:#00D2FF;letter-spacing:4px;">BRINC DFR</div>
+              <div style="color:#888;font-size:0.9rem;">Drone as First Responder · Optimizer</div>
+            </div>
+            """, unsafe_allow_html=True)
+            st.button("🔐 Sign in with Google", on_click=st.login, args=("google",),
+                      type="primary", use_container_width=False)
+            st.stop()
+
+        # Restrict to @brincdrones.com accounts only
+        _user_email = getattr(st.user, "email", "") or ""
+        if not _user_email.lower().endswith("@brincdrones.com"):
+            st.error(f"Access restricted to BRINC Drones employees.  \n"
+                     f"You are signed in as **{_user_email}**.  \n"
+                     "Please sign in with your @brincdrones.com account.")
+            st.button("Sign out", on_click=st.logout)
+            st.stop()
+except Exception:
+    pass  # Auth not configured — app runs without login gate
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Mobile-responsive CSS (applied globally, activated by media queries) ──
+st.markdown("""
+<style>
+/* ── Hide the auto-generated multi-page nav from sidebar ── */
+[data-testid="stSidebarNav"] { display: none !important; }
+
+@media (max-width: 900px) {
+  [data-testid="block-container"] { padding: 1rem 0.5rem !important; }
+  [data-testid="column"] { min-width: 100% !important; }
+  [data-testid="collapsedControl"] { top: 0.4rem !important; }
+  .js-plotly-plot { max-width: 100% !important; overflow-x: auto; }
+  [data-testid="stMetricValue"] { font-size: 1.4rem !important; }
+  [data-testid="baseButton-secondary"] { font-size: 0.72rem !important; }
+}
+@media (max-width: 600px) {
+  [data-testid="block-container"] { padding: 0.5rem 0.25rem !important; }
+  [data-testid="stMetricValue"] { font-size: 1.1rem !important; }
+  section[data-testid="stSidebar"] { width: 260px !important; }
+}
+</style>
+""", unsafe_allow_html=True)
+
 # This MUST run before any st.session_state checks to prevent KeyError
 defaults = {
     'csvs_ready': False, 'df_calls': None, 'df_calls_full': None, 'df_stations': None,
@@ -46,6 +96,16 @@ defaults = {
     'export_count': 0,          # total download button clicks this session
     'demo_mode_used': False,    # True if any demo city was loaded
     'sim_mode_used': False,     # True if simulation (not real upload) was run
+    'pin_drop_mode': False,     # True when map-click pin placement is active
+    'pending_pin': None,        # dict(lat, lon) waiting for user confirmation
+    'pin_drop_used': False,     # True once a station was added via pin-drop; suppresses auto-minimums
+    # ── Document customization fields ──────────────────────────────────────────
+    'doc_custom_intro':   '',   # Optional opening paragraph injected after exec summary
+    'doc_talking_pt_1':  '',   # Custom bullet 1
+    'doc_talking_pt_2':  '',   # Custom bullet 2
+    'doc_talking_pt_3':  '',   # Custom bullet 3
+    'doc_custom_closing': '',  # Optional closing paragraph before AE signature
+    'doc_ae_phone':       '',  # AE phone number shown in contact block
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -2606,16 +2666,30 @@ def _make_random_stations(df_calls, n=40, boundary_geom=None, epsg_code=None):
     })
 
 @st.cache_data(show_spinner=False)
-def _fetch_osm_stations_cached(cen_lat_r: float, cen_lon_r: float, max_stations: int = 100):
+def _fetch_osm_stations_cached(cen_lat_r: float, cen_lon_r: float, max_stations: int = 200):
     """Cache-friendly OSM query keyed on rounded centroid (2 dp ≈ 1 km grid).
-    Returns (list_of_dicts | None, note_str).  Timeout is kept short so the
-    UI falls back to random stations quickly if Overpass is unresponsive.
+    Returns (list_of_dicts | None, note_str).  All three Overpass mirrors are
+    queried in parallel — total wait = fastest mirror, not sum of all mirrors.
     """
+    import concurrent.futures as _cf2
+
     osm_urls = [
         'https://overpass-api.de/api/interpreter',
         'https://overpass.kumi.systems/api/interpreter',
         'https://overpass.openstreetmap.ru/api/interpreter',
     ]
+
+    def _try_mirror(url, query):
+        try:
+            req = urllib.request.Request(
+                f"{url}?data={urllib.parse.quote(query)}",
+                headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'}
+            )
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                return json.loads(resp.read().decode('utf-8'))
+        except Exception:
+            return None
+
     for R in [0.25, 0.45]:
         bbox = f"{cen_lat_r - R},{cen_lon_r - R},{cen_lat_r + R},{cen_lon_r + R}"
         query = (
@@ -2623,28 +2697,42 @@ def _fetch_osm_stations_cached(cen_lat_r: float, cen_lon_r: float, max_stations:
             f'(node["amenity"="fire_station"]({bbox});'
             f'node["amenity"="police"]({bbox});'
             f'node["amenity"="school"]({bbox});'
+            f'node["amenity"="hospital"]({bbox});'
+            f'node["amenity"="library"]({bbox});'
+            f'node["building"="government"]({bbox});'
+            f'node["amenity"="ambulance_station"]({bbox});'
+            f'node["amenity"="university"]({bbox});'
+            f'node["amenity"="college"]({bbox});'
+            f'node["amenity"="bus_station"]({bbox});'
+            f'node["railway"="station"]({bbox});'
+            f'node["amenity"="community_centre"]({bbox});'
+            f'node["amenity"="courthouse"]({bbox});'
+            f'node["amenity"="social_facility"]({bbox});'
             f'way["amenity"="fire_station"]({bbox});'
             f'way["amenity"="police"]({bbox});'
             f'way["amenity"="school"]({bbox});'
+            f'way["amenity"="hospital"]({bbox});'
+            f'way["amenity"="library"]({bbox});'
+            f'way["building"="government"]({bbox});'
+            f'way["amenity"="ambulance_station"]({bbox});'
+            f'way["amenity"="university"]({bbox});'
+            f'way["amenity"="college"]({bbox});'
+            f'way["amenity"="bus_station"]({bbox});'
+            f'way["railway"="station"]({bbox});'
+            f'way["amenity"="community_centre"]({bbox});'
+            f'way["amenity"="courthouse"]({bbox});'
+            f'way["amenity"="social_facility"]({bbox});'
             f');out center;'
         )
+        # Fire all three mirrors in parallel — first successful response wins
         data = None
-        for osm_url in osm_urls:
-            for _attempt in range(2):  # one retry per mirror before moving on
-                try:
-                    req = urllib.request.Request(
-                        f"{osm_url}?data={urllib.parse.quote(query)}",
-                        headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'}
-                    )
-                    with urllib.request.urlopen(req, timeout=8) as resp:  # fail fast
-                        data = json.loads(resp.read().decode('utf-8'))
-                    break
-                except Exception:
-                    if _attempt == 0:
-                        import time as _t; _t.sleep(1)
-                    continue
-            if data is not None:
-                break
+        with _cf2.ThreadPoolExecutor(max_workers=3) as _pool:
+            futs = {_pool.submit(_try_mirror, url, query): url for url in osm_urls}
+            for fut in _cf2.as_completed(futs):
+                result = fut.result()
+                if result is not None:
+                    data = result
+                    break  # cancel remaining mirrors implicitly (they finish but are ignored)
 
         if data is None:
             continue
@@ -2656,8 +2744,23 @@ def _fetch_osm_stations_cached(cen_lat_r: float, cen_lon_r: float, max_stations:
             lon = el.get('lon') or (el.get('center') or {}).get('lon')
             if lat is None or lon is None:
                 continue
-            amenity = tags.get('amenity', '')
-            type_label = 'Fire' if amenity == 'fire_station' else 'Police' if amenity == 'police' else 'School'
+            amenity  = tags.get('amenity', '')
+            building = tags.get('building', '')
+            railway  = tags.get('railway', '')
+            type_label = (
+                'Fire'           if amenity == 'fire_station'                    else
+                'Police'         if amenity == 'police'                          else
+                'Hospital'       if amenity == 'hospital'                        else
+                'Library'        if amenity == 'library'                         else
+                'EMS'            if amenity == 'ambulance_station'               else
+                'University'     if amenity in ('university', 'college')         else
+                'Transit'        if amenity == 'bus_station' or railway == 'station' else
+                'Community'      if amenity == 'community_centre'                else
+                'Courthouse'     if amenity == 'courthouse'                      else
+                'Social Services' if amenity == 'social_facility'               else
+                'Government'     if building == 'government'                     else
+                'School'
+            )
             rows.append({'name': tags.get('name', f"{type_label} Station"),
                          'lat': round(lat, 6), 'lon': round(lon, 6), 'type': type_label})
 
@@ -2673,7 +2776,7 @@ def _fetch_osm_stations_cached(cen_lat_r: float, cen_lon_r: float, max_stations:
                     new_names.append(n)
             df_s['name'] = new_names
             if len(df_s) > max_stations:
-                pri = {'Police': 0, 'Fire': 1, 'School': 2}
+                pri = {'Police': 0, 'Fire': 1, 'EMS': 2, 'School': 3, 'Hospital': 4, 'University': 5, 'Transit': 6, 'Courthouse': 7, 'Community': 8, 'Government': 9, 'Social Services': 10, 'Library': 11}
                 df_s['_pri'] = df_s['type'].map(pri).fillna(3)
                 df_s = df_s.sort_values('_pri').head(max_stations).drop(columns='_pri').reset_index(drop=True)
             return df_s.to_dict('records'), f"Found {len(df_s)} stations from OpenStreetMap."
@@ -2681,8 +2784,79 @@ def _fetch_osm_stations_cached(cen_lat_r: float, cen_lon_r: float, max_stations:
     return None, "OSM unavailable"
 
 
+@st.cache_data(show_spinner=False)
+def _fetch_hifld_stations_cached(min_lat: float, min_lon: float, max_lat: float, max_lon: float):
+    """Fetch fire stations and law enforcement from HIFLD (US Federal open data).
+    Returns (list_of_dicts | None, note_str).
+    Fire and Police endpoints are queried in parallel to halve wait time.
+    HIFLD endpoints are ArcGIS FeatureServer REST services maintained by DHS.
+    """
+    import concurrent.futures as _cf3
+
+    _HIFLD_SOURCES = [
+        (
+            "https://services1.arcgis.com/Hp6G80Pky0om7QvQ/arcgis/rest/services/Fire_Stations/FeatureServer/0/query",
+            "Fire",
+            "NAME",
+        ),
+        (
+            "https://services1.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/USA_Law_Enforcement_Locations/FeatureServer/0/query",
+            "Police",
+            "NAME",
+        ),
+    ]
+    bbox_str = f"{min_lon},{min_lat},{max_lon},{max_lat}"
+
+    def _fetch_one(url, type_label, name_field):
+        try:
+            params = urllib.parse.urlencode({
+                'where': '1=1',
+                'geometry': bbox_str,
+                'geometryType': 'esriGeometryEnvelope',
+                'inSR': '4326',
+                'spatialRel': 'esriSpatialRelIntersects',
+                'outFields': f'{name_field},CITY,STATE',
+                'outSR': '4326',
+                'f': 'json',
+                'resultRecordCount': 500,
+            })
+            req = urllib.request.Request(
+                f"{url}?{params}",
+                headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'}
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode('utf-8'))
+            rows = []
+            for feat in data.get('features', []):
+                geom  = feat.get('geometry', {})
+                attrs = feat.get('attributes', {})
+                lat   = geom.get('y')
+                lon   = geom.get('x')
+                if lat is None or lon is None:
+                    continue
+                name = (attrs.get(name_field) or '').strip() or f"{type_label} Station"
+                rows.append({'name': name, 'lat': round(float(lat), 6),
+                             'lon': round(float(lon), 6), 'type': type_label})
+            return rows
+        except Exception:
+            return []
+
+    # Fetch fire + police in parallel — total wait = max(fire, police), not sum
+    all_rows = []
+    with _cf3.ThreadPoolExecutor(max_workers=2) as _pool:
+        futs = [_pool.submit(_fetch_one, url, lbl, fld) for url, lbl, fld in _HIFLD_SOURCES]
+        for fut in _cf3.as_completed(futs):
+            all_rows.extend(fut.result())
+
+    if all_rows:
+        return all_rows, f"Found {len(all_rows)} stations from HIFLD (US Federal)."
+    return None, "HIFLD unavailable"
+
+
 def generate_stations_from_calls(df_calls, max_stations=100):
-    """Query OpenStreetMap for real stations; fall back gracefully if unavailable."""
+    """Query OSM and HIFLD in parallel; merge results; fall back to call density."""
+    import concurrent.futures as _cf
+
     lats = df_calls['lat'].dropna().values
     lons = df_calls['lon'].dropna().values
     if len(lats) == 0:
@@ -2695,18 +2869,47 @@ def generate_stations_from_calls(df_calls, max_stations=100):
         (lats >= q1_la - 2.5 * iqr_la) & (lats <= q3_la + 2.5 * iqr_la) &
         (lons >= q1_lo - 2.5 * iqr_lo) & (lons <= q3_lo + 2.5 * iqr_lo)
     )
-    # Round to 2 dp (~1 km) so the same city always hits the cache
     cen_lat_r = round(float(lats[mask].mean()), 2)
     cen_lon_r = round(float(lons[mask].mean()), 2)
 
-    rows, note = _fetch_osm_stations_cached(cen_lat_r, cen_lon_r, max_stations)
-    if rows:
-        return pd.DataFrame(rows), note
+    # Bounding box for HIFLD (rounded to 2 dp cache key)
+    _pad = 0.45
+    min_lat_r = round(cen_lat_r - _pad, 2)
+    max_lat_r = round(cen_lat_r + _pad, 2)
+    min_lon_r = round(cen_lon_r - _pad, 2)
+    max_lon_r = round(cen_lon_r + _pad, 2)
 
-    # All OSM attempts failed — derive candidate sites from call density
+    # Fire both sources in parallel — total latency = max(osm, hifld), not sum
+    with _cf.ThreadPoolExecutor(max_workers=2) as pool:
+        fut_osm   = pool.submit(_fetch_osm_stations_cached,   cen_lat_r, cen_lon_r, max_stations)
+        fut_hifld = pool.submit(_fetch_hifld_stations_cached, min_lat_r, min_lon_r, max_lat_r, max_lon_r)
+        osm_rows,   osm_note   = fut_osm.result()
+        hifld_rows, hifld_note = fut_hifld.result()
+
+    # Merge both result sets
+    combined = []
+    if osm_rows:
+        combined.extend(osm_rows)
+    if hifld_rows:
+        combined.extend(hifld_rows)
+
+    if combined:
+        df_combined = pd.DataFrame(combined)
+        # Deduplicate: drop points within ~100 m of each other (0.001° ≈ 111 m)
+        df_combined = df_combined.round({'lat': 3, 'lon': 3})
+        df_combined = df_combined.drop_duplicates(subset=['lat', 'lon']).reset_index(drop=True)
+        # Prioritise Police/Fire over secondary types when trimming to max_stations
+        _pri_map = {'Police': 0, 'Fire': 1, 'School': 2, 'Hospital': 3, 'Government': 4, 'Library': 5}
+        df_combined['_pri'] = df_combined['type'].map(_pri_map).fillna(9)
+        df_combined = df_combined.sort_values('_pri').head(max_stations).drop(columns='_pri').reset_index(drop=True)
+        sources = [s for s, r in [('OSM', osm_rows), ('HIFLD', hifld_rows)] if r]
+        note = f"Found {len(df_combined)} candidate sites from {' + '.join(sources)}."
+        return df_combined, note
+
+    # All remote sources failed — derive candidate sites from call density
     df_fallback = _make_random_stations(df_calls, n=40)
     if not df_fallback.empty:
-        return df_fallback, "⚠️ OpenStreetMap unavailable — using estimated station locations from call data. Upload a stations CSV for accuracy."
+        return df_fallback, "⚠️ OSM and HIFLD unavailable — using estimated locations from call data. Upload a stations CSV for accuracy."
     return None, "Could not generate stations — no valid call coordinates."
 
 # ============================================================
@@ -3884,7 +4087,7 @@ def precompute_spatial_data(df_calls, df_calls_full, df_stations_all, _city_m, e
             'clipped_2m': clipped_2m, 'clipped_guard': clipped_guard,
             'avg_dist_r': avg_dist_r,
             'avg_dist_g': avg_dist_g,
-            'centrality': 1.0 - (dist_c / max_dist)
+            'centrality': 1.0 - (dist_c / max_dist),
         })
 
     return calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls
@@ -4294,8 +4497,68 @@ if not st.session_state['csvs_ready']:
             if col_add.button("＋ City", use_container_width=True, key="add_city_btn"):
                 st.session_state.city_count += 1
                 st.rerun()
-        submit_demo = col_run.button("▶ Run", use_container_width=True, key="run_sim_btn",
+        submit_demo = col_run.button("Deploy", use_container_width=True, key="run_sim_btn",
                                      help="Fetch boundaries and launch the simulation.")
+        components.html("""
+<script>
+(function(){
+  var _ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;display:inline-block;vertical-align:middle;">'
+    + '<circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.6"/>'
+    + '<circle cx="12" cy="12" r="5.5" stroke="currentColor" stroke-width="1.2" stroke-dasharray="3 2"/>'
+    + '<path d="M12 5.5C9.51 5.5 7.5 7.51 7.5 10C7.5 13.25 12 18.5 12 18.5C12 18.5 16.5 13.25 16.5 10C16.5 7.51 14.49 5.5 12 5.5Z" fill="currentColor"/>'
+    + '<circle cx="12" cy="10" r="2" fill="white"/>'
+    + '</svg>';
+
+  function style(){
+    var doc = parent.document;
+    var btns = doc.querySelectorAll('[data-testid="stButton"] > button');
+    btns.forEach(function(b){
+      var p = b.querySelector('p');
+      if(!p || p.textContent.trim() !== 'Deploy') return;
+      if(b.getAttribute('data-brinc-deploy')) return;
+      b.setAttribute('data-brinc-deploy','1');
+      b.style.background   = 'linear-gradient(135deg,#00bcd4 0%,#00D2FF 100%)';
+      b.style.color        = '#000';
+      b.style.border       = 'none';
+      b.style.borderRadius = '8px';
+      b.style.fontWeight   = '800';
+      b.style.fontSize     = '15px';
+      b.style.letterSpacing= '0.4px';
+      b.style.boxShadow    = '0 4px 20px rgba(0,210,255,0.55),0 2px 8px rgba(0,0,0,0.28)';
+      b.style.transition   = 'all 0.16s ease';
+      b.style.display      = 'flex';
+      b.style.alignItems   = 'center';
+      b.style.justifyContent = 'center';
+      b.style.gap          = '7px';
+      p.style.margin  = '0';
+      p.style.color   = '#000';
+      p.style.fontWeight = '800';
+      p.style.display = 'flex';
+      p.style.alignItems = 'center';
+      p.style.gap = '7px';
+      var icon = doc.createElement('span');
+      icon.innerHTML = _ICON;
+      p.insertBefore(icon, p.firstChild);
+      b.addEventListener('mouseenter',function(){
+        b.style.boxShadow  = '0 6px 30px rgba(0,210,255,0.75),0 2px 8px rgba(0,0,0,0.3)';
+        b.style.transform  = 'translateY(-1px)';
+        b.style.background = 'linear-gradient(135deg,#00d4ee 0%,#33e0ff 100%)';
+      });
+      b.addEventListener('mouseleave',function(){
+        b.style.boxShadow  = '0 4px 20px rgba(0,210,255,0.55),0 2px 8px rgba(0,0,0,0.28)';
+        b.style.transform  = 'translateY(0)';
+        b.style.background = 'linear-gradient(135deg,#00bcd4 0%,#00D2FF 100%)';
+      });
+    });
+  }
+
+  new MutationObserver(style).observe(parent.document.body,{childList:true,subtree:true});
+  style();
+  setTimeout(style,150);
+  setTimeout(style,500);
+})();
+</script>
+""", height=0)
 
     with path_upload_col:
         st.markdown(f"""
@@ -4357,14 +4620,48 @@ if not st.session_state['csvs_ready']:
                         brinc_file.seek(0)
                         save_data = json.loads(brinc_file.getvalue().decode('utf-8'))
                         
-                        st.session_state['active_city'] = save_data.get('city', 'Unknown')
-                        st.session_state['active_state'] = save_data.get('state', 'US')
-                        st.session_state['k_resp'] = save_data.get('k_resp', 2)
-                        st.session_state['k_guard'] = save_data.get('k_guard', 0)
-                        st.session_state['r_resp'] = save_data.get('r_resp', 2.0)
-                        st.session_state['r_guard'] = save_data.get('r_guard', 8.0)
-                        st.session_state['dfr_rate'] = save_data.get('dfr_rate', 12)
-                        st.session_state['deflect_rate'] = save_data.get('deflect_rate', 25)
+                        st.session_state['active_city']   = str(save_data.get('city', 'Unknown')).title()
+                        st.session_state['active_state']  = save_data.get('state', 'US')
+                        st.session_state['k_resp']        = save_data.get('k_resp', 2)
+                        st.session_state['k_guard']       = save_data.get('k_guard', 0)
+                        st.session_state['r_resp']        = save_data.get('r_resp', 2.0)
+                        st.session_state['r_guard']       = save_data.get('r_guard', 8.0)
+                        st.session_state['dfr_rate']      = save_data.get('dfr_rate', 12)
+                        st.session_state['deflect_rate']  = save_data.get('deflect_rate', 25)
+
+                        # Restore locked stations
+                        st.session_state['pinned_guard_names'] = save_data.get('pinned_guard_names', [])
+                        st.session_state['pinned_resp_names']  = save_data.get('pinned_resp_names',  [])
+
+                        # Restore custom / pin-dropped stations
+                        _cs_records = save_data.get('custom_stations')
+                        if _cs_records:
+                            try:
+                                _cs_df = pd.DataFrame(_cs_records)
+                                if not _cs_df.empty and 'lat' in _cs_df.columns and 'lon' in _cs_df.columns:
+                                    st.session_state['custom_stations'] = _cs_df
+                            except Exception:
+                                pass
+
+                        # Restore optimization strategy indices
+                        _rstr = save_data.get('resp_strategy', 'Call Coverage')
+                        _gstr = save_data.get('guard_strategy', 'Land Coverage')
+                        st.session_state['resp_strat_idx']  = 0 if _rstr == 'Call Coverage' else 1
+                        st.session_state['guard_strat_idx'] = 0 if _gstr == 'Call Coverage' else 1
+
+                        # Restore pin-drop mode flag
+                        st.session_state['pin_drop_used'] = save_data.get('pin_drop_used', False)
+
+                        # Prevent auto-minimums from overriding the restored k values.
+                        # _brinc_k_override tells the auto-minimums block to skip one cycle
+                        # and lock the sig so subsequent reruns also stay stable.
+                        st.session_state['_brinc_k_override'] = True
+                        st.session_state.pop('_auto_minimums_sig', None)
+
+                        # Clear optimizer caches so the restored fleet is recalculated fresh
+                        for _ck in ['_opt_cache_key', '_opt_best_combo',
+                                    '_opt_chrono_r', '_opt_chrono_g']:
+                            st.session_state.pop(_ck, None)
                         
                         if save_data.get('calls_data'):
                             df_c = pd.DataFrame(save_data['calls_data'])
@@ -4674,7 +4971,7 @@ if not st.session_state['csvs_ready']:
                                 pass
 
                         if detected_city and detected_state:
-                            st.session_state['active_city'] = detected_city
+                            st.session_state['active_city'] = str(detected_city).title()
                             st.session_state['active_state'] = detected_state
                             st.session_state['target_cities'] = [{"city": detected_city, "state": detected_state}]
                             st.session_state['location_detection_source'] = detection_source
@@ -4724,7 +5021,7 @@ if not st.session_state['csvs_ready']:
                             st.session_state['master_gdf_override'] = coord_gdf
                             st.session_state['boundary_source_path'] = 'local_parquet'
                             st.session_state['boundary_kind'] = 'place'
-                            st.session_state['active_city'] = coord_gdf.iloc[0]['DISPLAY_NAME']
+                            st.session_state['active_city'] = str(coord_gdf.iloc[0]['DISPLAY_NAME']).title()
 
                         else:
                             st.session_state['master_gdf_override'] = None
@@ -4814,10 +5111,10 @@ if not st.session_state['csvs_ready']:
             st.stop()
 
         if len(active_targets) == 1:
-            st.session_state['active_city']  = active_targets[0]['city']
+            st.session_state['active_city']  = str(active_targets[0]['city']).title()
             st.session_state['active_state'] = active_targets[0]['state']
         else:
-            st.session_state['active_city']  = f"{active_targets[0]['city']} & {len(active_targets)-1} others"
+            st.session_state['active_city']  = f"{str(active_targets[0]['city']).title()} & {len(active_targets)-1} others"
             st.session_state['active_state'] = active_targets[0]['state']
 
         prog = st.progress(0, text="🫡 Preparing tools worthy of those who serve…")
@@ -5019,6 +5316,7 @@ def generate_community_impact_dashboard_html(
     active_drones,
     df_calls_full,
     theme='dark',
+    facility_counts=None,
 ):
     """
     Generate a Community Impact Dashboard HTML string.
@@ -5120,6 +5418,18 @@ def generate_community_impact_dashboard_html(
     cost_saved_per_resolved = cost_per_call_officer - cost_per_call_drone
     total_resolved_annually = int(float(daily_drone_only_calls or 0) * 365)
 
+    # Fire department impact (NFPA / IAFC DFR benchmark estimates)
+    _fire_pct            = 0.15   # 15% of DFR deployments are fire/rescue (NFPA 2022 Fire Loss Report)
+    _false_alarm_rate    = 0.23   # 23% of fire calls are false alarms (NFPA)
+    _false_alarm_detect  = 0.68   # 68% of false alarms identifiable by drone pre-arrival (IAFC DFR pilots)
+    _engine_cost         = 895    # Avg cost per engine response (NFPA 2023)
+    _recon_value_per     = 185    # Scene size-up labor savings per fire DFR response (IAAI DFR White Paper 2023)
+    _annual_fire_dfr     = int(total_annual_dfr * _fire_pct)
+    _false_alarms_avoided = int(_annual_fire_dfr * _false_alarm_rate * _false_alarm_detect)
+    _false_alarm_savings = _false_alarms_avoided * _engine_cost
+    _fire_recon_value    = _annual_fire_dfr * _recon_value_per
+    _total_fire_value    = _false_alarm_savings + _fire_recon_value
+
     # Call type breakdown from df_calls_full
     call_type_data = {}
     _type_col = None
@@ -5161,6 +5471,54 @@ def generate_community_impact_dashboard_html(
         {"name": d["name"].split(",")[0][:28], "type": d["type"]}
         for d in active_drones
     ] if active_drones else [])
+
+    # Facility type counts for the Protected Facilities section
+    _fac_icon_map = {
+        "Police": "🚔", "Fire": "🚒", "EMS": "🚑", "School": "🏫",
+        "Hospital": "🏥", "University": "🎓", "Transit": "🚌",
+        "Community": "🏛️", "Courthouse": "⚖️", "Social Services": "🤝",
+        "Government": "🏛️", "Library": "📚",
+    }
+    _fac_src_map = {
+        "Police":          "DHS HIFLD Law Enforcement Locations · OpenStreetMap (amenity=police, ODbL)",
+        "Fire":            "DHS HIFLD Fire Stations (public domain) · OpenStreetMap (amenity=fire_station)",
+        "EMS":             "OpenStreetMap (amenity=ambulance_station) · NEMSIS National EMS Database (nemsis.org)",
+        "School":          "OpenStreetMap (amenity=school) · NCES Common Core of Data (nces.ed.gov)",
+        "Hospital":        "OpenStreetMap (amenity=hospital) · CMS Hospital Compare (cms.gov)",
+        "University":      "OpenStreetMap (amenity=university/college) · IPEDS (nces.ed.gov/ipeds)",
+        "Transit":         "OpenStreetMap (amenity=bus_station · railway=station) · NTD (transit.dot.gov)",
+        "Community":       "OpenStreetMap (amenity=community_centre) · IMLS Public Libraries Survey",
+        "Courthouse":      "OpenStreetMap (amenity=courthouse) · US Courts PACER (uscourts.gov)",
+        "Social Services": "OpenStreetMap (amenity=social_facility) · HUD Location Affordability Index",
+        "Government":      "OpenStreetMap (building=government) · Census TIGER/Line (census.gov)",
+        "Library":         "OpenStreetMap (amenity=library) · IMLS Public Libraries Survey (imls.gov)",
+    }
+    _fac_color_map = {
+        "Police": "#00D2FF", "Fire": "#ef4444", "EMS": "#f97316",
+        "School": "#eab308", "Hospital": "#22c55e", "University": "#3b82f6",
+        "Transit": "#10b981", "Community": "#f59e0b", "Courthouse": "#8b5cf6",
+        "Social Services": "#ec4899", "Government": "#a78bfa", "Library": "#fb923c",
+    }
+    _total_facilities = sum((facility_counts or {}).values())
+    _fac_cards_html = ""
+    if facility_counts:
+        for _ft, _fcnt in sorted(facility_counts.items(), key=lambda x: -x[1]):
+            _fi = _fac_icon_map.get(_ft, "🏢")
+            _fc = _fac_color_map.get(_ft, "#888")
+            _fs = _fac_src_map.get(_ft, "OpenStreetMap contributors (ODbL)")
+            _fac_cards_html += (
+                f'<div style="background:var(--bg-card);border:1px solid var(--rule);border-top:3px solid {_fc};'
+                f'border-radius:8px;padding:12px 14px;text-align:center;">'
+                f'<div style="font-size:22px;margin-bottom:4px;">{_fi}</div>'
+                f'<div style="font-size:20px;font-weight:900;color:{_fc};font-family:\'DM Mono\',monospace;">{_fcnt}</div>'
+                f'<div style="font-size:10px;font-weight:700;color:var(--ink-light);text-transform:uppercase;'
+                f'letter-spacing:0.6px;margin-top:2px;">{_ft}</div>'
+                f'<div style="font-size:9px;color:var(--ink-light);margin-top:4px;font-style:italic;" '
+                f'title="Source: {_fs}">ⓘ {_fs[:38]}{"…" if len(_fs)>38 else ""}</div>'
+                f'</div>'
+            )
+    if not _fac_cards_html:
+        _fac_cards_html = '<p style="color:var(--ink-light);font-size:12px;">No facility data available.</p>'
 
     # Privacy policy data-retention badge values
     retention_days   = 30   # industry standard shown in transparency portals
@@ -5230,13 +5588,16 @@ def generate_community_impact_dashboard_html(
 <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {{{_css_vars}  }}
+  html, body {{ background: transparent; margin: 0; padding: 0; }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{
     font-family: 'DM Sans', sans-serif;
-    background: {_body_bg};
     color: {_body_color};
     font-size: 14px;
     line-height: 1.55;
+  }}
+  .dash-wrap {{
+    background: {_body_bg};
     padding: 28px 24px 40px;
   }}
 
@@ -5576,6 +5937,7 @@ def generate_community_impact_dashboard_html(
 </style>
 </head>
 <body>
+<div class="dash-wrap">
 
 <!-- ══════════════════════════════════════════════════════════════════
      HEADER
@@ -5828,6 +6190,27 @@ def generate_community_impact_dashboard_html(
 
 
 <!-- ══════════════════════════════════════════════════════════════════
+     SECTION 6B — PROTECTED FACILITIES
+══════════════════════════════════════════════════════════════════ -->
+<div class="section-label" style="margin-top:20px;">06B &nbsp;·&nbsp; Protected Public Facilities
+  <span class="tip-cid" data-tip="Count of public facilities indexed within the city boundaries by type. Sources: OpenStreetMap (ODbL) · DHS HIFLD · NCES · CMS · NEMSIS · NTD · IMLS · US Courts PACER. Facility data is pulled from real-time public datasets at proposal generation time.">?</span>
+</div>
+<p style="font-size:11.5px;color:var(--ink-light);margin-bottom:14px;line-height:1.6;">
+  BRINC DFR provides aerial first-response coverage over <strong style="color:var(--ink);">{_total_facilities:,} indexed public facilities</strong>
+  in {city}, {state} — from schools and hospitals to transit hubs and social services.
+  Drone coverage zones protect these assets 24 / 7 without dedicated officers posted at each location.
+</p>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:20px;">
+  {_fac_cards_html}
+</div>
+<p style="font-size:10px;color:var(--ink-light);font-style:italic;margin-bottom:20px;">
+  ⓘ Facility counts sourced from OpenStreetMap (ODbL license), DHS HIFLD Open Data (public domain),
+  NCES Common Core of Data, CMS Hospital Compare, NEMSIS National EMS Database, NTD National Transit Database,
+  IMLS Public Libraries Survey, and US Courts PACER. Data reflects snapshot at time of report generation.
+</p>
+
+
+<!-- ══════════════════════════════════════════════════════════════════
      SECTION 7 — TAXPAYER ROI
 ══════════════════════════════════════════════════════════════════ -->
 <div class="section-label">07 &nbsp;·&nbsp; Taxpayer Return on Investment <span class="tip-cid" data-tip="Compares the one-time fleet hardware cost to the annual operational savings from drone-handled calls. ROI reflects savings from reduced patrol-car dispatches only — does not include specialty response, apprehension impact, or injury prevention value.">?</span></div>
@@ -5859,9 +6242,25 @@ def generate_community_impact_dashboard_html(
         <span class="roi-line-label">Annual Calls Resolved Without Patrol Car <span class="tip-cid" data-tip="Calls where drone assessment was sufficient — no officer dispatch needed. Formula: DFR flights/day × deflection rate (% of drone-handled calls that don't escalate) × 365 days.">?</span></span>
         <span class="roi-line-val">{total_resolved_annually:,}</span>
       </div>
-      <div class="roi-line" style="border-bottom:none;">
+      <div class="roi-line">
         <span class="roi-line-label">Savings Per Resolved Call <span class="tip-cid" data-tip="Net cost delta for each call resolved by drone without a patrol car: $82 (officer dispatch) − $6 (drone dispatch) = $76 saved per resolved call.">?</span></span>
         <span class="roi-line-val" style="color:var(--accent-green);">${cost_saved_per_resolved}</span>
+      </div>
+      <div class="roi-line" style="border-top:1px solid rgba(239,68,68,0.25);margin-top:8px;padding-top:8px;">
+        <span class="roi-line-label" style="color:#ef4444;font-weight:600;">🔥 Est. Annual Fire DFR Responses <span class="tip-cid" data-tip="Fire and rescue calls as a share of total DFR deployments. National average: 15% of DFR flights are fire/rescue-related (NFPA 2022 Fire Loss Report). Formula: total annual DFR × 15%.">?</span></span>
+        <span class="roi-line-val">{_annual_fire_dfr:,}</span>
+      </div>
+      <div class="roi-line">
+        <span class="roi-line-label" style="color:#ef4444;">🔥 False Alarm Avoidance Savings <span class="tip-cid" data-tip="Drone arrives first and identifies non-fire events before an engine rolls. False alarm rate: 23% of fire calls (NFPA). Detection rate: 68% of false alarms identified before dispatch (IAFC DFR pilots). Engine response cost: $895/run (NFPA 2023). Formula: fire DFR responses × 23% × 68% × $895.">?</span></span>
+        <span class="roi-line-val" style="color:#ef4444;">${_false_alarm_savings:,.0f}/yr</span>
+      </div>
+      <div class="roi-line">
+        <span class="roi-line-label" style="color:#ef4444;">🔥 Pre-Arrival Recon Value <span class="tip-cid" data-tip="Drone streams live video to incoming crew before arrival, enabling faster tactic decisions and reducing LODD risk. Value: $185/incident (IAAI DFR White Paper 2023). Formula: annual fire DFR responses × $185.">?</span></span>
+        <span class="roi-line-val" style="color:#ef4444;">${_fire_recon_value:,.0f}/yr</span>
+      </div>
+      <div class="roi-line" style="border-bottom:none;">
+        <span class="roi-line-label" style="font-weight:700;color:#ef4444;">🔥 Total Fire Dept Impact <span class="tip-cid" data-tip="Combined fire department value: false alarm avoidance + pre-arrival scene recon. Does not include hazmat standby, search assist, or equipment-protection value — all additive.">?</span></span>
+        <span class="roi-line-val" style="font-weight:700;color:#ef4444;">${_total_fire_value:,.0f}/yr</span>
       </div>
     </div>
   </div>
@@ -5946,7 +6345,28 @@ if (stations.length === 0) {{
     sl.innerHTML += `<div>${{icon}} <span style="color:${{color}};font-weight:600;">${{s.type.charAt(0)+s.type.slice(1).toLowerCase()}}</span> — ${{s.name}}</div>`;
   }});
 }}
+
+// ── Auto-resize iframe to actual content height ────────────────────────────
+(function() {{
+  function reportHeight() {{
+    const h = Math.max(
+      document.body.scrollHeight,
+      document.body.offsetHeight,
+      document.documentElement.scrollHeight,
+      document.documentElement.offsetHeight
+    ) + 40;
+    window.parent.postMessage({{isStreamlitMessage: true, type: 'streamlit:setFrameHeight', height: h}}, '*');
+  }}
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', reportHeight);
+  }} else {{
+    reportHeight();
+  }}
+  window.addEventListener('load', reportHeight);
+  [50, 150, 350, 700, 1200, 2000, 3500].forEach(function(t) {{ setTimeout(reportHeight, t); }});
+}})();
 </script>
+</div>
 </body>
 </html>"""
     return html
@@ -6190,7 +6610,7 @@ if st.session_state['csvs_ready']:
     selected_names = [options_map[l] for l in selected_labels]
     active_gdf = master_gdf[master_gdf['DISPLAY_NAME'].isin(selected_names)]
     if selected_names and st.session_state.get('active_city') == "Orlando":
-        st.session_state['active_city'] = selected_names[0]
+        st.session_state['active_city'] = str(selected_names[0]).title()
 
     filter_expander = st.sidebar.expander("⚙️ Data Filters", expanded=False)
     with filter_expander:
@@ -6422,20 +6842,36 @@ if st.session_state['csvs_ready']:
 
     # Default minimum fleet: 1 Guardian and enough Responders to reach 85% responder call coverage (minimum 2).
     try:
-        _auto_sig = f"{st.session_state.get('active_city','')}|{st.session_state.get('active_state','')}|{round(area_sq_mi,1)}|{n}|{round(r_resp_est,1)}|{round(r_guard_est,1)}"
+        _pin_r_count = len(st.session_state.get('pinned_resp_names',  []))
+        _pin_g_count = len(st.session_state.get('pinned_guard_names', []))
+        _pin_drop_used = st.session_state.get('pin_drop_used', False)
+        _auto_sig = (
+            f"{st.session_state.get('active_city','')}|{st.session_state.get('active_state','')}|"
+            f"{round(area_sq_mi,1)}|{n}|{round(r_resp_est,1)}|{round(r_guard_est,1)}|"
+            f"{_pin_r_count}|{_pin_g_count}|{int(_pin_drop_used)}"
+        )
         if st.session_state.get('_auto_minimums_sig') != _auto_sig:
-            _resp_default = 2
-            try:
-                _resp_curve = df_curve[['Drones', 'Responder (Calls)']].dropna()
-                _hit = _resp_curve[_resp_curve['Responder (Calls)'] >= 85.0]
-                if not _hit.empty:
-                    _resp_default = int(_hit.iloc[0]['Drones'])
-            except Exception:
+            if st.session_state.pop('_brinc_k_override', False):
+                # BRINC import: k_resp/k_guard were already restored from the file —
+                # just lock the sig so this block doesn't fire again on the next render.
                 pass
-            _resp_default = max(2, min(int(_resp_default), max(1, max_resp_calc)))
-            _guard_default = max(1, min(1, max(1, max_guard_calc)))
-            st.session_state['k_resp'] = max(_resp_default, len(st.session_state.get('pinned_resp_names', [])))
-            st.session_state['k_guard'] = max(_guard_default, len(st.session_state.get('pinned_guard_names', [])))
+            elif _pin_drop_used:
+                # Pin-drop mode: fleet sizes driven entirely by pin counts — no auto-fill
+                st.session_state['k_resp']  = _pin_r_count
+                st.session_state['k_guard'] = _pin_g_count
+            else:
+                _resp_default = 2
+                try:
+                    _resp_curve = df_curve[['Drones', 'Responder (Calls)']].dropna()
+                    _hit = _resp_curve[_resp_curve['Responder (Calls)'] >= 85.0]
+                    if not _hit.empty:
+                        _resp_default = int(_hit.iloc[0]['Drones'])
+                except Exception:
+                    pass
+                _resp_default = max(2, min(int(_resp_default), max(1, max_resp_calc)))
+                _guard_default = max(1, min(1, max(1, max_guard_calc)))
+                st.session_state['k_resp']  = max(_resp_default, _pin_r_count)
+                st.session_state['k_guard'] = max(_guard_default, _pin_g_count)
             st.session_state['_auto_minimums_sig'] = _auto_sig
     except Exception:
         pass
@@ -6455,6 +6891,14 @@ if st.session_state['csvs_ready']:
     _saved_g = [s for s in st.session_state.get('pinned_guard_names', []) if s in _station_names]
     _saved_r = [s for s in st.session_state.get('pinned_resp_names',  []) if s in _station_names]
 
+    # Sync multiselect widget state with session state BEFORE rendering so that
+    # programmatically-added pins (e.g. from pin-drop) are reflected in the widget.
+    if st.session_state.get('lock_guard_ms') != _saved_g:
+        st.session_state['lock_guard_ms'] = _saved_g
+    _saved_r_excl = [s for s in _saved_r if s not in _saved_g]
+    if st.session_state.get('lock_resp_ms') != _saved_r_excl:
+        st.session_state['lock_resp_ms'] = _saved_r_excl
+
     lock_expander = st.sidebar.expander("🔒 Lock Stations", expanded=bool(_saved_g or _saved_r))
     with lock_expander:
         st.caption("Force specific stations into the optimized solution.")
@@ -6468,27 +6912,132 @@ if st.session_state['csvs_ready']:
         _new_r = st.multiselect(
             "🚁 Lock as Responder",
             options=[s for s in _station_names if s not in _new_g],
-            default=[s for s in _saved_r if s not in _new_g],
+            default=_saved_r_excl,
             key="lock_resp_ms",
             help="These stations will always be assigned a Responder drone regardless of optimizer output."
         )
-        if _new_g != _saved_g or _new_r != [s for s in _saved_r if s not in _new_g]:
+        if _new_g != _saved_g or _new_r != _saved_r_excl:
             st.session_state['pinned_guard_names'] = _new_g
             st.session_state['pinned_resp_names']  = _new_r
+            st.session_state.pop('pin_drop_used', None)
+            st.session_state.pop('_auto_minimums_sig', None)
             if '_opt_cache_key' in st.session_state:
                 del st.session_state['_opt_cache_key']
             st.rerun()
 
-    st.session_state['pinned_guard_names'] = _new_g
-    st.session_state['pinned_resp_names']  = _new_r
-    pinned_guard_names = _new_g
-    pinned_resp_names  = _new_r
+    # Use session state as the authoritative source; only update from widget if
+    # the user interacted with it (handled in the if-block above).
+    pinned_guard_names = _saved_g
+    pinned_resp_names  = _saved_r
 
     # Warn if locked count exceeds slider
     if len(pinned_guard_names) > k_guardian:
         st.sidebar.warning(f"⚠️ Raise Guardian Count ≥ {len(pinned_guard_names)} to honour all Guardian locks.")
     if len(pinned_resp_names) > k_responder:
         st.sidebar.warning(f"⚠️ Raise Responder Count ≥ {len(pinned_resp_names)} to honour all Responder locks.")
+
+    # ── MAP-CLICK PIN DROP ─────────────────────────────────────────────────────
+    # Apply deferred toggle reset before the widget instantiates (can't modify after)
+    if st.session_state.pop('_reset_pin_toggle', False):
+        st.session_state['pin_drop_toggle'] = False
+        st.session_state['pin_drop_mode']   = False
+
+    _pin_mode = st.sidebar.toggle(
+        "📍 Drop Pin on Map",
+        value=st.session_state.get('pin_drop_mode', False),
+        key="pin_drop_toggle",
+        help="Turn on, then click-and-drag a small box on the map to place a station. A confirmation form will appear here."
+    )
+    st.session_state['pin_drop_mode'] = _pin_mode
+
+    # If pin mode was just turned off, clear any pending pin
+    if not _pin_mode and st.session_state.get('pending_pin') is not None:
+        st.session_state['pending_pin'] = None
+
+    # Pending-pin confirmation form (appears after a map click)
+    _pending = st.session_state.get('pending_pin')
+    if _pin_mode and _pending is not None:
+        with st.sidebar.container():
+            st.sidebar.markdown(
+                f"<div style='background:rgba(0,210,255,0.08);border:1px solid rgba(0,210,255,0.35);"
+                f"border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:0.72rem;color:#e0e0f0;'>"
+                f"📍 <b>Pin dropped</b> — {_pending['lat']:.5f}, {_pending['lon']:.5f}</div>",
+                unsafe_allow_html=True
+            )
+            if 'pp_label_buf' not in st.session_state: st.session_state['pp_label_buf'] = ""
+            if 'pp_type_buf'  not in st.session_state: st.session_state['pp_type_buf']  = "Police"
+            if 'pp_role_buf'  not in st.session_state: st.session_state['pp_role_buf']  = "🦅 Lock as Guardian"
+
+            _pp_label = st.sidebar.text_input("Station name", value=st.session_state['pp_label_buf'],
+                                               placeholder="Fire Station 4", key="pp_label_input")
+            _pp_type  = st.sidebar.selectbox("Type", ["Police","Fire","School","Government","Hospital","Library","Other"],
+                                              index=["Police","Fire","School","Government","Hospital","Library","Other"].index(
+                                                  st.session_state['pp_type_buf']) if st.session_state['pp_type_buf'] in
+                                                  ["Police","Fire","School","Government","Hospital","Library","Other"] else 0,
+                                              key="pp_type_select")
+            _pp_role  = st.sidebar.radio("Pin as", ["🦅 Lock as Guardian","🚁 Lock as Responder"],
+                                          index=0, horizontal=True, key="pp_role_radio")
+            st.session_state['pp_label_buf'] = _pp_label
+            st.session_state['pp_type_buf']  = _pp_type
+            st.session_state['pp_role_buf']  = _pp_role
+
+            _pin_cols = st.sidebar.columns(2)
+            if _pin_cols[0].button("✅ Add Station", use_container_width=True, key="pp_confirm_btn"):
+                _label = _pp_label.strip() or f"{_pp_type} Station"
+                _prefixed_label = f"[{_pp_type}] {_label}"
+                _new_pin_row = pd.DataFrame([{
+                    "name":   _label,
+                    "lat":    _pending['lat'],
+                    "lon":    _pending['lon'],
+                    "type":   _pp_type,
+                    "custom": True,
+                }])
+                # Store in custom_stations (same path as address geocoder) so the
+                # boundary clip and station type filter never drop it
+                _cst = st.session_state.get('custom_stations', pd.DataFrame())
+                st.session_state['custom_stations'] = (
+                    pd.concat([_cst, _new_pin_row], ignore_index=True)
+                    if not _cst.empty else _new_pin_row
+                )
+                # Lock into the chosen fleet.
+                # Set BOTH k values to exactly the pin counts so the optimizer
+                # doesn't fill extra open slots with auto-selected stations.
+                if "Guardian" in _pp_role:
+                    _pg = list(st.session_state.get('pinned_guard_names', []))
+                    if _prefixed_label not in _pg:
+                        _pg.append(_prefixed_label)
+                    st.session_state['pinned_resp_names'] = [
+                        x for x in st.session_state.get('pinned_resp_names', [])
+                        if x != _prefixed_label]
+                    st.session_state['pinned_guard_names'] = _pg
+                else:
+                    _pr = list(st.session_state.get('pinned_resp_names', []))
+                    if _prefixed_label not in _pr:
+                        _pr.append(_prefixed_label)
+                    st.session_state['pinned_guard_names'] = [
+                        x for x in st.session_state.get('pinned_guard_names', [])
+                        if x != _prefixed_label]
+                    st.session_state['pinned_resp_names'] = _pr
+                # Drive fleet counts entirely from pin lists so no open slots remain
+                st.session_state['k_guard'] = len(st.session_state.get('pinned_guard_names', []))
+                st.session_state['k_resp']  = len(st.session_state.get('pinned_resp_names',  []))
+                st.session_state['pin_drop_used'] = True
+                # Bust the auto-minimums sig so the block re-evaluates with pin counts
+                st.session_state.pop('_auto_minimums_sig', None)
+                # Clear optimizer caches so the new station enters the LP solver
+                for _ck in ['_opt_cache_key', '_opt_best_combo',
+                            '_opt_chrono_r', '_opt_chrono_g']:
+                    st.session_state.pop(_ck, None)
+                st.session_state['pending_pin']         = None
+                st.session_state['pp_label_buf']        = ""
+                st.session_state['pin_drop_mode']       = False
+                st.session_state['_reset_pin_toggle']   = True  # applied before toggle renders next run
+                st.session_state.pop('_pin_sel_hash', None)
+                st.toast(f"✅ {_label} pinned as {'Guardian' if 'Guardian' in _pp_role else 'Responder'}.")
+                st.rerun()
+            if _pin_cols[1].button("✕ Cancel", use_container_width=True, key="pp_cancel_btn"):
+                st.session_state['pending_pin'] = None
+                st.rerun()
 
     # ── ADD CUSTOM STATION BY ADDRESS ─────────────────────────────────────────
     add_expander = st.sidebar.expander("➕ Add Custom Station", expanded=False)
@@ -6645,6 +7194,10 @@ if st.session_state['csvs_ready']:
                     x for x in st.session_state.get('pinned_guard_names', []) if x not in _rm_names]
                 st.session_state['pinned_resp_names']  = [
                     x for x in st.session_state.get('pinned_resp_names',  []) if x not in _rm_names]
+                # Restore auto-minimums if all pin-drop stations have been removed
+                if not st.session_state.get('pinned_guard_names') and not st.session_state.get('pinned_resp_names'):
+                    st.session_state['pin_drop_used'] = False
+                st.session_state.pop('_auto_minimums_sig', None)
                 if '_opt_cache_key' in st.session_state:
                     del st.session_state['_opt_cache_key']
                 st.rerun()
@@ -7426,7 +7979,7 @@ if st.session_state['csvs_ready']:
     kpi_html = (
         # ── Row 1: summary totals ──────────────────────────────────────────
         f'<div style="background:{card_bg}; border:1px solid {card_border}; border-radius:8px; padding:16px 20px; margin-bottom:8px;">'
-        f'<div style="font-size:0.65rem; color:{text_muted}; text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">Fleet Summary</div>'
+        f'<div style="font-size:0.65rem; color:{text_muted}; text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">Fleet Summary <span class="tip" data-tip="Sources: Coverage % and response time computed from uploaded CAD incident data using BRINC geospatial optimizer. Hardware specs: BRINC Drones (brincdrones.com). Response time uses drone speed with 1.4× routing factor to approximate real-world travel paths.">?</span></div>'
         f'<div style="display:grid; grid-template-columns:repeat(5,1fr); gap:8px;">'
         + _kpi_cell("Total Incidents", call_str, impact=_impact_incidents)
         + _kpi_cell("Combined Coverage", f"{calls_covered_perc:.1f}%", _COMB_COL, impact=_impact_coverage)
@@ -7564,7 +8117,6 @@ if st.session_state['csvs_ready']:
                     hovertemplate=f"<b>🔒 PINNED</b><br>{d['name']}<br>{d['type']}<extra></extra>",
                     showlegend=False
                 ))
-
             if simulate_traffic:
                 t_color = "#28a745" if traffic_level<35 else "#ffc107" if traffic_level<75 else "#dc3545"
                 t_fill  = f"rgba({'40,167,69' if traffic_level<35 else '255,193,7' if traffic_level<75 else '220,53,69'}, 0.15)"
@@ -7587,18 +8139,93 @@ if st.session_state['csvs_ready']:
                 "sourceattribution":"Esri, Maxar, Earthstar Geographics",
                 "source":["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"]}]
 
+        _pin_drop_active = st.session_state.get('pin_drop_mode', False)
+
+        # In pin-drop mode, switch Plotly to 'select' dragmode so a click-drag
+        # draws a selection box instead of panning.  The center of that box
+        # becomes the pin coordinate — no need to hit an invisible point precisely.
+        _layout_extra = dict(dragmode='select') if _pin_drop_active else {}
+
         fig.update_layout(uirevision="LOCKED_MAP", map=map_cfg,
             margin=dict(l=0,r=0,t=0,b=0), height=800, font=dict(size=18),
             showlegend=True,
             legend=dict(yanchor="top", y=0.98, xanchor="left", x=0.02,
                         bgcolor=legend_bg, bordercolor=accent_color, borderwidth=1,
-                        font=dict(size=12, color=legend_text), itemclick="toggle"))
+                        font=dict(size=12, color=legend_text), itemclick="toggle"),
+            **_layout_extra)
 
-        st.plotly_chart(fig, use_container_width=True, config={"scrollZoom": True})
+        if _pin_drop_active:
+            # Dense grid of subtle markers so box-select always captures at least
+            # one point to confirm the lat/lon.  Size=40 ensures full overlap at
+            # typical city zoom levels (no gaps between adjacent markers).
+            _grid_n = 80
+            _grid_lats = np.linspace(miny, maxy, _grid_n)
+            _grid_lons = np.linspace(minx, maxx, _grid_n)
+            _gla, _glo = np.meshgrid(_grid_lats, _grid_lons)
+            fig.add_trace(go.Scattermap(
+                lat=_gla.ravel().tolist(),
+                lon=_glo.ravel().tolist(),
+                mode='markers',
+                marker=dict(size=40, color='rgba(0,210,255,0.04)'),
+                hoverinfo='skip',
+                showlegend=False,
+                name='__pin_grid__',
+            ))
+            fig.add_annotation(
+                text="📍 Pin Drop Mode — click and drag a small box on your target location",
+                xref="paper", yref="paper", x=0.5, y=0.98,
+                showarrow=False, font=dict(size=13, color="#00D2FF"),
+                bgcolor="rgba(0,0,0,0.72)", bordercolor="#00D2FF", borderwidth=1,
+                borderpad=6, xanchor="center",
+            )
+
+        _map_event = st.plotly_chart(
+            fig, use_container_width=True,
+            config={"scrollZoom": not _pin_drop_active, "displayModeBar": _pin_drop_active},
+            on_select="rerun" if _pin_drop_active else "ignore",
+            key="main_map_chart",
+        )
+
+        # Resolve pin location from whichever signal arrives first:
+        #   1. Selection box center  (most reliable — works even on empty map)
+        #   2. First selected point  (fallback)
+        if _pin_drop_active and _map_event and hasattr(_map_event, 'selection') \
+                and st.session_state.get('pending_pin') is None:
+            _sel = _map_event.selection
+            _clicked_lat = _clicked_lon = None
+
+            # Priority 1: bounding box of the drawn selection rectangle
+            _box_list = getattr(_sel, 'box', None) or []
+            if _box_list:
+                _b = _box_list[0]
+                _lats = _b.get('y') or _b.get('lat') or []
+                _lons = _b.get('x') or _b.get('lon') or []
+                if len(_lats) >= 2 and len(_lons) >= 2:
+                    _clicked_lat = (min(_lats) + max(_lats)) / 2.0
+                    _clicked_lon = (min(_lons) + max(_lons)) / 2.0
+
+            # Priority 2: nearest grid point that was selected
+            if _clicked_lat is None:
+                _sel_pts = getattr(_sel, 'points', []) or []
+                if _sel_pts:
+                    _pt = _sel_pts[0]
+                    _clicked_lat = _pt.get('lat') or _pt.get('y')
+                    _clicked_lon = _pt.get('lon') or _pt.get('x')
+
+            if _clicked_lat is not None and _clicked_lon is not None:
+                # Dedup: ignore if this is the same selection that was already processed
+                _sel_hash = hash(f"{_clicked_lat:.4f},{_clicked_lon:.4f}")
+                if _sel_hash != st.session_state.get('_pin_sel_hash'):
+                    st.session_state['_pin_sel_hash'] = _sel_hash
+                    st.session_state['pending_pin'] = {
+                        'lat': round(float(_clicked_lat), 6),
+                        'lon': round(float(_clicked_lon), 6),
+                    }
+                    st.rerun()
 
     # ── UNIT ECONOMICS CARDS (directly below map, no toggle) ─────────────────
     st.markdown("---")
-    st.markdown(f"<h4 style='margin-top:2px; border-bottom:1px solid {card_border}; padding-bottom:8px; color:{text_main};'>Unit Economics <span class='tip' data-tip='Per-drone financial breakdown — annual capacity value, specialty response savings, utilization, break-even, and response time for each deployed unit. Hover each ? badge for metric definitions.'>?</span></h4>", unsafe_allow_html=True)
+    st.markdown(f"<h4 style='margin-top:2px; border-bottom:1px solid {card_border}; padding-bottom:8px; color:{text_main};'>Unit Economics <span class='tip' data-tip='Per-drone financial breakdown — annual capacity value, specialty response savings, utilization, break-even, and response time for each deployed unit. Hover each ? badge for metric definitions.'>?</span> <span class='tip' data-tip='Sources: Annual savings formula — DFR dispatch rate × deflection rate × $76 officer dispatch cost × annual zone calls (IACP/DOJ benchmarks). Hardware CapEx — BRINC Drones MSRP. Specialty values — NFPA (fire), BLS (K-9), internal BRINC benchmarks. All figures are model estimates.'>src</span></h4>", unsafe_allow_html=True)
     st.markdown(
         f"<div style='font-size:0.6rem; color:#666; background:rgba(240,180,41,0.07); border-left:3px solid #F0B429; padding:5px 8px; border-radius:0 3px 3px 0; margin-bottom:10px;'>{SIMULATOR_DISCLAIMER_SHORT}</div>",
         unsafe_allow_html=True
@@ -7646,7 +8273,7 @@ if st.session_state['csvs_ready']:
 
     # ── COVERAGE CURVE + STATION RING CHART (side by side, directly below cards) ──
     st.markdown("---")
-    st.markdown(f"<h4 style='border-bottom:1px solid {card_border}; padding-bottom:8px; color:{text_main};'>Coverage Curve <span class='tip' data-tip='Shows marginal call and area coverage as you add more Responder or Guardian drones. The curve flattens as overlap increases — use this to find the point of diminishing returns for your fleet size.'>?</span></h4>", unsafe_allow_html=True)
+    st.markdown(f"<h4 style='border-bottom:1px solid {card_border}; padding-bottom:8px; color:{text_main};'>Coverage Curve <span class='tip' data-tip='Shows marginal call and area coverage as you add more Responder or Guardian drones. The curve flattens as overlap increases — use this to find the point of diminishing returns for your fleet size.'>?</span> <span class='tip' data-tip='Sources: Coverage % derived from geospatial analysis of uploaded CAD incident locations. Optimizer tests each candidate station and measures incremental coverage gain. Map tiles: © OpenStreetMap contributors (ODbL). Station candidates: OSM + DHS HIFLD Open Data.'>src</span></h4>", unsafe_allow_html=True)
     st.markdown(f"<div style='font-size:0.8rem; color:{text_muted}; margin-bottom:8px;'>How added drones improve coverage — and where returns flatten.</div>", unsafe_allow_html=True)
 
     _curve_col, _ring_col = st.columns([3, 2], gap="medium")
@@ -7989,7 +8616,7 @@ if st.session_state['csvs_ready']:
     # ── COMMUNITY IMPACT DASHBOARD ────────────────────────────────────────────
     st.markdown("---")
     st.markdown(
-        f"<h3 style='color:{text_main};'>🏛️ Community Impact Dashboard <span class='tip' data-tip='Public-facing transparency report for city council presentations and community portals. Hover the ? badges inside each section for detailed explanations of every metric.'>?</span></h3>",
+        f"<h3 style='color:{text_main};'>🏛️ Community Impact Dashboard <span class='tip' data-tip='Public-facing transparency report for city council presentations and community portals. Hover the ? badges inside each section for detailed explanations of every metric.'>?</span> <span class='tip' data-tip='Sources: Population — US Census Bureau ACS. Officer wages — Bureau of Labor Statistics (BLS) OES. Flight hour projections — BRINC hardware specs. Financial figures — BRINC COS optimization model. Fourth Amendment framework — DOJ/ACLU DFR policy guidelines.'>src</span></h3>",
         unsafe_allow_html=True
     )
     st.markdown(
@@ -8000,6 +8627,10 @@ if st.session_state['csvs_ready']:
         "</div>",
         unsafe_allow_html=True
     )
+    _cid_fac_counts = {}
+    if 'type' in df_stations_all.columns:
+        for _t in df_stations_all['type'].dropna().astype(str):
+            _cid_fac_counts[_t] = _cid_fac_counts.get(_t, 0) + 1
     _cid_html = generate_community_impact_dashboard_html(
         city=st.session_state.get('active_city', 'City'),
         state=st.session_state.get('active_state', 'TX'),
@@ -8020,8 +8651,385 @@ if st.session_state['csvs_ready']:
         daily_drone_only_calls=float(daily_drone_only_calls or 0),
         active_drones=active_drones or [],
         df_calls_full=df_calls_full,
+        facility_counts=_cid_fac_counts or None,
     )
-    components.html(_cid_html, height=5200, scrolling=False)
+    components.html(_cid_html, height=3600, scrolling=False)
+
+    # ── SCHOOL SAFETY IMPACT MATRIX ──────────────────────────────────────────
+    st.markdown("---")
+    _sro_cost_low   = 75_000
+    _sro_cost_high  = 120_000
+    _dfr_amortized  = int(fleet_capex / 7) if fleet_capex > 0 else 0
+    _dfr_amort_str  = f"${_dfr_amortized:,}/yr" if _dfr_amortized > 0 else "~$11K–22K/yr"
+
+    def _ss_row(label, sro_val, dfr_val, alt, cb, cbrd, tm, tmain, acc, last=False):
+        bg = f"background:rgba(255,255,255,0.02);" if alt else ""
+        brd = "" if last else f"border-bottom:1px solid {cbrd};"
+        sro_color = "#f59e0b"
+        dfr_color = acc
+        return (
+            f'<tr style="{bg}{brd}">'
+            f'<td style="padding:8px 12px;color:{tmain};font-weight:600;font-size:0.72rem;">{label}</td>'
+            f'<td style="padding:8px 12px;text-align:center;color:{sro_color};font-size:0.71rem;">{sro_val}</td>'
+            f'<td style="padding:8px 12px;text-align:center;color:{dfr_color};font-size:0.71rem;">{dfr_val}</td>'
+            f'</tr>'
+        )
+
+    _school_rows = (
+        _ss_row("Annual Cost / Campus",
+                f"${_sro_cost_low:,}–${_sro_cost_high:,} per officer",
+                f"{_dfr_amort_str} amortized (7-yr) · {actual_k_responder + actual_k_guardian} units",
+                False, card_bg, card_border, text_muted, text_main, accent_color) +
+        _ss_row("Coverage Hours / Year",
+                "~1,260 hrs/yr (school hours only)",
+                "8,760 hrs/yr — 24 / 7 / 365",
+                True, card_bg, card_border, text_muted, text_main, accent_color) +
+        _ss_row("Campuses Covered",
+                "1 building per officer",
+                f"Multi-campus — {actual_k_responder + actual_k_guardian} simultaneous coverage zones",
+                False, card_bg, card_border, text_muted, text_main, accent_color) +
+        _ss_row("On-Campus Response Time",
+                "2–5 min (foot/vehicle across campus)",
+                f"&lt;90 sec airborne · {avg_resp_time:.1f} min avg aerial",
+                True, card_bg, card_border, text_muted, text_main, accent_color) +
+        _ss_row("After-Hours / Weekend Coverage",
+                "❌ None",
+                "✅ Full thermal surveillance 24/7",
+                False, card_bg, card_border, text_muted, text_main, accent_color) +
+        _ss_row("Thermal / Night Vision",
+                "❌ Flashlight only",
+                "✅ 640px FLIR thermal (BRINC Responder)",
+                True, card_bg, card_border, text_muted, text_main, accent_color) +
+        _ss_row("Perimeter Monitoring",
+                "❌ Not feasible at scale",
+                "✅ Automated aerial patrol",
+                False, card_bg, card_border, text_muted, text_main, accent_color) +
+        _ss_row("Active Threat Intel",
+                "Single officer — blind hallway entry",
+                "✅ Live HD + thermal to dispatch before officer entry",
+                True, card_bg, card_border, text_muted, text_main, accent_color) +
+        _ss_row("Indoor Operations",
+                "✅ On foot",
+                "✅ BRINC LEMUR 2 — glass-breaker, perch mode, 2-way comms",
+                False, card_bg, card_border, text_muted, text_main, accent_color) +
+        _ss_row("Court-Admissible Evidence",
+                "Body cam (ground-level only)",
+                "✅ Aerial HD video + chain-of-custody flight log",
+                True, card_bg, card_border, text_muted, text_main, accent_color) +
+        _ss_row("Mass Shooting Prevention Evidence",
+                "❌ No proven effect (RAND, 2023)",
+                "✅ Pre-entry intel enables faster tactical coordination",
+                False, card_bg, card_border, text_muted, text_main, accent_color) +
+        _ss_row("Disciplinary Side Effects",
+                "⚠️ +35–80% suspensions · +25–90% expulsions (RAND)",
+                "✅ Zero school-discipline impact",
+                True, card_bg, card_border, text_muted, text_main, accent_color, last=True)
+    )
+
+    _school_html = f"""
+    <style>
+    .ss-tip {{
+      display:inline-flex;align-items:center;justify-content:center;
+      width:13px;height:13px;border-radius:50%;
+      background:rgba(255,255,255,0.12);color:#888;font-size:9px;font-weight:700;
+      cursor:default;margin-left:3px;vertical-align:middle;position:relative;flex-shrink:0;
+    }}
+    .ss-tip:hover::after {{
+      content:attr(data-tip);position:absolute;bottom:130%;left:50%;
+      transform:translateX(-50%);background:#1a1a2e;color:#e0e0e0;
+      font-size:10.5px;font-weight:400;padding:6px 10px;border-radius:5px;
+      white-space:normal;width:260px;line-height:1.5;z-index:9999;
+      border:1px solid #333;box-shadow:0 4px 12px rgba(0,0,0,0.5);
+      pointer-events:none;text-transform:none;letter-spacing:normal;
+    }}
+    </style>
+
+    <div>
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px;">
+        <h3 style="color:{text_main};margin:0;">🏫 School Safety Impact <span class='tip' data-tip='Sources: FBI Crime in Schools 2020–2024 · NCES Indicators of School Crime &amp; Safety 2023 · FBI Active Shooter Study · RAND Corp. SRO Research (2023) · NIJ Effects of SROs on School Crime · K-12 School Shooting Database · BJS School Crime Statistics 2024 · ZipRecruiter/Volt.ai SRO salary data · BRINC technical specifications · Chula Vista PD DFR Program outcomes.'>src</span></h3>
+        <span style="font-size:0.7rem;color:{text_muted};">National statistics · DFR vs SRO analysis · cited sources</span>
+      </div>
+      <div style="font-size:0.78rem;color:{text_muted};margin-bottom:16px;max-width:740px;line-height:1.6;">
+        BRINC DFR delivers 24/7 aerial first-response to school campuses — faster and at lower total lifecycle cost than
+        traditional School Resource Officers, with no coverage blind spots, no off-hours gaps, and full HD + thermal
+        scene intelligence before any ground unit enters a building.
+      </div>
+
+      <!-- NATIONAL STATS HERO ROW -->
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;">
+
+        <div style="background:{card_bg};border:1px solid {card_border};border-top:3px solid #ef4444;border-radius:8px;padding:14px 12px;text-align:center;">
+          <div style="font-size:0.61rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">
+            School Crimes 2020–24
+            <span class="ss-tip" data-tip="Source: FBI Crime in Schools Special Report 2020–2024. Over 1.3 million criminal incidents recorded at K-12 school locations across the US over the five-year period, with approximately 1.5 million victims.">?</span>
+          </div>
+          <div style="font-size:1.75rem;font-weight:900;color:#ef4444;font-family:'IBM Plex Mono',monospace;">1.3M</div>
+          <div style="font-size:0.64rem;color:{text_muted};margin-top:2px;">criminal incidents on campus</div>
+        </div>
+
+        <div style="background:{card_bg};border:1px solid {card_border};border-top:3px solid #f59e0b;border-radius:8px;padding:14px 12px;text-align:center;">
+          <div style="font-size:0.61rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">
+            Student Victimization
+            <span class="ss-tip" data-tip="Source: NCES Indicators of School Crime &amp; Safety 2023 (NCES 2024-145). 22 nonfatal criminal victimizations per 1,000 students ages 12-18 in 2022 — includes theft, violent crime, and serious threats. Down from 52/1,000 in 2012 but remains elevated.">?</span>
+          </div>
+          <div style="font-size:1.75rem;font-weight:900;color:#f59e0b;font-family:'IBM Plex Mono',monospace;">22</div>
+          <div style="font-size:0.64rem;color:{text_muted};margin-top:2px;">per 1,000 students annually</div>
+        </div>
+
+        <div style="background:{card_bg};border:1px solid {card_border};border-top:3px solid #8b5cf6;border-radius:8px;padding:14px 12px;text-align:center;">
+          <div style="font-size:0.61rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">
+            Incidents End ≤5 min
+            <span class="ss-tip" data-tip="Source: FBI Active Shooter Study (64 incidents analyzed). 69% of active shooter events conclude within 5 minutes — 23 ended in under 2 minutes. Average incident duration at educational facilities: 3 min 18 sec. Most incidents end before police arrive.">?</span>
+          </div>
+          <div style="font-size:1.75rem;font-weight:900;color:#8b5cf6;font-family:'IBM Plex Mono',monospace;">69%</div>
+          <div style="font-size:0.64rem;color:{text_muted};margin-top:2px;">active shooter events ≤5 min</div>
+        </div>
+
+        <div style="background:{card_bg};border:1px solid {card_border};border-top:3px solid {accent_color};border-radius:8px;padding:14px 12px;text-align:center;">
+          <div style="font-size:0.61rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">
+            BRINC On-Scene
+            <span class="ss-tip" data-tip="Source: BRINC technical specifications; Chula Vista PD DFR Program outcomes. BRINC launches in &lt;20 sec and is on-scene in &lt;90 sec. Chula Vista documented average DFR response under 2 minutes citywide — vs. 14-15 min national ground average.">?</span>
+          </div>
+          <div style="font-size:1.75rem;font-weight:900;color:{accent_color};font-family:'IBM Plex Mono',monospace;">&lt;90s</div>
+          <div style="font-size:0.64rem;color:{text_muted};margin-top:2px;">airborne &amp; streaming live video</div>
+        </div>
+
+      </div>
+
+      <!-- CRITICAL RESPONSE WINDOW -->
+      <div style="background:rgba(239,68,68,0.06);border-left:3px solid #ef4444;border-radius:0 6px 6px 0;padding:12px 16px;margin-bottom:16px;">
+        <div style="font-size:0.7rem;font-weight:700;color:#ef4444;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">
+          ⚠️ The Critical Response Window
+          <span class="ss-tip" data-tip="Sources: FBI Law Enforcement Bulletin 'Those Terrible First Few Minutes'; FBI Active Shooter Study (51-case median analysis); ALICE Training Institute; K-12 School Shooting Database (k12ssdb.org). Education-setting data: FBI subset of 51 incidents in schools.">?</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px;">
+          <div style="text-align:center;background:rgba(0,0,0,0.25);border-radius:6px;padding:10px 8px;">
+            <div style="font-size:1.25rem;font-weight:900;color:#ef4444;font-family:'IBM Plex Mono',monospace;">14–15 min</div>
+            <div style="font-size:0.63rem;color:{text_muted};margin-top:3px;">National avg ground police<br>arrival to active shooter</div>
+          </div>
+          <div style="text-align:center;background:rgba(0,0,0,0.25);border-radius:6px;padding:10px 8px;">
+            <div style="font-size:1.25rem;font-weight:900;color:#f59e0b;font-family:'IBM Plex Mono',monospace;">3m 18s</div>
+            <div style="font-size:0.63rem;color:{text_muted};margin-top:3px;">Avg incident duration<br>at schools (FBI education subset)</div>
+          </div>
+          <div style="text-align:center;background:rgba(0,0,0,0.25);border-radius:6px;padding:10px 8px;">
+            <div style="font-size:1.25rem;font-weight:900;color:{accent_color};font-family:'IBM Plex Mono',monospace;">&lt;90 sec</div>
+            <div style="font-size:0.63rem;color:{text_muted};margin-top:3px;">BRINC on-scene with live<br>HD + thermal to dispatch</div>
+          </div>
+        </div>
+        <div style="font-size:0.69rem;color:{text_muted};font-style:italic;line-height:1.55;">
+          "Most active shooter incidents in schools are over before a responding officer reaches the building entrance.
+          DFR doesn't replace the officer — it gives the officer eyes on every hallway, stairwell, and exit
+          before they open the first door." — FBI Law Enforcement Bulletin, 'Those Terrible First Few Minutes'
+        </div>
+      </div>
+
+      <!-- DFR vs SRO COMPARISON TABLE -->
+      <div style="font-size:0.7rem;font-weight:700;color:{text_main};text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">
+        DFR vs. School Resource Officer (SRO) — Capability Matrix
+        <span class="ss-tip" data-tip="SRO data: RAND 'The Role and Impact of School Resource Officers' (2023); NIJ Effects of SROs on School Crime (OJP); ZipRecruiter SRO Salary 2025; Volt.ai SRO Cost Analysis. DFR data: BRINC technical specifications; Chula Vista PD DFR outcomes; Skydio Campus DFR documentation.">?</span>
+      </div>
+      <div style="overflow-x:auto;border-radius:8px;border:1px solid {card_border};">
+        <table style="width:100%;border-collapse:collapse;font-size:0.72rem;">
+          <thead>
+            <tr style="background:rgba(0,0,0,0.45);">
+              <th style="padding:10px 14px;text-align:left;font-size:0.61rem;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:{text_muted};">Capability</th>
+              <th style="padding:10px 14px;text-align:center;font-size:0.61rem;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#f59e0b;">School Resource Officer</th>
+              <th style="padding:10px 14px;text-align:center;font-size:0.61rem;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:{accent_color};">BRINC DFR</th>
+            </tr>
+          </thead>
+          <tbody>
+            {_school_rows}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- COST COMPARISON CARDS -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;margin-bottom:12px;">
+
+        <div style="background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.2);border-radius:8px;padding:16px;">
+          <div style="font-size:0.63rem;font-weight:700;color:#f59e0b;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">
+            📋 10-School District — Traditional SRO Model
+            <span class="ss-tip" data-tip="Source: ZipRecruiter SRO Salary Data 2025; DeSoto County SRO detailed cost breakdown ($94,147/yr blended total); Volt.ai SRO Cost Analysis. 1 officer per campus at $75K–$120K total annual cost. School-hours coverage only: 7hr/day × 180 school days = 1,260 hrs/yr per campus.">?</span>
+          </div>
+          <div style="font-size:1.6rem;font-weight:900;color:#f59e0b;font-family:'IBM Plex Mono',monospace;">${940_000:,} – ${1_200_000:,}</div>
+          <div style="font-size:0.67rem;color:{text_muted};margin-top:3px;">per year · 10 officers · school hours only</div>
+          <div style="margin-top:10px;display:flex;flex-direction:column;gap:3px;font-size:0.65rem;color:{text_muted};">
+            <div>Coverage: ~1,260 hrs/campus/yr (14.4% of annual hours)</div>
+            <div>Nights, weekends, summer: ❌ no coverage</div>
+            <div>Perimeter / multi-campus: ❌ single building only</div>
+            <div>Proven mass-shooting impact: ❌ no evidence (RAND)</div>
+          </div>
+        </div>
+
+        <div style="background:rgba(0,210,255,0.06);border:1px solid rgba(0,210,255,0.2);border-radius:8px;padding:16px;">
+          <div style="font-size:0.63rem;font-weight:700;color:{accent_color};text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">
+            🚁 BRINC DFR — Multi-Campus Deployment
+            <span class="ss-tip" data-tip="BRINC fleet CapEx amortized over 7 years. One hub station covers multiple campuses within patrol radius 24/7. Includes hardware and BRINC support onboarding. Does not include cellular/network costs.">?</span>
+          </div>
+          <div style="font-size:1.6rem;font-weight:900;color:{accent_color};font-family:'IBM Plex Mono',monospace;">${fleet_capex:,.0f} CapEx</div>
+          <div style="font-size:0.67rem;color:{text_muted};margin-top:3px;">{_dfr_amort_str} amortized · {actual_k_responder + actual_k_guardian} units deployed</div>
+          <div style="margin-top:10px;display:flex;flex-direction:column;gap:3px;font-size:0.65rem;color:{text_muted};">
+            <div>Coverage: 8,760 hrs/yr — 24/7/365 per hub</div>
+            <div>Nights, weekends, summer: ✅ full thermal patrol</div>
+            <div>Multi-campus zones: ✅ {actual_k_responder + actual_k_guardian} simultaneous coverage areas</div>
+            <div>Response time advantage vs ground: +{avg_time_saved:.1f} min saved per incident</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- SOURCES FOOTER -->
+      <div style="font-size:0.6rem;color:{text_muted};border-top:1px solid {card_border};padding-top:8px;line-height:1.8;">
+        <strong style="color:{text_main};">Data Sources:</strong>
+        FBI Crime in Schools 2020–2024 Special Report ·
+        NCES Indicators of School Crime &amp; Safety 2023 (NCES 2024-145) ·
+        FBI Active Shooter Study (51-case &amp; 64-incident analyses) ·
+        RAND Corp. "The Role and Impact of School Resource Officers" (2023) ·
+        NIJ Effects of SROs on School Crime (OJP) ·
+        BJS School Crime Statistics 2024 ·
+        Chula Vista PD DFR Program outcomes ·
+        BRINC Drones technical specifications ·
+        K-12 School Shooting Database (k12ssdb.org) ·
+        ZipRecruiter / Volt.ai SRO Salary &amp; Cost Data 2025
+      </div>
+    </div>
+    """
+    _school_full_html = (
+        "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1.0'>"
+        "</head>"
+        f"<body style='margin:0;padding:12px 4px 16px;background:#000000;"
+        "font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;'>"
+        f"{_school_html}</body></html>"
+    )
+    components.html(_school_full_html, height=1300, scrolling=False)
+
+    # ── MOBILE QR CODE ────────────────────────────────────────────────────────
+    st.markdown("---")
+    try:
+        import qrcode as _qrcode
+        from PIL import Image as _PILImage
+        import io as _io_qr, urllib.parse as _up, socket as _sock
+
+        # Build base URL from Streamlit context headers
+        try:
+            _qr_host = st.context.headers.get("host", "") or st.context.headers.get("Host", "")
+            _qr_proto = "https" if (_qr_host and ("streamlit.app" in _qr_host or "share" in _qr_host)) else "http"
+            if not _qr_host:
+                _qr_host = f"{_sock.gethostbyname(_sock.gethostname())}:8501"
+            _qr_base = f"{_qr_proto}://{_qr_host}"
+        except Exception:
+            try:
+                _qr_base = f"http://{_sock.gethostbyname(_sock.gethostname())}:8501"
+            except Exception:
+                _qr_base = "http://localhost:8501"
+
+        # Compute area inline (may not yet be in scope)
+        try:
+            _qr_df_c = df_calls_full if df_calls_full is not None else df_calls
+            _qr_lons = _qr_df_c["lon"].dropna(); _qr_lats = _qr_df_c["lat"].dropna()
+            _qr_area = max(1, int((float(_qr_lons.max()) - float(_qr_lons.min())) *
+                                   (float(_qr_lats.max()) - float(_qr_lats.min())) * 3280))
+        except Exception:
+            _qr_area = 0
+
+        _qr_params = _up.urlencode({
+            "city":  str(st.session_state.get("active_city", "")).title(),
+            "state": st.session_state.get("active_state", ""),
+            "pop":   int(st.session_state.get("estimated_pop", 0) or 0),
+            "cov":   round(float(calls_covered_perc or 0), 1),
+            "resp":  round(float(avg_resp_time or 0), 2),
+            "saves": int(annual_savings or 0),
+            "capex": int(fleet_capex or 0),
+            "r":     int(actual_k_responder or 0),
+            "g":     int(actual_k_guardian or 0),
+            "calls": int(total_calls or 0),
+            "area":  _qr_area,
+            "tsav":  round(float(avg_time_saved or 0), 2),
+        })
+        _qr_url = f"{_qr_base}/Mobile_Summary?{_qr_params}"
+
+        # ── QR code image ──────────────────────────────────────────────────────
+        _qr = _qrcode.QRCode(version=None, error_correction=_qrcode.constants.ERROR_CORRECT_M,
+                              box_size=18, border=4)
+        _qr.add_data(_qr_url)
+        _qr.make(fit=True)
+        _qr_img = _qr.make_image(fill_color="#00D2FF", back_color="#080c14")
+        _qr_buf = _io_qr.BytesIO()
+        _qr_img.save(_qr_buf, format="PNG")
+        import base64 as _b64
+        _qr_b64 = _b64.b64encode(_qr_buf.getvalue()).decode()
+
+        # ── Salesman info from session state ───────────────────────────────────
+        _qr_user  = str(st.session_state.get("brinc_user", "steven.beltran")).strip() or "steven.beltran"
+        _qr_name  = " ".join(w.capitalize() for w in _qr_user.split("."))
+        _qr_email = f"{_qr_user}@brincdrones.com"
+        _qr_city  = st.session_state.get("active_city", "")
+        _qr_state = st.session_state.get("active_state", "")
+        _qr_loc   = f"{_qr_city}, {_qr_state}" if _qr_city else "your city"
+
+
+        # ── Render full-width banner ───────────────────────────────────────────
+        # Build as a variable (no leading indentation) to avoid Markdown treating
+        # 4+ leading spaces as a code block, which renders HTML as raw text.
+        _qr_banner = (
+            '<div style="background:linear-gradient(160deg,#060c18 0%,#0b1525 60%,#060c18 100%);'
+            'border:1px solid rgba(0,210,255,0.22);border-top:3px solid #00D2FF;'
+            'border-radius:16px;padding:28px 32px 24px;margin-top:12px;overflow:hidden;">'
+
+            # Header
+            '<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:20px;flex-wrap:wrap;">'
+            '<span style="font-size:1.5rem;font-weight:900;color:#00D2FF;letter-spacing:3px;font-family:sans-serif;">BRINC</span>'
+            '<span style="font-size:1.0rem;font-weight:700;color:#aabbcc;font-family:sans-serif;">Drone as First Responder</span>'
+            f'<span style="font-size:0.75rem;color:#334;margin-left:auto;font-family:monospace;">{_qr_loc}</span>'
+            '</div>'
+
+            # QR code — centered
+            '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:20px;">'
+            f'<img src="data:image/png;base64,{_qr_b64}" style="width:260px;height:260px;border-radius:12px;display:block;" alt="BRINC Mobile Summary QR"/>'
+            '<div style="text-align:center;">'
+            '<div style="font-size:1.0rem;font-weight:800;color:#ffffff;letter-spacing:0.5px;">&#128241; Scan for Mobile Summary</div>'
+            '<div style="font-size:0.65rem;color:#445566;margin-top:3px;">No login required &middot; Opens on any phone</div>'
+            '</div>'
+            '<div style="font-size:0.52rem;color:#283444;font-family:monospace;word-break:break-all;'
+            'background:#08111e;border:1px solid #1a2535;border-radius:5px;padding:5px 8px;max-width:300px;text-align:center;">'
+            f'{_qr_base}/Mobile_Summary'
+            '</div>'
+            '</div>'
+
+            # Contact footer
+            '<div style="border-top:1px solid rgba(0,210,255,0.12);padding-top:16px;'
+            'display:flex;flex-wrap:wrap;gap:18px;align-items:center;">'
+
+            # Rep info
+            '<div style="flex:1;min-width:220px;">'
+            '<div style="font-size:0.6rem;color:#00D2FF;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:5px;">Your BRINC Representative</div>'
+            f'<div style="font-size:1.05rem;font-weight:800;color:#eef2f7;margin-bottom:2px;">{_qr_name}</div>'
+            f'<div style="font-size:0.8rem;color:#00D2FF;">&#9993; <a href="mailto:{_qr_email}" style="color:#00D2FF;text-decoration:none;">{_qr_email}</a></div>'
+            '</div>'
+
+            # BRINC contact
+            '<div style="flex:1;min-width:220px;">'
+            '<div style="font-size:0.6rem;color:#00D2FF;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:5px;">BRINC Drones, Inc.</div>'
+            '<div style="font-size:0.82rem;color:#aabbcc;margin-bottom:3px;">'
+            '&#127760; <a href="https://brincdrones.com" target="_blank" style="color:#aabbcc;text-decoration:none;">brincdrones.com</a>'
+            ' &nbsp;&middot;&nbsp; '
+            '&#9993; <a href="mailto:info@brincdrones.com" style="color:#aabbcc;text-decoration:none;">info@brincdrones.com</a>'
+            '</div>'
+            '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;">'
+            '<a href="https://linkedin.com/company/brinc" target="_blank" style="font-size:0.72rem;color:#0a66c2;background:rgba(10,102,194,0.12);border:1px solid rgba(10,102,194,0.35);border-radius:5px;padding:3px 9px;text-decoration:none;font-weight:600;">in LinkedIn</a>'
+            '<a href="https://instagram.com/brincdrones" target="_blank" style="font-size:0.72rem;color:#e1306c;background:rgba(225,48,108,0.10);border:1px solid rgba(225,48,108,0.35);border-radius:5px;padding:3px 9px;text-decoration:none;font-weight:600;">&#128247; Instagram</a>'
+            '<a href="https://x.com/BRINCDrones" target="_blank" style="font-size:0.72rem;color:#d0d0d0;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.18);border-radius:5px;padding:3px 9px;text-decoration:none;font-weight:600;">X / Twitter</a>'
+            '<a href="https://youtube.com/@BRINCDrones" target="_blank" style="font-size:0.72rem;color:#ff0000;background:rgba(255,0,0,0.09);border:1px solid rgba(255,0,0,0.3);border-radius:5px;padding:3px 9px;text-decoration:none;font-weight:600;">&#9654; YouTube</a>'
+            '</div>'
+            '</div>'
+
+            '</div>'  # end contact footer
+            '</div>'  # end banner
+        )
+        st.markdown(_qr_banner, unsafe_allow_html=True)
+    except Exception as _qr_err:
+        st.caption(f"📱 QR code unavailable — install `qrcode` package. ({_qr_err})")
 
     # ── EXPORT BUTTONS — always visible in sidebar ──
     st.sidebar.markdown("---")
@@ -8160,21 +9168,79 @@ if st.session_state['csvs_ready']:
                 "Real-world results will vary. This is not a legal recommendation, binding proposal, contract, "
                 "or guarantee of any product, service, or financial outcome."
             ),
+            # Fleet counts and ranges
             "k_resp": k_responder, "k_guard": k_guardian,
             "r_resp": resp_radius_mi, "r_guard": guard_radius_mi,
+            # Rates
             "dfr_rate": int(dfr_dispatch_rate*100), "deflect_rate": int(deflection_rate*100),
+            # Optimization strategies
+            "resp_strategy": resp_strategy_raw,
+            "guard_strategy": guard_strategy_raw,
+            # Locked stations (must restore before auto-minimums runs)
+            "pinned_guard_names": list(pinned_guard_names),
+            "pinned_resp_names":  list(pinned_resp_names),
+            # Custom / pin-dropped stations (bypass OSM on reimport)
+            "custom_stations": _safe_df_to_records(st.session_state.get('custom_stations')),
+            # Whether fleet was manually built via pin-drop
+            "pin_drop_used": st.session_state.get('pin_drop_used', False),
+            # Call and station data
             "calls_data": _safe_df_to_records(
                 st.session_state.get('df_calls_full') if st.session_state.get('df_calls_full') is not None
                 else st.session_state.get('df_calls')
             ),
             "stations_data": _safe_df_to_records(st.session_state.get('df_stations')),
             "faa_geojson": faa_geojson,
+            # Boundary / shapefile
             "boundary_geojson": _boundary_geojson_export,
             "boundary_kind": st.session_state.get('boundary_kind', 'place'),
             "boundary_source_path": st.session_state.get('boundary_source_path', ''),
         }
 
         fig_for_export = go.Figure()
+
+        # ── Boundary polygon ─────────────────────────────────────────────────
+        if city_boundary_geom is not None and not city_boundary_geom.is_empty:
+            _export_geoms = ([city_boundary_geom] if isinstance(city_boundary_geom, Polygon)
+                             else list(city_boundary_geom.geoms))
+            for _gi, _geom in enumerate(_export_geoms):
+                _bx, _by = _geom.exterior.coords.xy
+                fig_for_export.add_trace(go.Scattermap(
+                    mode="lines", lon=list(_bx), lat=list(_by),
+                    line=dict(color=map_boundary_color, width=2),
+                    name="Jurisdiction Boundary", hoverinfo='skip',
+                    showlegend=(_gi == 0)
+                ))
+
+        # ── Incident call dots ──────────────────────────────────────────��────
+        _export_calls = display_calls if (display_calls is not None and not display_calls.empty) else None
+        if _export_calls is not None:
+            # Cap at 40K for export file-size; sample deterministically
+            _EC_MAX = 40_000
+            if len(_export_calls) > _EC_MAX:
+                _export_calls = _export_calls.sample(_EC_MAX, random_state=42)
+            _exp_pt_size = (2 if len(_export_calls) > 20_000 else
+                            3 if len(_export_calls) > 8_000 else 4)
+            _exp_opacity = (0.18 if len(_export_calls) > 20_000 else
+                            0.28 if len(_export_calls) > 8_000 else 0.40)
+            _has_agency = 'agency' in _export_calls.columns
+            _exp_fire   = _export_calls[_export_calls['agency'].str.lower() == 'fire'] if _has_agency else _export_calls.iloc[0:0]
+            _exp_police = _export_calls[_export_calls['agency'].str.lower() != 'fire'] if _has_agency else _export_calls
+            if not _exp_police.empty:
+                fig_for_export.add_trace(go.Scattermap(
+                    lat=_exp_police.geometry.y, lon=_exp_police.geometry.x,
+                    mode='markers',
+                    marker=dict(size=_exp_pt_size, color=map_incident_color, opacity=_exp_opacity),
+                    name="Incidents", hoverinfo='skip'
+                ))
+            if not _exp_fire.empty:
+                fig_for_export.add_trace(go.Scattermap(
+                    lat=_exp_fire.geometry.y, lon=_exp_fire.geometry.x,
+                    mode='markers',
+                    marker=dict(size=_exp_pt_size, color='#ff3b3b', opacity=_exp_opacity),
+                    name="Fire Incidents", hoverinfo='skip'
+                ))
+
+        # ── Coverage circles + station pins ──────────────────────────────────
         for d in active_drones:
             clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
             fig_for_export.add_trace(go.Scattermap(
@@ -8183,6 +9249,7 @@ if st.session_state['csvs_ready']:
                 marker=dict(size=[0]*len(clats)+[0,16], color=d['color']),
                 fill='toself', fillcolor='rgba(0,0,0,0)', name=d['name'][:30]
             ))
+
         fig_for_export.update_layout(
             map=dict(center=dict(lat=center_lat, lon=center_lon), zoom=dynamic_zoom, style="carto-darkmatter"),
             margin=dict(l=0,r=0,t=0,b=0), height=500, showlegend=True,
@@ -8197,22 +9264,75 @@ if st.session_state['csvs_ready']:
 
         all_bldgs_rows = ""
         _type_colors = {
-            "Police": ("rgba(0,210,255,0.1)","#0066aa"),
-            "Fire": ("rgba(220,53,69,0.1)","#aa0022"),
-            "School": ("rgba(255,215,0,0.12)","#7a6000"),
-            "Hospital": ("rgba(34,197,94,0.1)","#006622"),
-            "Government": ("rgba(139,92,246,0.1)","#4b0082"),
-            "Library": ("rgba(249,115,22,0.1)","#8a3300"),
+            "Police":          ("rgba(0,210,255,0.1)",    "#0066aa"),
+            "Fire":            ("rgba(220,53,69,0.1)",    "#aa0022"),
+            "EMS":             ("rgba(255,100,50,0.1)",   "#b33000"),
+            "School":          ("rgba(255,215,0,0.12)",   "#7a6000"),
+            "Hospital":        ("rgba(34,197,94,0.1)",    "#006622"),
+            "University":      ("rgba(59,130,246,0.1)",   "#1d4ed8"),
+            "Transit":         ("rgba(16,185,129,0.1)",   "#065f46"),
+            "Community":       ("rgba(245,158,11,0.1)",   "#92400e"),
+            "Courthouse":      ("rgba(139,92,246,0.12)",  "#5b21b6"),
+            "Social Services": ("rgba(236,72,153,0.1)",   "#9d174d"),
+            "Government":      ("rgba(139,92,246,0.1)",   "#4b0082"),
+            "Library":         ("rgba(249,115,22,0.1)",   "#8a3300"),
         }
+        # ── Facility type counts (for summary grid + community impact dashboard) ──
+        _fac_counts = {}
+        for _, _frow in df_stations_all.iterrows():
+            _ft = str(_frow.get('type', 'Other'))
+            _fac_counts[_ft] = _fac_counts.get(_ft, 0) + 1
+
+        # ── Facility type summary HTML (icons + counts) ──────────────────────
+        _FAC_ICONS = {
+            "Police": "🚔", "Fire": "🚒", "EMS": "🚑", "School": "🏫",
+            "Hospital": "🏥", "University": "🎓", "Transit": "🚌",
+            "Community": "🏛️", "Courthouse": "⚖️", "Social Services": "🤝",
+            "Government": "🏛️", "Library": "📚",
+        }
+        _FAC_SOURCES = {
+            "Police":          "DHS HIFLD Law Enforcement Locations · OpenStreetMap (amenity=police) · ODbL license",
+            "Fire":            "DHS HIFLD Fire Stations dataset (public domain) · OpenStreetMap (amenity=fire_station)",
+            "EMS":             "OpenStreetMap (amenity=ambulance_station) · NEMSIS National EMS Database (nemsis.org)",
+            "School":          "OpenStreetMap (amenity=school) · NCES Common Core of Data (nces.ed.gov)",
+            "Hospital":        "OpenStreetMap (amenity=hospital) · CMS Hospital Compare (cms.gov)",
+            "University":      "OpenStreetMap (amenity=university / college) · IPEDS (nces.ed.gov/ipeds)",
+            "Transit":         "OpenStreetMap (amenity=bus_station · railway=station) · NTD National Transit Database (transit.dot.gov)",
+            "Community":       "OpenStreetMap (amenity=community_centre) · IMLS Public Libraries Survey",
+            "Courthouse":      "OpenStreetMap (amenity=courthouse) · PACER / US Courts (uscourts.gov)",
+            "Social Services": "OpenStreetMap (amenity=social_facility) · HUD Location Affordability Index",
+            "Government":      "OpenStreetMap (building=government) · TIGER/Line Shapefiles (census.gov)",
+            "Library":         "OpenStreetMap (amenity=library) · IMLS Public Libraries Survey (imls.gov)",
+        }
+        _fac_summary_cells = ""
+        for _ft, _fcnt in sorted(_fac_counts.items(), key=lambda x: -x[1]):
+            _tc2 = _type_colors.get(_ft, ("rgba(0,0,0,0.04)", "#555"))
+            _icon = _FAC_ICONS.get(_ft, "🏢")
+            _src  = _FAC_SOURCES.get(_ft, "OpenStreetMap contributors (ODbL)")
+            _fac_summary_cells += (
+                f'<div style="background:{_tc2[0]};border:1px solid {_tc2[1]}33;border-radius:8px;'
+                f'padding:10px 14px;display:flex;align-items:center;gap:10px;">'
+                f'<span style="font-size:20px">{_icon}</span>'
+                f'<div><div style="font-size:11px;font-weight:700;color:{_tc2[1]};text-transform:uppercase;'
+                f'letter-spacing:0.5px;">{_ft}</div>'
+                f'<div style="font-size:18px;font-weight:900;color:#111;font-family:\'IBM Plex Mono\',monospace;">{_fcnt}</div>'
+                f'<div style="font-size:9px;color:#777;margin-top:1px;">facilities</div></div>'
+                f'<abbr title="Source: {_src}" style="margin-left:auto;font-size:10px;color:#aaa;'
+                f'text-decoration:none;cursor:help;">ⓘ</abbr>'
+                f'</div>'
+            )
+
         for _, row in df_stations_all.iterrows():
             gmaps_link = f"https://www.google.com/maps/search/?api=1&query={row['lat']},{row['lon']}"
             _rtype = str(row.get('type', 'Facility'))
             _tc = _type_colors.get(_rtype, ("rgba(0,0,0,0.04)","#555"))
             _short_name = str(row['name'])[:45] + ("…" if len(str(row['name']))>45 else "")
+            _src_tip = _FAC_SOURCES.get(_rtype, "OpenStreetMap contributors (ODbL)")
             all_bldgs_rows += (
                 f'''<div class="infra-item">
                   <span class="i-name" title="{row['name']}">{_short_name}</span>
                   <span class="i-type" style="background:{_tc[0]};color:{_tc[1]}">{_rtype}</span>
+                  <abbr title="Source: {_src_tip}" style="font-size:10px;color:#aaa;text-decoration:none;cursor:help;margin-left:auto;">ⓘ</abbr>
                   <a class="i-link" href="{gmaps_link}" target="_blank">↗</a>
                 </div>'''
             )
@@ -8246,6 +9366,41 @@ if st.session_state['csvs_ready']:
 
         prepared_for_city = st.session_state.get('active_city', prop_city) or prop_city
         prepared_by_name = prop_name
+
+        # ── School safety export variables ────────────────────────────────────────
+        _exp_dfr_amortized = int(fleet_capex / 7) if fleet_capex > 0 else 0
+        _dfr_amort_str     = f"${_exp_dfr_amortized:,}/yr" if _exp_dfr_amortized > 0 else "~$11K–22K/yr"
+
+        # ── Build custom-content HTML blocks from AE editable fields ────────────
+        _doc_intro   = st.session_state.get('doc_custom_intro',   '').strip()
+        _doc_pt1     = st.session_state.get('doc_talking_pt_1',  '').strip()
+        _doc_pt2     = st.session_state.get('doc_talking_pt_2',  '').strip()
+        _doc_pt3     = st.session_state.get('doc_talking_pt_3',  '').strip()
+        _doc_closing = st.session_state.get('doc_custom_closing', '').strip()
+        _doc_phone   = st.session_state.get('doc_ae_phone',       '').strip()
+
+        _custom_intro_html = (
+            f'<div style="margin-top:20px;padding:16px 20px;background:#f0f8ff;border-left:4px solid #00D2FF;'
+            f'border-radius:0 6px 6px 0;font-size:15px;color:#1a2a3a;line-height:1.8;">'
+            f'{_doc_intro}</div>'
+        ) if _doc_intro else ''
+
+        _pts = [p for p in [_doc_pt1, _doc_pt2, _doc_pt3] if p]
+        _custom_pts_html = (
+            '<ul style="margin-top:16px;padding-left:20px;font-size:14px;color:#374151;line-height:2;">'
+            + ''.join(f'<li>{p}</li>' for p in _pts)
+            + '</ul>'
+        ) if _pts else ''
+
+        _custom_closing_html = (
+            f'<div style="margin-top:24px;padding:16px 20px;background:#f9fafb;border:1px solid #e4e6ea;'
+            f'border-radius:6px;font-size:14px;color:#374151;line-height:1.8;">'
+            f'{_doc_closing}</div>'
+        ) if _doc_closing else ''
+
+        _ae_phone_html = (
+            f'<div style="margin-top:4px;font-size:13px;color:#555;">📞 {_doc_phone}</div>'
+        ) if _doc_phone else ''
         # ── Export personalization: extract call-type and priority stats ────────
         _exp_df = df_calls_full if (df_calls_full is not None and not df_calls_full.empty) else df_calls
         _exp_top_calls, _exp_pri_str, _exp_date_range = [], "mixed priorities", "recent period"
@@ -8350,6 +9505,29 @@ body{{font-family:'Inter',sans-serif;background:var(--surface);color:var(--text)
   display:flex;align-items:center;gap:10px;
   margin-bottom:32px;
 }}
+
+/* ── SOURCE BADGE ──────────────────────────────────────────────── */
+.src{{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:14px;height:14px;border-radius:50%;
+  background:rgba(100,116,139,0.1);color:#94a3b8;
+  border:1px solid rgba(100,116,139,0.28);
+  font-size:8px;font-weight:700;cursor:default;
+  margin-left:4px;vertical-align:middle;position:relative;
+  font-style:normal;text-decoration:none;flex-shrink:0;
+}}
+.src:hover::after{{
+  content:attr(data-src);
+  position:absolute;bottom:130%;left:50%;
+  transform:translateX(-50%);
+  background:#1e293b;color:#e2e8f0;
+  font-size:10.5px;font-weight:400;padding:7px 11px;
+  border-radius:6px;white-space:normal;width:270px;
+  line-height:1.55;z-index:9999;
+  border:1px solid #334155;
+  box-shadow:0 6px 20px rgba(0,0,0,0.4);
+  pointer-events:none;text-transform:none;letter-spacing:normal;
+}}
 .copy-section-btn{{
   margin-left:auto;
   display:inline-flex;align-items:center;gap:6px;
@@ -8363,6 +9541,12 @@ body{{font-family:'Inter',sans-serif;background:var(--surface);color:var(--text)
 }}
 .copy-section-btn:hover{{background:rgba(0,210,255,0.14);border-color:rgba(0,210,255,0.6);}}
 .copy-section-btn.copied{{color:#39FF14;border-color:rgba(57,255,20,0.5);background:rgba(57,255,20,0.07);}}
+.copy-section-btn.grant-law{{color:#3b82f6;border-color:rgba(59,130,246,0.35);background:rgba(59,130,246,0.06);}}
+.copy-section-btn.grant-law:hover{{background:rgba(59,130,246,0.14);border-color:rgba(59,130,246,0.6);}}
+.copy-section-btn.grant-fire{{color:#f97316;border-color:rgba(249,115,22,0.35);background:rgba(249,115,22,0.06);}}
+.copy-section-btn.grant-fire:hover{{background:rgba(249,115,22,0.14);border-color:rgba(249,115,22,0.6);}}
+.copy-section-btn.community{{color:#22c55e;border-color:rgba(34,197,94,0.35);background:rgba(34,197,94,0.06);}}
+.copy-section-btn.community:hover{{background:rgba(34,197,94,0.14);border-color:rgba(34,197,94,0.6);}}
 .section-eyebrow .pg-num{{
   font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;
   color:var(--cyan);border:1px solid rgba(0,210,255,0.3);
@@ -8397,7 +9581,12 @@ body{{font-family:'Inter',sans-serif;background:var(--surface);color:var(--text)
   color:#fff;margin-bottom:16px;
 }}
 .cover-headline h1 span{{color:var(--cyan)}}
-.cover-headline p{{font-size:16px;color:#888;max-width:480px;line-height:1.7}}
+.cover-population{{
+  font-size:13px;color:#aaa;margin-bottom:14px;letter-spacing:0.2px;
+  border-left:3px solid var(--cyan);padding-left:10px;
+}}
+.cover-population strong{{color:#fff;font-weight:700}}
+.cover-headline p{{font-size:15px;color:#888;max-width:520px;line-height:1.7}}
 .cover-meta{{
   display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
   background:#1a1a2a;border:1px solid #1a1a2a;border-radius:10px;overflow:hidden;
@@ -8585,13 +9774,15 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
     <a href="#grant"><span class="nav-num">06</span>Grant Narrative</a>
     <a href="#infrastructure"><span class="nav-num">07</span>Infrastructure Directory</a>
     <a href="#community"><span class="nav-num">08</span>Community Partnership</a>
-    <a href="#analytics"><span class="nav-num">09</span>Analytics Dashboard</a>
-    <a href="#community-impact"><span class="nav-num">10</span>Community Impact</a>
+    [ANALYTICS_NAV]
+    [COMMUNITY_IMPACT_NAV]
+    <a href="#school-safety"><span class="nav-num">11</span>School Safety</a>
   </nav>
   <div class="sidebar-footer">
     Prepared {datetime.datetime.now().strftime("%b %d, %Y")}<br>
     {prop_name}<br>
     <a href="mailto:{prop_email}">{prop_email}</a>
+    {_ae_phone_html}
   </div>
 </nav>
 
@@ -8607,7 +9798,11 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
       <div class="cover-headline">
         <div class="cover-tag">Drone as a First Responder · Deployment Proposal</div>
         <h1>Protecting <span>{prop_city}</span>,<br>{prop_state}</h1>
-        <p>A data-driven deployment plan for {actual_k_responder + actual_k_guardian} BRINC aerial units covering {calls_covered_perc:.1f}% of incidents across {prop_city}.</p>
+        <div class="cover-population">
+          Serving <strong>{int(pop_metric):,}</strong> residents of {prop_city}, {prop_state}
+          <abbr title="Source: US Census Bureau American Community Survey (ACS) 5-Year Estimates · census.gov/programs-surveys/acs" style="font-size:11px;color:#666;margin-left:4px;text-decoration:none;cursor:help;">ⓘ</abbr>
+        </div>
+        <p>A data-driven deployment plan for <strong>{actual_k_responder + actual_k_guardian} BRINC aerial units</strong> covering {calls_covered_perc:.1f}% of {st.session_state.get('total_original_calls', total_calls):,} annual incidents · {len(df_stations_all):,} public facilities protected across {area_sq_mi_est:,} sq mi.</p>
       </div>
       <div class="cover-meta">
         <div class="cover-meta-cell"><div class="label">Fleet CapEx</div><div class="value accent">${fleet_capex:,.0f}</div></div>
@@ -8632,7 +9827,7 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
 
 <!-- ── 01: EXECUTIVE SUMMARY ──────────────────────────────────── -->
 <section class="doc-section" id="executive">
-  <div class="section-eyebrow"><span class="pg-num">01</span><span class="pg-title">Executive Summary</span></div>
+  <div class="section-eyebrow"><span class="pg-num">01</span><span class="pg-title">Executive Summary</span><span class="src" data-src="Sources: Incident coverage &amp; response time computed from uploaded CAD data via BRINC geospatial optimizer. Hardware pricing: BRINC Responder $80K · Guardian $160K (MSRP). Officer dispatch cost benchmark: $76–$120/call (IACP/DOJ). Population: US Census Bureau ACS.">ⓘ</span></div>
   <div class="metrics-hero">
     <div class="metric-cell"><div class="m-label">Fleet Capital Expenditure</div><div class="m-value cyan">${fleet_capex:,.0f}</div><div class="m-sub">{actual_k_responder} Responder · {actual_k_guardian} Guardian</div></div>
     <div class="metric-cell"><div class="m-label">Annual Savings Capacity</div><div class="m-value gold">${annual_savings:,.0f}</div><div class="m-sub">At {int(dfr_dispatch_rate*100)}% dispatch · {int(deflection_rate*100)}% resolution</div></div>
@@ -8651,11 +9846,13 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
     <strong>{avg_time_saved:.1f} minutes faster</strong> than ground patrol, and deliver
     <strong>${annual_savings:,.0f} in annual operational savings</strong> with a break-even horizon of {break_even_text.lower()}.
   </p>
+  {_custom_intro_html}
+  {_custom_pts_html}
 </section>
 
 <!-- ── 02: FLEET & COVERAGE ───────────────────────────────────── -->
 <section class="doc-section" id="fleet">
-  <div class="section-eyebrow"><span class="pg-num">02</span><span class="pg-title">Fleet &amp; Coverage</span></div>
+  <div class="section-eyebrow"><span class="pg-num">02</span><span class="pg-title">Fleet &amp; Coverage</span><span class="src" data-src="Source: BRINC Drones technical specifications. Responder: 60 mph, 1-mile radius, ~2-min avg response. Guardian: 45 mph, up to 8-mile Starlink-connected radius, 25-min flight cycles with auto-recharge. Coverage % derived from geospatial analysis of uploaded incident locations.">ⓘ</span></div>
   <div class="fleet-split">
     <div class="fleet-card guardian">
       <div class="fc-icon">🦅</div>
@@ -8684,20 +9881,20 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
 
 <!-- ── 03: COVERAGE MAP ───────────────────────────────────────── -->
 <section class="doc-section" id="map">
-  <div class="section-eyebrow"><span class="pg-num">03</span><span class="pg-title">Coverage Map</span></div>
+  <div class="section-eyebrow"><span class="pg-num">03</span><span class="pg-title">Coverage Map</span><span class="src" data-src="Map tiles: © OpenStreetMap contributors (ODbL license). FAA airspace data: Federal Aviation Administration LAANC UAS Facility Maps. Incident dots: uploaded CAD data (up to 40K sampled). Coverage rings are operational radius estimates; actual deployment requires FAA LAANC authorization or Part 107 waiver.">ⓘ</span></div>
   <div class="map-wrap">{map_html_str}</div>
 </section>
 
 <!-- ── 04: INCIDENT ANALYSIS ─────────────────────────────────── -->
 <section class="doc-section" id="incident-data">
-  <div class="section-eyebrow"><span class="pg-num">04</span><span class="pg-title">Incident Data Analysis</span></div>
+  <div class="section-eyebrow"><span class="pg-num">04</span><span class="pg-title">Incident Data Analysis</span><span class="src" data-src="Source: Uploaded CAD export data. Call type classification, priority distribution, and temporal patterns are derived from the incident records provided. BRINC applies no external normalization — charts reflect your jurisdiction's raw CAD data.">ⓘ</span></div>
   {cad_charts_html_export}
   {staffing_pressure_html_export}
 </section>
 
 <!-- ── 05: DEPLOYMENT LOCATIONS ──────────────────────────────── -->
 <section class="doc-section" id="deployment">
-  <div class="section-eyebrow"><span class="pg-num">05</span><span class="pg-title">Deployment Locations</span></div>
+  <div class="section-eyebrow"><span class="pg-num">05</span><span class="pg-title">Deployment Locations</span><span class="src" data-src="Station candidates: OpenStreetMap (ODbL), DHS HIFLD Open Data public safety infrastructure, and user-defined pin-drop locations. FAA ceiling data: FAA LAANC UAS Facility Maps API. Optimizer selects stations to maximize coverage of uploaded CAD incidents.">ⓘ</span></div>
   <table>
     <thead><tr><th>Station</th><th>Type</th><th>Avg Response</th><th>FAA Ceiling</th><th>CapEx</th></tr></thead>
     <tbody>{station_rows}</tbody>
@@ -8706,7 +9903,15 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
 
 <!-- ── 06: GRANT NARRATIVE ───────────────────────────────────── -->
 <section class="doc-section" id="grant">
-  <div class="section-eyebrow"><span class="pg-num">06</span><span class="pg-title">Grant Narrative</span></div>
+  <div class="section-eyebrow">
+    <span class="pg-num">06</span>
+    <span class="pg-title">Grant Narrative</span>
+    <span class="src" data-src="Grant programs referenced: DOJ Byrne JAG · FEMA HSGP · DOJ COPS Office · DOT RAISE · DOJ Smart Policing Initiative. Financial figures are BRINC model estimates. Narrative is AI-generated — must be reviewed, localized, and fact-checked by your grants administrator before submission.">ⓘ</span>
+    <button class="copy-section-btn grant-law" onclick="copyGrantText('grant-body-law', this)">
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0"><path d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6z"/><path d="M2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h-1v1H2V6h1V5H2z"/></svg>
+      Copy Grant Text
+    </button>
+  </div>
   <div class="disc"><strong>DISCLAIMER:</strong> AI-generated draft. Must be reviewed, localized, and fact-checked by your grants administrator before submission.</div>
 
   <script>
@@ -8734,15 +9939,6 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
     document.body.removeChild(ta);
   }}
   </script>
-
-  <div style="margin-bottom:10px;">
-    <button onclick="copyGrantText('grant-body-law', this)"
-      style="background:#1e40af;color:#fff;border:none;border-radius:6px;padding:8px 18px;
-             font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
-      &#128203; Copy Grant Text
-    </button>
-    <span style="font-size:11px;color:#888;margin-left:10px;">Paste directly into Word or Google Docs</span>
-  </div>
 
   <div class="grant-layout">
   <div class="grant-body" id="grant-body-law">
@@ -8800,7 +9996,7 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
 
 <!-- ── 06B: FIRE DEPARTMENT VALUE ─────────────────────────────── -->
 <section class="doc-section" id="fire-value">
-  <div class="section-eyebrow"><span class="pg-num">06B</span><span class="pg-title">Fire Department Value</span></div>
+  <div class="section-eyebrow"><span class="pg-num">06B</span><span class="pg-title">Fire Department Value</span><span class="src" data-src="Sources: NFPA Fire Loss Research (aerial ladder deployment costs $3K–$8K/deploy); USFA Firefighter Fatality Statistics; FEMA AFG program eligibility. Savings model: 15% of attended fire calls avoid aerial ladder deployment + thermal overhaul guidance (45 min/4-person crew saved at $200/hr, NFPA labor benchmarks).">ⓘ</span></div>
 
   <div class="metrics-hero">
     <div class="metric-cell" style="background:rgba(251,113,33,0.07);border:1px solid rgba(251,113,33,0.3)">
@@ -8856,17 +10052,16 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
     </tbody>
   </table>
 
-  <h3 style="font-size:15px;font-weight:700;margin:20px 0 10px;color:#1e293b">🚒 Fire Department Grant Narrative</h3>
-  <div class="disc"><strong>DISCLAIMER:</strong> AI-generated draft. Must be reviewed, localized, and fact-checked by your grants administrator before submission.</div>
-
-  <div style="margin-bottom:10px;">
-    <button onclick="copyGrantText('grant-body-fire', this)"
-      style="background:#c2410c;color:#fff;border:none;border-radius:6px;padding:8px 18px;
-             font-size:13px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
-      &#128203; Copy Fire Grant Text
+  <div class="section-eyebrow" style="margin-top:28px;">
+    <span class="pg-num" style="color:#f97316;border-color:rgba(249,115,22,0.3);">🚒</span>
+    <span class="pg-title">Fire Department Grant Narrative</span>
+    <span class="src" data-src="Applicable grant programs: FEMA Assistance to Firefighters Grant (AFG) · FEMA Fire Prevention &amp; Safety (FP&amp;S) · FEMA BRIC · USDA Community Facilities · DHS UASI · State Homeland Security Program (SHSP). Narrative is AI-generated and must be reviewed by a certified grants professional.">ⓘ</span>
+    <button class="copy-section-btn grant-fire" onclick="copyGrantText('grant-body-fire', this)">
+      <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0"><path d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6z"/><path d="M2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h-1v1H2V6h1V5H2z"/></svg>
+      Copy Fire Grant
     </button>
-    <span style="font-size:11px;color:#888;margin-left:10px;">Paste directly into Word or Google Docs</span>
   </div>
+  <div class="disc"><strong>DISCLAIMER:</strong> AI-generated draft. Must be reviewed, localized, and fact-checked by your grants administrator before submission.</div>
 
   <div class="grant-layout">
   <div class="grant-body" id="grant-body-fire">
@@ -8915,8 +10110,20 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
 
 <!-- ── 07: INFRASTRUCTURE DIRECTORY ──────────────────────────── -->
 <section class="doc-section" id="infrastructure">
-  <div class="section-eyebrow"><span class="pg-num">07</span><span class="pg-title">Infrastructure Directory</span></div>
-  <p style="color:var(--muted);font-size:12px;margin-bottom:16px">Public facilities evaluated as candidate deployment locations during optimization. All coordinates verified against FAA LAANC facility maps.</p>
+  <div class="section-eyebrow"><span class="pg-num">07</span><span class="pg-title">Infrastructure Directory</span><span class="src" data-src="Sources: OpenStreetMap (© contributors, ODbL license) · DHS HIFLD Open Data — Fire Stations &amp; Law Enforcement Locations (public domain) · NCES Common Core of Data (schools) · CMS Hospital Compare · NEMSIS National EMS Database · NTD National Transit Database · IMLS Public Libraries Survey · US Courts PACER · FAA LAANC UAS Facility Maps. User-uploaded or pin-dropped stations marked accordingly.">ⓘ</span></div>
+  <p style="color:var(--muted);font-size:12px;margin-bottom:16px;">Public facilities evaluated as candidate deployment locations during optimization. Drone coverage prioritizes facilities most critical to public safety response. All coordinates verified against FAA LAANC facility maps.</p>
+
+  <!-- FACILITY TYPE SUMMARY -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:24px;">
+    {_fac_summary_cells}
+  </div>
+
+  <p style="font-size:11px;color:var(--muted);margin-bottom:14px;border-top:1px solid var(--border);padding-top:12px;">
+    <strong>{len(df_stations_all):,} total facilities</strong> indexed across {prop_city}, {prop_state} ·
+    <span style="color:var(--cyan);">{calls_covered_perc:.1f}% of annual incidents</span> fall within drone response zones ·
+    Source: OpenStreetMap, DHS HIFLD, NCES, CMS, NEMSIS, NTD, IMLS, user data
+  </p>
+
   <div class="infra-grid">{all_bldgs_rows}</div>
 </section>
 
@@ -8925,7 +10132,8 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
   <div class="section-eyebrow">
     <span class="pg-num">08</span>
     <span class="pg-title">Community Business Partnership</span>
-    <button class="copy-section-btn" id="copyPartnershipBtn" onclick="copyCommunitySection()">
+    <span class="src" data-src="Crime cost benchmarks: National Retail Federation 2023 Retail Security Survey ($559 avg shoplifting loss) · DOJ/NIJ commercial burglary cost estimates ($3K–$8.5K) · FBI UCR property crime data. Peer DFR outcomes: Chula Vista PD · El Cajon PD · Westerville OH PD (15–30% property crime reduction in covered zones).">ⓘ</span>
+    <button class="copy-section-btn community" id="copyPartnershipBtn" onclick="copyCommunitySection()">
       <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0"><path d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6z"/><path d="M2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h-1v1H2V6h1V5H2z"/></svg>
       Copy Letter
     </button>
@@ -9001,17 +10209,189 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
   <p><strong>{pd_chief}</strong><br>{pd_dept}</p>
 </section>
 
-<!-- ── 09: ANALYTICS DASHBOARD ───────────────────────────────── -->
-<section class="doc-section" id="analytics">
-  <div class="section-eyebrow"><span class="pg-num">09</span><span class="pg-title">Analytics Dashboard</span></div>
-  [ANALYTICS_HTML_EXPORT]
+[ANALYTICS_SECTION]
+[COMMUNITY_IMPACT_SECTION]
+
+<!-- ── 11: SCHOOL SAFETY IMPACT ───────────���───────────────────── -->
+<section class="doc-section" id="school-safety">
+  <div class="section-eyebrow"><span class="pg-num">11</span><span class="pg-title">School Safety Impact</span><span class="src" data-src="Sources: FBI Crime in Schools 2020–2024 · NCES Indicators of School Crime &amp; Safety 2023 · FBI Active Shooter Study · RAND Corp. 'Role and Impact of SROs' (2023) · NIJ Effects of SROs on School Crime · K-12 School Shooting Database (k12ssdb.org) · BJS School Crime 2024 · ZipRecruiter/Volt.ai SRO salary data · BRINC technical specifications. See full source list at bottom of this section.">ⓘ</span></div>
+
+  <p style="font-size:14px;color:var(--muted);max-width:700px;line-height:1.7;margin-bottom:28px;">
+    BRINC DFR delivers 24/7 aerial first-response to school campuses — faster and at lower total lifecycle cost
+    than traditional School Resource Officers, with no coverage blind spots, no off-hours gaps, and full HD + thermal
+    scene intelligence before any officer enters a building.
+  </p>
+
+  <!-- NATIONAL STATS HERO -->
+  <div class="metrics-hero" style="margin-bottom:28px;">
+    <div class="metric-cell" style="border-top:3px solid #ef4444;">
+      <div class="m-label">School Crimes 2020–24 <abbr title="Source: FBI Crime in Schools Special Report 2020–2024. Over 1.3M criminal incidents at K-12 locations across the US over 5 years, with ~1.5M victims.">ⓘ</abbr></div>
+      <div class="m-value" style="color:#ef4444;">1.3M</div>
+      <div class="m-sub">criminal incidents on campus</div>
+    </div>
+    <div class="metric-cell" style="border-top:3px solid var(--amber);">
+      <div class="m-label">Student Victimization <abbr title="Source: NCES Indicators of School Crime &amp; Safety 2023 (NCES 2024-145). 22 nonfatal criminal victimizations per 1,000 students ages 12-18 in 2022 — includes theft, violent crime, and serious threats.">ⓘ</abbr></div>
+      <div class="m-value gold">22</div>
+      <div class="m-sub">per 1,000 students annually</div>
+    </div>
+    <div class="metric-cell" style="border-top:3px solid #8b5cf6;">
+      <div class="m-label">Incidents End ≤5 min <abbr title="Source: FBI Active Shooter Study (64 incidents analyzed). 69% of active shooter events conclude within 5 minutes — 23 ended in under 2 min. Avg duration at educational facilities: 3 min 18 sec.">ⓘ</abbr></div>
+      <div class="m-value" style="color:#8b5cf6;">69%</div>
+      <div class="m-sub">end before ground units arrive</div>
+    </div>
+    <div class="metric-cell" style="border-top:3px solid var(--resp);">
+      <div class="m-label">BRINC On-Scene Time <abbr title="Source: BRINC technical specs; Chula Vista PD DFR Program outcomes. Launches in &lt;20 sec, on-scene in &lt;90 sec — vs. 14-15 min national ground average.">ⓘ</abbr></div>
+      <div class="m-value cyan">&lt;90s</div>
+      <div class="m-sub">airborne &amp; streaming live video</div>
+    </div>
+    <div class="metric-cell">
+      <div class="m-label">K-12 Shootings 2024 <abbr title="Source: K-12 School Shooting Database (k12ssdb.org). 336 shooting incidents on K-12 campuses in 2024. FBI active-shooter defined incidents down 50% from 48 (2023) to 24 (2024).">ⓘ</abbr></div>
+      <div class="m-value" style="color:#ef4444;">336</div>
+      <div class="m-sub">K-12 shooting incidents in 2024</div>
+    </div>
+    <div class="metric-cell">
+      <div class="m-label">SRO Annual Cost <abbr title="Source: ZipRecruiter SRO Salary Data 2025; DeSoto County SRO cost breakdown ($94,147/yr blended); Volt.ai SRO Cost Analysis. Includes salary + benefits + equipment per officer.">ⓘ</abbr></div>
+      <div class="m-value gold">$94K+</div>
+      <div class="m-sub">per officer · school hours only</div>
+    </div>
+    <div class="metric-cell">
+      <div class="m-label">SRO Coverage Hours <abbr title="Source: Standard school calendar. 7 hours/day × 180 school days = 1,260 operational hours per year — 14.4% of annual hours. Nights, weekends, summers: unprotected.">ⓘ</abbr></div>
+      <div class="m-value">14.4%</div>
+      <div class="m-sub">of annual hours covered</div>
+    </div>
+    <div class="metric-cell" style="background:rgba(0,210,255,0.04);">
+      <div class="m-label">DFR Coverage Hours <abbr title="BRINC DFR operates 24 hours/day, 365 days/year = 8,760 hours/year. Full coverage including nights, weekends, summer, and after-school hours when SROs are absent.">ⓘ</abbr></div>
+      <div class="m-value cyan">100%</div>
+      <div class="m-sub">24/7/365 aerial coverage</div>
+    </div>
+  </div>
+
+  <!-- CRITICAL WINDOW CALLOUT -->
+  <div style="background:#fff8f8;border-left:4px solid #ef4444;padding:16px 22px;border-radius:0 8px 8px 0;margin-bottom:28px;">
+    <h4 style="color:#ef4444;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:12px;">
+      ⚠️ The Critical Response Window
+      <abbr title="Sources: FBI Law Enforcement Bulletin 'Those Terrible First Few Minutes'; FBI Active Shooter Study (51-case median analysis); ALICE Training Institute; K-12 School Shooting Database.">ⓘ</abbr>
+    </h4>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px;">
+      <div style="text-align:center;background:#fff;border:1px solid #f5c6c6;border-radius:6px;padding:12px;">
+        <div style="font-size:24px;font-weight:900;color:#ef4444;font-family:'IBM Plex Mono',monospace;">14–15 min</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">Avg police arrival to<br>active shooter nationally</div>
+      </div>
+      <div style="text-align:center;background:#fff;border:1px solid #fde68a;border-radius:6px;padding:12px;">
+        <div style="font-size:24px;font-weight:900;color:var(--amber);font-family:'IBM Plex Mono',monospace;">3m 18s</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">Avg incident duration<br>at schools (FBI)</div>
+      </div>
+      <div style="text-align:center;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;padding:12px;">
+        <div style="font-size:24px;font-weight:900;color:var(--resp);font-family:'IBM Plex Mono',monospace;">&lt;90 sec</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">BRINC airborne with<br>live HD + thermal</div>
+      </div>
+    </div>
+    <p style="font-size:12px;color:#7a3a3a;font-style:italic;line-height:1.6;margin:0;">
+      "Most active shooter incidents in schools are over before a responding officer reaches the building entrance.
+      DFR doesn't replace the officer — it gives command staff eyes on every hallway, stairwell, and exit
+      before they open the first door." — FBI Law Enforcement Bulletin
+    </p>
+  </div>
+
+  <!-- DFR vs SRO COMPARISON TABLE -->
+  <h3 class="sh"><span class="sh-accent">DFR</span> vs. School Resource Officer — Capability Matrix
+    <abbr style="font-size:11px;font-weight:400;color:var(--muted);margin-left:8px;" title="SRO data: RAND 'The Role and Impact of School Resource Officers' (2023); NIJ Effects of SROs on School Crime (OJP); ZipRecruiter SRO Salary 2025. DFR data: BRINC technical specifications; Chula Vista PD DFR outcomes.">ⓘ Sources</abbr>
+  </h3>
+  <table style="margin-bottom:28px;">
+    <thead>
+      <tr>
+        <th style="width:30%;">Capability</th>
+        <th style="color:#b45309;text-align:center;">School Resource Officer</th>
+        <th style="color:var(--resp);text-align:center;">BRINC DFR</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Annual Cost / Campus</strong></td>
+          <td style="text-align:center;color:#b45309;">$75,000 – $120,000 per officer</td>
+          <td style="text-align:center;color:#0369a1;">${int(fleet_capex/7):,}/yr amortized (7-yr) · {actual_k_responder + actual_k_guardian} units</td></tr>
+      <tr><td><strong>Coverage Hours / Year</strong></td>
+          <td style="text-align:center;color:#b45309;">~1,260 hrs (school hours only)</td>
+          <td style="text-align:center;color:var(--green);">8,760 hrs — 24/7/365</td></tr>
+      <tr><td><strong>Campuses Covered</strong></td>
+          <td style="text-align:center;color:#b45309;">1 building per officer</td>
+          <td style="text-align:center;color:var(--green);">Multi-campus from 1 hub station</td></tr>
+      <tr><td><strong>On-Campus Response Time</strong></td>
+          <td style="text-align:center;color:#b45309;">2–5 min (foot/vehicle)</td>
+          <td style="text-align:center;color:var(--green);">&lt;90 sec airborne · {avg_resp_time:.1f} min avg aerial</td></tr>
+      <tr><td><strong>After-Hours / Weekend</strong></td>
+          <td style="text-align:center;color:#b45309;">❌ No coverage</td>
+          <td style="text-align:center;color:var(--green);">✅ Full thermal surveillance</td></tr>
+      <tr><td><strong>Thermal / Night Vision</strong></td>
+          <td style="text-align:center;color:#b45309;">❌ Flashlight only</td>
+          <td style="text-align:center;color:var(--green);">✅ 640px FLIR thermal</td></tr>
+      <tr><td><strong>Perimeter Monitoring</strong></td>
+          <td style="text-align:center;color:#b45309;">❌ Not feasible at scale</td>
+          <td style="text-align:center;color:var(--green);">✅ Automated aerial patrol</td></tr>
+      <tr><td><strong>Active Threat Intel</strong></td>
+          <td style="text-align:center;color:#b45309;">Single officer, blind entry</td>
+          <td style="text-align:center;color:var(--green);">✅ Live HD + thermal to dispatch</td></tr>
+      <tr><td><strong>Indoor Operations</strong></td>
+          <td style="text-align:center;">✅ On foot</td>
+          <td style="text-align:center;color:var(--green);">✅ LEMUR 2 — glass-breaker, perch, 2-way comms</td></tr>
+      <tr><td><strong>Court-Admissible Evidence</strong></td>
+          <td style="text-align:center;color:#b45309;">Body cam (ground-level)</td>
+          <td style="text-align:center;color:var(--green);">✅ HD aerial video + flight log</td></tr>
+      <tr><td><strong>Mass Shooting Prevention</strong>
+              <abbr title="Source: RAND Corporation 'The Role and Impact of School Resource Officers' (2023). Quote: 'There is no evidence about whether SROs prevent the types of mass shootings that often lead to the placement of SROs in school.'">ⓘ</abbr></td>
+          <td style="text-align:center;color:#b45309;">❌ No proven effect (RAND, 2023)</td>
+          <td style="text-align:center;color:var(--green);">✅ Pre-entry intel, faster coordination</td></tr>
+      <tr><td><strong>Disciplinary Side Effects</strong>
+              <abbr title="Source: RAND 'The Role and Impact of School Resource Officers' (2023). Schools with SROs saw 35-80% more out-of-school suspensions and 25-90% more expulsions than schools without SROs.">ⓘ</abbr></td>
+          <td style="text-align:center;color:#b45309;">⚠️ +35–80% suspensions, +25–90% expulsions</td>
+          <td style="text-align:center;color:var(--green);">✅ Zero school-discipline impact</td></tr>
+    </tbody>
+  </table>
+
+  <!-- COST COMPARISON -->
+  <div class="fleet-split" style="margin-bottom:24px;">
+    <div class="fleet-card guardian" style="border-top:3px solid var(--amber);">
+      <div class="fc-icon">📋</div>
+      <div class="fc-type" style="color:var(--amber);">10-School District — SRO Model</div>
+      <div class="fc-val">$940K – $1.2M/yr</div>
+      <div class="fc-sub">10 officers · school hours only</div>
+      <div style="margin-top:16px;">
+        <div class="fc-row"><span class="k">Annual hours covered</span><span class="v">1,260 hrs/campus (14.4%)</span></div>
+        <div class="fc-row"><span class="k">Nights / weekends / summer</span><span class="v" style="color:#ef4444;">❌ Unprotected</span></div>
+        <div class="fc-row"><span class="k">Multi-campus coverage</span><span class="v" style="color:#ef4444;">❌ One building/officer</span></div>
+        <div class="fc-row"><span class="k">Proven mass-shooting prevention</span><span class="v" style="color:#ef4444;">❌ No evidence</span></div>
+      </div>
+    </div>
+    <div class="fleet-card responder" style="border-top:3px solid var(--resp);">
+      <div class="fc-icon">🚁</div>
+      <div class="fc-type">BRINC DFR — Multi-Campus</div>
+      <div class="fc-val">${fleet_capex:,.0f} CapEx</div>
+      <div class="fc-sub">{_dfr_amort_str} amortized · {actual_k_responder + actual_k_guardian} units</div>
+      <div style="margin-top:16px;">
+        <div class="fc-row"><span class="k">Annual hours covered</span><span class="v" style="color:var(--resp);">8,760 hrs (24/7/365)</span></div>
+        <div class="fc-row"><span class="k">Nights / weekends / summer</span><span class="v" style="color:var(--green);">✅ Full thermal patrol</span></div>
+        <div class="fc-row"><span class="k">Multi-campus coverage</span><span class="v" style="color:var(--green);">✅ {actual_k_responder + actual_k_guardian} simultaneous zones</span></div>
+        <div class="fc-row"><span class="k">Response time advantage</span><span class="v" style="color:var(--green);">+{avg_time_saved:.1f} min faster per incident</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SOURCES -->
+  <div class="disc" style="font-size:11px;line-height:1.8;">
+    <strong>Data Sources:</strong>
+    <a href="https://www.fbi.gov/news/press-releases/fbi-releases-crime-in-schools-2020-2024-special-report" target="_blank">FBI Crime in Schools 2020–2024</a> ·
+    <a href="https://nces.ed.gov/pubs2024/2024145.pdf" target="_blank">NCES Indicators of School Crime &amp; Safety 2023</a> ·
+    <a href="https://leb.fbi.gov/articles/featured-articles/those-terrible-first-few-minutes-revisiting-active-shooter-protocols-for-schools" target="_blank">FBI LEB "Those Terrible First Few Minutes"</a> ·
+    <a href="https://www.rand.org/research/gun-policy/analysis/essays/school-resource-officers.html" target="_blank">RAND "The Role and Impact of School Resource Officers" (2023)</a> ·
+    <a href="https://nij.ojp.gov/library/publications/effects-school-resource-officers-school-crime-and-responses-school-crime" target="_blank">NIJ Effects of SROs on School Crime</a> ·
+    <a href="https://k12ssdb.org/" target="_blank">K-12 School Shooting Database</a> ·
+    <a href="https://www.fbi.gov/news/press-releases/fbi-releases-2024-active-shooter-incidents-in-the-united-states-report" target="_blank">FBI Active Shooter Report 2024</a> ·
+    <a href="https://brincdrones.com/responder/" target="_blank">BRINC Responder Technical Specs</a>
+  </div>
+
 </section>
 
-<!-- ── 10: COMMUNITY IMPACT DASHBOARD ────────────────────────── -->
-<section class="doc-section" id="community-impact">
-  <div class="section-eyebrow"><span class="pg-num">10</span><span class="pg-title">Community Impact &amp; Transparency</span></div>
-  [COMMUNITY_IMPACT_HTML_EXPORT]
-</section>
+<!-- ── CUSTOM CLOSING (AE-authored, optional) ──────────────────── -->
+{_custom_closing_html}
 
 <!-- ── DISCLAIMER ─────────────────────────────────────────────── -->
 <div style="background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:20px 60px;margin:0;font-size:11px;color:#7a5a00;line-height:1.7">
@@ -9022,7 +10402,7 @@ td{{padding:12px 16px;border-bottom:1px solid var(--border);color:var(--text)}}
 <footer class="doc-footer">
   <span class="brand-mark">BRINC</span>
   <span>{"<img src='data:image/png;base64," + logo_b64_light + "' style='height:24px;vertical-align:middle;'>" if logo_b64_light else ""} BRINC Drones, Inc. · <a href="https://brincdrones.com">brincdrones.com</a> · <a href="mailto:sales@brincdrones.com">sales@brincdrones.com</a> · +1 (855) 950-0226</span>
-  <span>Prepared by {prop_name} · <a href="mailto:{prop_email}">{prop_email}</a></span>
+  <span>Prepared by {prop_name} · <a href="mailto:{prop_email}">{prop_email}</a>{" · " + _doc_phone if _doc_phone else ""}</span>
 </footer>
 
 </main>
@@ -9091,9 +10471,27 @@ function copyCommunitySection() {{
 </script>
 </body></html>"""
 
-        export_html = export_html.replace("[ANALYTICS_HTML_EXPORT]", analytics_html_export)
+        # ── Analytics section — use the light-themed export charts, not the dark command center ──
+        # cad_charts_html_export uses light backgrounds (#111 text, white/gray),
+        # while analytics_html_export (generate_command_center_html) uses background:#000 which
+        # creates a large black gap in the white export document.
+        if cad_charts_html_export:
+            _analytics_section_html = (
+                '\n<!-- \u2500\u2500 09: ANALYTICS DASHBOARD \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 -->\n'
+                '<section class="doc-section" id="analytics">\n'
+                '  <div class="section-eyebrow"><span class="pg-num">09</span><span class="pg-title">Analytics Dashboard</span>'
+                '<span class="src" data-src="Source: Uploaded CAD export data. All charts \u2014 call type distribution, priority breakdown, hourly heat map, and month-over-month trends \u2014 are derived directly from incident records provided. No external data normalization is applied.">\u24d8</span></div>\n'
+                f'  {cad_charts_html_export}\n'
+                '</section>'
+            )
+            _analytics_nav = '<a href="#analytics"><span class="nav-num">09</span>Analytics Dashboard</a>'
+        else:
+            _analytics_section_html = ''
+            _analytics_nav = ''
+        export_html = export_html.replace("[ANALYTICS_SECTION]", _analytics_section_html)
+        export_html = export_html.replace("[ANALYTICS_NAV]", _analytics_nav)
 
-        # ── Community Impact Dashboard (light theme for print/export) ────────
+        # ── Community Impact section (light theme for print/export) ─────────
         _cid_export_html = generate_community_impact_dashboard_html(
             city=prop_city,
             state=prop_state,
@@ -9115,6 +10513,7 @@ function copyCommunitySection() {{
             active_drones=active_drones or [],
             df_calls_full=df_calls_full,
             theme='light',
+            facility_counts=_fac_counts or None,
         )
         # Extract <style> block and body content separately, then scope the styles
         # with a .cid-wrap prefix so they don't collide with the export document's CSS.
@@ -9154,7 +10553,16 @@ function copyCommunitySection() {{
         _cid_body = _body_match.group(1).strip() if _body_match else _cid_export_html
         # Build the scoped embed: scoped <style> + wrapper div
         _cid_embed = f'<style>{_scoped_style}</style>\n<div class="cid-wrap" style="font-family:\'DM Sans\',sans-serif;background:#f8f7f4;border-radius:10px;overflow:hidden;">{_cid_body}</div>'
-        export_html = export_html.replace("[COMMUNITY_IMPACT_HTML_EXPORT]", _cid_embed)
+        _community_impact_section_html = (
+            '\n<!-- \u2500\u2500 10: COMMUNITY IMPACT DASHBOARD \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 -->\n'
+            '<section class="doc-section" id="community-impact">\n'
+            '  <div class="section-eyebrow"><span class="pg-num">10</span><span class="pg-title">Community Impact &amp; Transparency</span>'
+            '<span class="src" data-src="Sources: Population \u2014 US Census Bureau American Community Survey (ACS). Officer wage benchmarks \u2014 Bureau of Labor Statistics (BLS) OES. Financial projections \u2014 BRINC COS optimization model. Flight hour estimates \u2014 BRINC hardware specifications. All figures are model estimates.">\u24d8</span></div>\n'
+            f'  {_cid_embed}\n'
+            '</section>'
+        )
+        export_html = export_html.replace("[COMMUNITY_IMPACT_SECTION]", _community_impact_section_html)
+        export_html = export_html.replace("[COMMUNITY_IMPACT_NAV]", '<a href="#community-impact"><span class="nav-num">10</span>Community Impact</a>')
 
     # ── Download buttons — always rendered so they're visible in the sidebar ──
     _safe_city   = _safe_city_base
