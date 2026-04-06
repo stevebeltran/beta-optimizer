@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(grep -E \"\\\\.py$|\\\\.csv$|\\\\.txt$\")",
+      "Bash(ccusage:*)",
+      "Bash(pip show:*)",
+      "WebSearch",
+      "Bash(python -c ':*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(C:\\\\Users\\\\4070\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python312\\\\python.exe:*)",
+      "Bash(py -c \"import qrcode; print\\('qrcode ok', qrcode.__version__\\)\")",
+      "Bash(py -3.12 -m pip install \"qrcode[pil]\")",
+      "Bash(C:/Users/4070/AppData/Local/Programs/Python/Python312/python.exe:*)"
+    ]
+  }
+}
