@@ -1,0 +1,334 @@
+"""
+Email and Google Sheets notification system for BRINC app.
+"""
+
+import datetime
+import json
+import smtplib
+import streamlit as st
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import gspread
+from google.oauth2.service_account import Credentials
+
+from modules.versioning import (
+    __version__,
+    __build_revision__,
+    __build_datetime__,
+    __build_line_count__,
+)
+
+
+EXPORT_HEADERS = [
+    "Timestamp",
+    "Session ID",
+    "Session Start",
+    "Session Duration (min)",
+    "Data Source",
+    "BRINC Rep Name",
+    "BRINC Rep Email",
+    "City",
+    "State",
+    "Population",
+    "Area (sq mi)",
+    "File Inferred City",
+    "File Inferred State",
+    "File City Matched Selection",
+    "Multi-City Targets (JSON)",
+    "Num Cities Targeted",
+    "Total Annual Calls",
+    "Daily Calls",
+    "Calls Per Capita",
+    "Event Type",
+    "Responders",
+    "Guardians",
+    "Call Coverage %",
+    "Area Coverage %",
+    "Avg Response Time (min)",
+    "Time Saved vs Patrol (min)",
+    "Fleet CapEx ($)",
+    "Annual Savings ($)",
+    "Break-Even",
+    "Optimization Strategy",
+    "DFR Dispatch Rate %",
+    "Deflection Rate %",
+    "Incremental Build",
+    "Allow Overlap",
+    "Responder Radius (mi)",
+    "Guardian Radius (mi)",
+    "Population Input by User",
+    "Uploaded Filename(s)",
+    "File Row Count",
+    "File Column Count",
+    "File Column Names (JSON)",
+    "File Date Range Start",
+    "File Date Range End",
+    "File Date Span (days)",
+    "Null Rate % (key fields)",
+    "Lat/Lon Detected",
+    "Priority Col Detected",
+    "Call Type Breakdown (JSON)",
+    "Priority Distribution (JSON)",
+    "Peak Hour (0-23)",
+    "Peak Day of Week (0=Mon)",
+    "Peak Month (1-12)",
+    "Boundary Kind",
+    "Boundary Source Path",
+    "Sim or Upload",
+    "Total Exports in Session",
+    "Drone Details (JSON)",
+]
+
+
+def _sheet_col_label(index):
+    """Convert a 1-based column index to an A1-style column label."""
+    label = ""
+    while index > 0:
+        index, remainder = divmod(index - 1, 26)
+        label = chr(65 + remainder) + label
+    return label
+
+
+def _build_details_html(details):
+    """Shared HTML block for deployment details used in email notifications."""
+    if not details:
+        return ""
+    drone_list = "".join([
+        f"<li><b>{d['name']}</b> ({d['type']}) @ {d['lat']:.4f}, {d['lon']:.4f}</li>"
+        for d in details.get('active_drones', [])
+    ])
+    pop   = details.get('population', 0)
+    calls = details.get('total_calls', 0)
+    daily = details.get('daily_calls', 0)
+    area  = details.get('area_sq_mi', 0)
+    be    = details.get('break_even', 'N/A')
+    src   = details.get('data_source', '—')
+    sid   = details.get('session_id', '—')
+    stime = details.get('session_start', '—')
+    dur   = details.get('session_duration_min', '—')
+    avg_t = details.get('avg_response_min', 0)
+    time_saved = details.get('avg_time_saved_min', 0)
+    area_cov = details.get('area_covered_pct', 0)
+    return f"""
+    <div style="margin-top:20px; padding-top:20px; border-top:1px solid #f0f0f0;">
+        <h4 style="color:#555; margin-bottom:10px;">Session Info</h4>
+        <table style="width:100%; border-collapse:collapse; font-size:12px; margin-bottom:15px;">
+            <tr><td style="padding:4px; color:#888; width:50%;">Session ID</td><td style="padding:4px;">{sid}</td></tr>
+            <tr><td style="padding:4px; color:#888;">Session Start</td><td style="padding:4px;">{stime}</td></tr>
+            <tr><td style="padding:4px; color:#888;">Session Duration</td><td style="padding:4px;">{dur} min</td></tr>
+            <tr><td style="padding:4px; color:#888;">Data Source</td><td style="padding:4px;">{src}</td></tr>
+        </table>
+        <h4 style="color:#555; margin-bottom:10px;">Jurisdiction</h4>
+        <table style="width:100%; border-collapse:collapse; font-size:12px; margin-bottom:15px;">
+            <tr><td style="padding:4px; color:#888; width:50%;">Population</td><td style="padding:4px;">{pop:,}</td></tr>
+            <tr><td style="padding:4px; color:#888;">Total Annual Calls</td><td style="padding:4px;">{calls:,}</td></tr>
+            <tr><td style="padding:4px; color:#888;">Daily Calls</td><td style="padding:4px;">{daily:,}</td></tr>
+            <tr><td style="padding:4px; color:#888;">Coverage Area</td><td style="padding:4px;">{area:,} sq mi</td></tr>
+        </table>
+        <h4 style="color:#555; margin-bottom:10px;">Deployment Settings</h4>
+        <table style="width:100%; border-collapse:collapse; font-size:12px; margin-bottom:15px;">
+            <tr><td style="padding:4px; color:#888; width:50%;">Strategy</td><td style="padding:4px;">{details.get('opt_strategy', '')}</td></tr>
+            <tr><td style="padding:4px; color:#888;">Incremental Build</td><td style="padding:4px;">{details.get('incremental_build', False)}</td></tr>
+            <tr><td style="padding:4px; color:#888;">Allow Overlap</td><td style="padding:4px;">{details.get('allow_redundancy', False)}</td></tr>
+            <tr><td style="padding:4px; color:#888;">DFR Dispatch Rate</td><td style="padding:4px;">{details.get('dfr_rate', 0)}%</td></tr>
+            <tr><td style="padding:4px; color:#888;">Deflection Rate</td><td style="padding:4px;">{details.get('deflect_rate', 0)}%</td></tr>
+            <tr><td style="padding:4px; color:#888;">Total CapEx</td><td style="padding:4px;">${details.get('fleet_capex', 0):,.0f}</td></tr>
+            <tr><td style="padding:4px; color:#888;">Annual Savings</td><td style="padding:4px;">${details.get('annual_savings', 0):,.0f}</td></tr>
+            <tr><td style="padding:4px; color:#888;">Thermal Upside</td><td style="padding:4px;">${details.get('thermal_savings', 0):,.0f}</td></tr>
+            <tr><td style="padding:4px; color:#888;">K-9 Upside</td><td style="padding:4px;">${details.get('k9_savings', 0):,.0f}</td></tr>
+            <tr><td style="padding:4px; color:#888;">Break-Even</td><td style="padding:4px;">{be}</td></tr>
+            <tr><td style="padding:4px; color:#888;">Avg Response Time</td><td style="padding:4px;">{avg_t:.1f} min</td></tr>
+            <tr><td style="padding:4px; color:#888;">Time Saved vs Patrol</td><td style="padding:4px;">{time_saved:.1f} min</td></tr>
+            <tr><td style="padding:4px; color:#888;">Geographic Coverage</td><td style="padding:4px;">{area_cov:.1f}%</td></tr>
+        </table>
+        <h4 style="color:#555; margin-bottom:10px;">Active Drones Placed</h4>
+        <ul style="font-size:12px; color:#444; padding-left:20px;">{drone_list}</ul>
+    </div>
+    """
+
+
+def _build_sheets_row(city, state, event_type, k_resp, k_guard, coverage, name, email, details=None):
+    """Build the flat list of values for a Google Sheets row — single source of truth."""
+    d = details or {}
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    session_start = d.get('session_start', now)
+    dur = d.get('session_duration_min', '')
+    try:
+        if dur == '':
+            start_dt = datetime.datetime.strptime(session_start, "%Y-%m-%d %H:%M:%S")
+            dur = round((datetime.datetime.now() - start_dt).total_seconds() / 60, 1)
+    except Exception:
+        dur = ''
+    fm = d.get('file_meta', {})
+    return [
+        now,
+        d.get('session_id', ''),
+        session_start,
+        dur,
+        d.get('data_source', ''),
+        name,
+        email,
+        city,
+        state,
+        d.get('population', ''),
+        d.get('area_sq_mi', ''),
+        fm.get('file_inferred_city', ''),
+        fm.get('file_inferred_state', ''),
+        d.get('city_confirmed_match', ''),
+        d.get('multi_city_targets', ''),
+        d.get('num_cities_targeted', ''),
+        d.get('total_calls', ''),
+        d.get('daily_calls', ''),
+        d.get('calls_per_capita', ''),
+        event_type,
+        k_resp,
+        k_guard,
+        round(coverage, 1) if coverage else '',
+        d.get('area_covered_pct', ''),
+        d.get('avg_response_min', ''),
+        d.get('avg_time_saved_min', ''),
+        d.get('fleet_capex', ''),
+        d.get('annual_savings', ''),
+        d.get('break_even', ''),
+        d.get('opt_strategy', ''),
+        d.get('dfr_rate', ''),
+        d.get('deflect_rate', ''),
+        d.get('incremental_build', ''),
+        d.get('allow_redundancy', ''),
+        d.get('r_resp_radius', ''),
+        d.get('r_guard_radius', ''),
+        d.get('estimated_pop_input', ''),
+        fm.get('uploaded_filename', ''),
+        fm.get('file_row_count', ''),
+        fm.get('file_col_count', ''),
+        fm.get('file_col_names', ''),
+        fm.get('file_date_range_start', ''),
+        fm.get('file_date_range_end', ''),
+        fm.get('file_date_span_days', ''),
+        fm.get('file_null_rate_pct', ''),
+        fm.get('file_has_lat_lon', ''),
+        fm.get('file_has_priority', ''),
+        fm.get('call_type_breakdown', ''),
+        fm.get('priority_distribution', ''),
+        fm.get('peak_hour', ''),
+        fm.get('peak_day_of_week', ''),
+        fm.get('peak_month', ''),
+        d.get('boundary_kind', ''),
+        d.get('boundary_source_path', ''),
+        d.get('sim_or_upload', ''),
+        d.get('total_exports_in_session', ''),
+        json.dumps([{"name": dr.get("name"), "type": dr.get("type"),
+                     "lat": dr.get("lat"), "lon": dr.get("lon"),
+                     "avg_time_min": dr.get("avg_time_min"),
+                     "faa_ceiling": dr.get("faa_ceiling"),
+                     "annual_savings": dr.get("annual_savings")}
+                    for dr in d.get('active_drones', [])]),
+    ]
+
+
+def _notify_email(city, state, file_type, k_resp, k_guard, coverage, name, email, details=None):
+    """Send email notification via Gmail."""
+    try:
+        gmail_address  = st.secrets.get("GMAIL_ADDRESS", "")
+        app_password   = st.secrets.get("GMAIL_APP_PASSWORD", "")
+        notify_address = st.secrets.get("NOTIFY_EMAIL", gmail_address)
+        if not gmail_address or not app_password:
+            return
+        emoji = {"HTML": "📄", "KML": "🌏", "BRINC": "💾", "MAP_BUILD": "🗺️"}.get(file_type, "📥")
+        subject = f"{emoji} BRINC {file_type.replace('_',' ').title()} — {city}, {state}"
+        details_html = _build_details_html(details)
+        d = details or {}
+        pop  = d.get('population', 0)
+        body = f"""
+        <html><body style="font-family:Arial,sans-serif;color:#333;padding:20px;">
+        <div style="max-width:560px;margin:0 auto;border:1px solid #ddd;border-radius:8px;overflow:hidden;">
+            <div style="background:#000;padding:16px 20px;border-bottom:3px solid #00D2FF;">
+                <span style="color:#00D2FF;font-size:18px;font-weight:900;letter-spacing:2px;">BRINC</span>
+                <span style="color:#888;font-size:12px;margin-left:8px;">{file_type.replace('_',' ').title()} Notification</span>
+            </div>
+            <div style="padding:20px;">
+                <table style="width:100%;border-collapse:collapse;font-size:14px;">
+                    <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:8px 4px;color:#888;width:40%;">Event</td><td style="padding:8px 4px;font-weight:bold;">{emoji} {file_type.replace('_',' ').title()}</td></tr>
+                    <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:8px 4px;color:#888;">Jurisdiction</td><td style="padding:8px 4px;font-weight:bold;">{city}, {state}</td></tr>
+                    <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:8px 4px;color:#888;">Population</td><td style="padding:8px 4px;">{pop:,}</td></tr>
+                    <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:8px 4px;color:#888;">Fleet</td><td style="padding:8px 4px;">{k_resp} Responder · {k_guard} Guardian</td></tr>
+                    <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:8px 4px;color:#888;">Call Coverage</td><td style="padding:8px 4px;">{coverage:.1f}%</td></tr>
+                    <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:8px 4px;color:#888;">BRINC Rep</td><td style="padding:8px 4px;">{name if name else '—'}</td></tr>
+                    <tr><td style="padding:8px 4px;color:#888;">Rep Email</td><td style="padding:8px 4px;">{f'<a href="mailto:{email}">{email}</a>' if email else '—'}</td></tr>
+                </table>
+                {details_html}
+                <div style="margin-top:16px;font-size:11px;color:#bbb;">{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC</div>
+            </div>
+        </div>
+        <div class="doc-version">v {__version__}</div>
+</body></html>
+        """
+        msg = MIMEMultipart("alternative")
+        msg["Subject"], msg["From"], msg["To"] = subject, gmail_address, notify_address
+        msg.attach(MIMEText(body, "html"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=8) as server:
+            server.login(gmail_address, app_password)
+            server.sendmail(gmail_address, notify_address, msg.as_string())
+    except:
+        pass
+
+
+def _ensure_sheet_headers(sheet):
+    """Best-effort header sync for the main export log worksheet."""
+    try:
+        first_row = sheet.row_values(1)
+        current_headers = [value.strip() if isinstance(value, str) else value for value in first_row]
+        desired_headers = EXPORT_HEADERS[:]
+        if current_headers == desired_headers:
+            return
+        target_len = max(len(current_headers), len(desired_headers))
+        padded_headers = desired_headers + [""] * (target_len - len(desired_headers))
+        end_col = _sheet_col_label(target_len)
+        sheet.update(f"A1:{end_col}1", [padded_headers])
+    except Exception:
+        pass
+
+
+def _log_to_sheets(city, state, file_type, k_resp, k_guard, coverage, name, email, details=None):
+    """Log deployment to Google Sheets."""
+    try:
+        sheet_id = st.secrets.get("GOOGLE_SHEET_ID", "")
+        creds_dict = st.secrets.get("gcp_service_account", {})
+        if not sheet_id or not creds_dict:
+            return
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(dict(creds_dict), scopes=scopes)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(sheet_id).sheet1
+        _ensure_sheet_headers(sheet)
+        row = _build_sheets_row(city, state, file_type, k_resp, k_guard, coverage, name, email, details)
+        sheet.append_row(row)
+    except:
+        pass
+
+
+def _log_login_to_sheets(email, name):
+    """Log user login to Google Sheets (separate LOGIN sheet)."""
+    try:
+        sheet_id = st.secrets.get("GOOGLE_SHEET_ID", "")
+        creds_dict = st.secrets.get("gcp_service_account", {})
+        if not sheet_id or not creds_dict:
+            return
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(dict(creds_dict), scopes=scopes)
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(sheet_id)
+
+        # Try to get or create a "Logins" sheet
+        try:
+            sheet = spreadsheet.worksheet("Logins")
+        except gspread.exceptions.WorksheetNotFound:
+            sheet = spreadsheet.add_worksheet(title="Logins", rows=1000, cols=10)
+            # Add headers if new sheet
+            sheet.append_row(["Timestamp", "Email", "Name", "Event"])
+
+        # Append login row
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sheet.append_row([timestamp, email, name, "LOGIN"])
+    except:
+        pass
