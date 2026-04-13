@@ -4336,16 +4336,16 @@ body{{background:transparent;overflow:hidden}}
                 )
                 st.plotly_chart(fig_ring, width="stretch", config={'displayModeBar':False})
 
-                    # Mode legend below the ring
-                    _mode_label = {
-                        "Complement — push apart": "▶◀ Complement — Responders fill Guardian gaps",
-                        "Independent — each uses its own objective": "⊕ Independent — each fleet follows its own objective",
-                        "Shared — allow full overlap": "↔ Shared — both fleets maximise same call set",
-                    }.get(deployment_mode, "")
-                    st.markdown(
-                        f"<div style='font-size:0.65rem; color:{text_muted}; text-align:center; margin-top:-8px;'>{_mode_label}</div>",
-                        unsafe_allow_html=True
-                    )
+                # Mode legend below the ring
+                _mode_label = {
+                    "Complement — push apart": "▶◀ Complement — Responders fill Guardian gaps",
+                    "Independent — each uses its own objective": "⊕ Independent — each fleet follows its own objective",
+                    "Shared — allow full overlap": "↔ Shared — both fleets maximise same call set",
+                }.get(deployment_mode, "")
+                st.markdown(
+                    f"<div style='font-size:0.65rem; color:{text_muted}; text-align:center; margin-top:-8px;'>{_mode_label}</div>",
+                    unsafe_allow_html=True
+                )
             else:
                 st.markdown(
                     f"<div style='color:{text_muted}; font-size:0.8rem; padding:40px 0; text-align:center;'>Deploy drones to see call distribution ring.</div>",
