@@ -18,6 +18,8 @@ from modules.versioning import __version__ as _app_version
 def log_map_build_event_once(session_state, log_to_sheets):
     if session_state.get('map_build_logged', False):
         return
+    if not session_state.get('_pop_resolved', False):
+        return
 
     try:
         map_city = session_state.get('active_city', '')

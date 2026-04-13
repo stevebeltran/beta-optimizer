@@ -2557,6 +2557,7 @@ def main():
                             _upload_pop += _p
                 if _upload_pop > 0:
                     st.session_state['estimated_pop'] = _upload_pop
+                    st.session_state['_pop_resolved'] = True
             except Exception:
                 pass
 
@@ -2915,6 +2916,7 @@ body{{background:transparent;overflow:hidden}}
             active_city_gdf = pd.concat(all_gdfs, ignore_index=True)
             city_poly = active_city_gdf.geometry.union_all()
             st.session_state['estimated_pop'] = total_estimated_pop
+            st.session_state['_pop_resolved'] = True
 
             prog.progress(55, text="🚔 Modeling 911 calls — every one represents someone who needed help…")
             df_demo, annual_cfs, simulated_points_count = build_demo_calls(city_poly, total_estimated_pop, generate_clustered_calls)
