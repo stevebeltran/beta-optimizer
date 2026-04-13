@@ -5249,21 +5249,21 @@ body{{background:transparent;overflow:hidden}}
     *{{box-sizing:border-box;margin:0;padding:0}}
     html{{background:var(--bg)}}
     body{{font-family:'Inter',sans-serif;background:linear-gradient(180deg,#12263d 0%,#08111d 34%,#050b14 100%);color:var(--text);min-height:100vh}}
-    .page{{max-width:430px;margin:0 auto;padding:12px 12px 18px}}
-    .hero{{background:linear-gradient(180deg,var(--hero-top) 0%,var(--hero-bottom) 100%);border:1px solid rgba(110,231,255,.18);border-radius:22px;padding:16px 15px 14px;margin-bottom:10px;box-shadow:0 18px 34px rgba(0,0,0,.28)}}
+    .page{{max-width:none;width:100%;margin:0;padding:10px 8px 18px}}
+    .hero{{background:linear-gradient(180deg,var(--hero-top) 0%,var(--hero-bottom) 100%);border:1px solid rgba(110,231,255,.18);border-radius:20px;padding:18px 16px 15px;margin-bottom:10px;box-shadow:0 18px 34px rgba(0,0,0,.28)}}
     .eyebrow{{color:var(--cyan);font-size:10px;letter-spacing:.16em;text-transform:uppercase;font-weight:800;margin-bottom:7px}}
-    .dept{{font-size:clamp(26px,8vw,34px);font-weight:800;line-height:1.02;letter-spacing:-.03em}}
-    .loc{{color:var(--muted);font-size:13px;margin-top:7px}}
-    .site{{display:inline-flex;align-items:center;justify-content:center;margin-top:12px;padding:8px 11px;border-radius:999px;border:1px solid rgba(110,231,255,.22);background:rgba(110,231,255,.09);color:var(--cyan);text-decoration:none;font-size:12px;font-weight:700}}
+    .dept{{font-size:clamp(28px,8.8vw,38px);font-weight:800;line-height:1.01;letter-spacing:-.035em}}
+    .loc{{color:var(--muted);font-size:14px;margin-top:8px}}
+    .site{{display:inline-flex;align-items:center;justify-content:center;margin-top:13px;padding:8px 12px;border-radius:999px;border:1px solid rgba(110,231,255,.22);background:rgba(110,231,255,.09);color:var(--cyan);text-decoration:none;font-size:12px;font-weight:700}}
     .metrics{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px}}
-    .metric{{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:11px 11px 12px;min-width:0;box-shadow:0 8px 18px rgba(0,0,0,.15)}}
+    .metric{{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px 12px 13px;min-width:0;box-shadow:0 8px 18px rgba(0,0,0,.15)}}
     .metric .k{{font-size:10px;text-transform:uppercase;letter-spacing:.11em;font-weight:700;margin-bottom:5px;opacity:.88}}
-    .metric .v{{font-size:clamp(17px,5.5vw,22px);font-weight:800;line-height:1.05;word-break:break-word}}
+    .metric .v{{font-size:clamp(18px,5.8vw,24px);font-weight:800;line-height:1.05;word-break:break-word}}
     .m-capex .k,.m-capex .v{{color:var(--green)}}
     .m-save .k,.m-save .v{{color:var(--gold)}}
     .m-cov .k,.m-cov .v{{color:var(--cyan)}}
     .m-fleet .k,.m-fleet .v{{color:var(--violet)}}
-    .section{{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:14px 13px;box-shadow:0 10px 20px rgba(0,0,0,.14)}}
+    .section{{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:15px 14px;box-shadow:0 10px 20px rgba(0,0,0,.14)}}
     .section + .section{{margin-top:10px}}
     .section-title{{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.14em;color:var(--cyan);margin-bottom:10px}}
     .list{{display:flex;flex-direction:column;gap:0}}
@@ -5280,10 +5280,10 @@ body{{background:transparent;overflow:hidden}}
     .contact-email{{display:block;width:100%;padding:11px 12px;border-radius:14px;background:var(--link-bg);color:var(--link-text) !important;text-decoration:none;font-size:14px;font-weight:700;word-break:break-word;box-shadow:inset 0 0 0 1px rgba(6,40,58,.08)}}
     .contact-email:visited{{color:var(--link-text) !important}}
     @media(max-width:380px){{
-      .page{{padding:10px 10px 16px}}
-      .hero{{padding:15px 13px 13px}}
+      .page{{padding:8px 6px 14px}}
+      .hero{{padding:15px 13px 13px;border-radius:18px}}
       .metric{{padding:10px}}
-      .metric .v{{font-size:15px}}
+      .metric .v{{font-size:16px}}
       .row{{flex-direction:column;align-items:flex-start}}
       .badge{{margin-top:2px}}
     }}
