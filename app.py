@@ -1695,7 +1695,7 @@ def _df_latlon_signature(df):
         round(float(coords['lon'].max()), 5),
     )
 
-def _jurisdiction_scan_signature(calls_df, stations_df, shapefile_dir, preferred_shp=None):
+def _jurisdiction_scan_signature(calls_df, shapefile_dir, preferred_shp=None):
     shp_meta = []
     for shp_path in sorted(glob.glob(os.path.join(shapefile_dir, "*.shp"))):
         try:
@@ -1714,28 +1714,25 @@ def _jurisdiction_scan_signature(calls_df, stations_df, shapefile_dir, preferred
 
     return (
         _df_latlon_signature(calls_df),
-        _df_latlon_signature(stations_df),
         tuple(shp_meta),
         preferred_meta,
     )
 
-def get_relevant_jurisdictions_cached(calls_df, stations_df, shapefile_dir, preferred_shp=None):
-    cache_key = _jurisdiction_scan_signature(calls_df, stations_df, shapefile_dir, preferred_shp)
+def get_relevant_jurisdictions_cached(calls_df, shapefile_dir, preferred_shp=None):
+    cache_key = _jurisdiction_scan_signature(calls_df, shapefile_dir, preferred_shp)
     if st.session_state.get('_jurisdiction_scan_cache_key') == cache_key:
         cached = st.session_state.get('_jurisdiction_scan_cache_value')
         return cached.copy() if cached is not None else None
 
-    result = find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir, preferred_shp=preferred_shp)
+    result = find_relevant_jurisdictions(calls_df, shapefile_dir, preferred_shp=preferred_shp)
     st.session_state['_jurisdiction_scan_cache_key'] = cache_key
     st.session_state['_jurisdiction_scan_cache_value'] = result.copy() if result is not None else None
     return result
 
-def find_relevant_jurisdictions(calls_df, stations_df, shapefile_dir, preferred_shp=None):
-    points_list = []
-    if calls_df is not None: points_list.append(calls_df[['lat', 'lon']])
-    if stations_df is not None: points_list.append(stations_df[['lat', 'lon']])
-    if not points_list: return None
-    full_points = pd.concat(points_list)
+def find_relevant_jurisdictions(calls_df, shapefile_dir, preferred_shp=None):
+    if calls_df is None:
+        return None
+    full_points = calls_df[['lat', 'lon']].copy()
     full_points = full_points[(full_points.lat.abs() > 1) & (full_points.lon.abs() > 1)]
     scan_points = full_points.sample(50000, random_state=42) if len(full_points) > 50000 else full_points
     points_gdf = gpd.GeoDataFrame(scan_points, geometry=gpd.points_from_xy(scan_points.lon, scan_points.lat), crs="EPSG:4326")
@@ -7223,20 +7220,3 @@ body{{background:transparent;overflow:hidden}}
 
 
 main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

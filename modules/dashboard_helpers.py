@@ -18,6 +18,7 @@ from modules.versioning import __version__ as _app_version
 def log_map_build_event_once(session_state, log_to_sheets):
     if session_state.get('map_build_logged', False):
         return
+    # Wait until population has been resolved from census — avoids logging the 65000 default
     if not session_state.get('_pop_resolved', False):
         return
 
@@ -112,7 +113,6 @@ def resolve_master_boundary(
                         preferred_shp = session_state.get('boundary_source_path', '') or None
                         master_gdf = get_relevant_jurisdictions_cached(
                             df_calls,
-                            df_stations_all,
                             shapefile_dir,
                             preferred_shp=preferred_shp,
                         )
@@ -123,7 +123,6 @@ def resolve_master_boundary(
             preferred_shp = session_state.get('boundary_source_path', '') or None
             master_gdf = get_relevant_jurisdictions_cached(
                 df_calls,
-                df_stations_all,
                 shapefile_dir,
                 preferred_shp=preferred_shp,
             )
@@ -289,10 +288,15 @@ def render_sidebar_jurisdiction_selector(
     options_map = dict(zip(master_gdf['LABEL'], master_gdf['DISPLAY_NAME']))
     all_options = master_gdf['LABEL'].tolist()
     default_selection = [all_options[0]] if all_options else []
+    options_signature = tuple(all_options)
+    if session_state.get('_jurisdiction_options_signature') != options_signature:
+        session_state['jurisdictions_multiselect'] = default_selection
+        session_state['_jurisdiction_options_signature'] = options_signature
+
     selected_labels = st.sidebar.multiselect(
         'Jurisdictions',
         options=all_options,
-        default=default_selection,
+        default=session_state.get('jurisdictions_multiselect', default_selection),
         key='jurisdictions_multiselect',
         help='Select which geographic areas to include in coverage analysis.',
     )
@@ -1467,5 +1471,3 @@ def optimize_fleet_selection(
         'best_combo': best_combo,
         'guard_claims_by_idx': guard_claims_by_idx if complement_mode else {},
     }
-
-
