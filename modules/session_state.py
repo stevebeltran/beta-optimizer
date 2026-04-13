@@ -13,7 +13,7 @@ DEFAULTS = {
     "df_stations": None,
     "active_city": "Rockford",
     "active_state": "IL",
-    "estimated_pop": 65000,
+    "estimated_pop": 0,
     "k_resp": 2,
     "k_guard": 0,
     "r_resp": 2.0,

@@ -4769,7 +4769,7 @@ body{{background:transparent;overflow:hidden}}
             _cid_html = html_reports.generate_community_impact_dashboard_html(
                 city=st.session_state.get('active_city', 'City'),
                 state=st.session_state.get('active_state', 'TX'),
-                population=int(st.session_state.get('estimated_pop', 65000) or 65000),
+                population=int(st.session_state.get('estimated_pop', 0) or 0),
                 total_calls=int(st.session_state.get('total_original_calls', full_total_calls or total_calls) or 0),
                 calls_covered_perc=float(calls_covered_perc or 0),
                 area_covered_perc=float(area_covered_perc or 0),
@@ -7034,7 +7034,7 @@ body{{background:transparent;overflow:hidden}}
                 _cid_export_html = html_reports.generate_community_impact_dashboard_html(
                     city=prop_city,
                     state=prop_state,
-                    population=int(pop_metric or 65000),
+                    population=int(pop_metric or 0),
                     total_calls=int(st.session_state.get('total_original_calls', 0) or 0),
                     calls_covered_perc=float(calls_covered_perc or 0),
                     area_covered_perc=float(area_covered_perc or 0),
