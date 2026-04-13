@@ -3941,7 +3941,7 @@ body{{background:transparent;overflow:hidden}}
 
         # ── Pre-compute Fleet Summary impact sub-values ───────────────────────
         _annual_resolved = int(daily_drone_only_calls * 365) if daily_drone_only_calls > 0 else 0
-        _covered_calls_abs = int(calls_covered_perc / 100.0 * total_calls) if total_calls else 0
+        _covered_calls_abs = int(calls_covered_perc / 100.0 * orig_calls) if orig_calls else 0
         _land_sqmi = int(area_covered_perc / 100.0 * area_sq_mi) if area_sq_mi else 0
 
         _impact_incidents  = f"~{_annual_resolved:,} resolved/yr" if _annual_resolved > 0 else None
