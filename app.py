@@ -5231,54 +5231,61 @@ body{{background:transparent;overflow:hidden}}
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root{{
-      --bg:#07101c;
-      --panel:#0c1828;
-      --panel-2:#0f2136;
+      --bg:#050b14;
+      --hero-top:#15314f;
+      --hero-bottom:#091523;
+      --panel:#0d1827;
+      --panel-soft:#112337;
       --line:rgba(255,255,255,.08);
-      --text:#e8f2ff;
-      --muted:#87a1ba;
-      --cyan:#00D2FF;
-      --green:#00ff88;
-      --gold:#FFD700;
-      --violet:#a78bfa;
+      --text:#f4f8ff;
+      --muted:#9ab0c7;
+      --cyan:#6ee7ff;
+      --green:#58f5a5;
+      --gold:#ffd76a;
+      --violet:#c2a9ff;
+      --link-bg:#dff8ff;
+      --link-text:#06283a;
     }}
     *{{box-sizing:border-box;margin:0;padding:0}}
-    body{{font-family:'Inter',sans-serif;background:radial-gradient(circle at top,#12253d 0%,#07101c 48%,#040914 100%);color:var(--text);min-height:100vh}}
-    .page{{max-width:560px;margin:0 auto;padding:14px}}
-    .hero{{background:linear-gradient(160deg,#0d2137 0%,#0a1626 100%);border:1px solid rgba(0,210,255,.22);border-radius:18px;padding:16px 16px 14px;margin-bottom:12px;box-shadow:0 14px 34px rgba(0,0,0,.28)}}
-    .eyebrow{{color:var(--cyan);font-size:10px;letter-spacing:.18em;text-transform:uppercase;font-weight:800;margin-bottom:6px}}
-    .dept{{font-size:clamp(24px,7vw,34px);font-weight:800;line-height:1.05}}
-    .loc{{color:var(--muted);font-size:13px;margin-top:6px}}
-    .site{{display:inline-flex;align-items:center;justify-content:center;margin-top:12px;padding:7px 10px;border-radius:999px;border:1px solid rgba(0,210,255,.28);background:rgba(0,210,255,.08);color:var(--cyan);text-decoration:none;font-size:12px;font-weight:700}}
-    .metrics{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:12px}}
-    .metric{{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:11px 12px;min-width:0}}
-    .metric .k{{font-size:10px;text-transform:uppercase;letter-spacing:.12em;font-weight:700;margin-bottom:4px;opacity:.82}}
-    .metric .v{{font-size:clamp(16px,5vw,22px);font-weight:800;line-height:1.1;word-break:break-word}}
+    html{{background:var(--bg)}}
+    body{{font-family:'Inter',sans-serif;background:linear-gradient(180deg,#12263d 0%,#08111d 34%,#050b14 100%);color:var(--text);min-height:100vh}}
+    .page{{max-width:430px;margin:0 auto;padding:12px 12px 18px}}
+    .hero{{background:linear-gradient(180deg,var(--hero-top) 0%,var(--hero-bottom) 100%);border:1px solid rgba(110,231,255,.18);border-radius:22px;padding:16px 15px 14px;margin-bottom:10px;box-shadow:0 18px 34px rgba(0,0,0,.28)}}
+    .eyebrow{{color:var(--cyan);font-size:10px;letter-spacing:.16em;text-transform:uppercase;font-weight:800;margin-bottom:7px}}
+    .dept{{font-size:clamp(26px,8vw,34px);font-weight:800;line-height:1.02;letter-spacing:-.03em}}
+    .loc{{color:var(--muted);font-size:13px;margin-top:7px}}
+    .site{{display:inline-flex;align-items:center;justify-content:center;margin-top:12px;padding:8px 11px;border-radius:999px;border:1px solid rgba(110,231,255,.22);background:rgba(110,231,255,.09);color:var(--cyan);text-decoration:none;font-size:12px;font-weight:700}}
+    .metrics{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px}}
+    .metric{{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:11px 11px 12px;min-width:0;box-shadow:0 8px 18px rgba(0,0,0,.15)}}
+    .metric .k{{font-size:10px;text-transform:uppercase;letter-spacing:.11em;font-weight:700;margin-bottom:5px;opacity:.88}}
+    .metric .v{{font-size:clamp(17px,5.5vw,22px);font-weight:800;line-height:1.05;word-break:break-word}}
     .m-capex .k,.m-capex .v{{color:var(--green)}}
     .m-save .k,.m-save .v{{color:var(--gold)}}
     .m-cov .k,.m-cov .v{{color:var(--cyan)}}
     .m-fleet .k,.m-fleet .v{{color:var(--violet)}}
-    .section{{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px}}
+    .section{{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:14px 13px;box-shadow:0 10px 20px rgba(0,0,0,.14)}}
     .section + .section{{margin-top:10px}}
     .section-title{{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.14em;color:var(--cyan);margin-bottom:10px}}
     .list{{display:flex;flex-direction:column;gap:0}}
-    .row{{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.06)}}
+    .row{{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06)}}
     .row:last-child{{border-bottom:none;padding-bottom:0}}
     .sname{{font-weight:700;font-size:14px;line-height:1.2}}
     .ssub{{color:var(--muted);font-size:11px;margin-top:3px}}
     .badge{{flex:0 0 auto;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}}
-    .guard{{background:rgba(255,215,0,.14);color:var(--gold);border:1px solid rgba(255,215,0,.30)}}
-    .resp{{background:rgba(0,210,255,.13);color:var(--cyan);border:1px solid rgba(0,210,255,.28)}}
-    .contact-label{{font-size:10px;text-transform:uppercase;letter-spacing:.14em;color:var(--cyan);font-weight:800;margin-bottom:6px}}
-    .contact-name{{font-size:18px;font-weight:800;line-height:1.1;margin-bottom:4px}}
-    .contact a{{color:var(--cyan);text-decoration:none;font-size:14px;word-break:break-word}}
-    @media(max-width:420px){{
-      .page{{padding:10px}}
-      .hero{{padding:14px 14px 12px}}
-      .metrics{{gap:7px}}
+    .guard{{background:rgba(255,215,106,.14);color:var(--gold);border:1px solid rgba(255,215,106,.28)}}
+    .resp{{background:rgba(110,231,255,.13);color:var(--cyan);border:1px solid rgba(110,231,255,.24)}}
+    .contact-card{{background:linear-gradient(180deg,var(--panel-soft) 0%,var(--panel) 100%);border:1px solid rgba(110,231,255,.12)}}
+    .contact-label{{font-size:10px;text-transform:uppercase;letter-spacing:.14em;color:var(--cyan);font-weight:800;margin-bottom:7px}}
+    .contact-name{{font-size:20px;font-weight:800;line-height:1.05;margin-bottom:8px}}
+    .contact-email{{display:block;width:100%;padding:11px 12px;border-radius:14px;background:var(--link-bg);color:var(--link-text) !important;text-decoration:none;font-size:14px;font-weight:700;word-break:break-word;box-shadow:inset 0 0 0 1px rgba(6,40,58,.08)}}
+    .contact-email:visited{{color:var(--link-text) !important}}
+    @media(max-width:380px){{
+      .page{{padding:10px 10px 16px}}
+      .hero{{padding:15px 13px 13px}}
       .metric{{padding:10px}}
       .metric .v{{font-size:15px}}
       .row{{flex-direction:column;align-items:flex-start}}
+      .badge{{margin-top:2px}}
     }}
   </style>
 </head>
@@ -5303,10 +5310,10 @@ body{{background:transparent;overflow:hidden}}
     <div class="list">{_station_rows_html}</div>
   </section>
 
-  <section class="section">
+  <section class="section contact-card">
     <div class="contact-label">BRINC Representative</div>
     <div class="contact-name">{_qr_name}</div>
-    <a href="mailto:{_qr_email}">{_qr_email}</a>
+    <a class="contact-email" href="mailto:{_qr_email}">{_qr_email}</a>
   </section>
 </div>
 </body>
