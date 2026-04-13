@@ -5,6 +5,7 @@ Email and Google Sheets notification system for BRINC app.
 import datetime
 import json
 import smtplib
+from pathlib import Path
 import streamlit as st
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -20,6 +21,7 @@ from modules.versioning import (
 
 
 EXPORT_HEADERS = [
+    "Source App",
     "Timestamp",
     "Session ID",
     "Session Start",
@@ -160,7 +162,12 @@ def _build_sheets_row(city, state, event_type, k_resp, k_guard, coverage, name, 
     except Exception:
         dur = ''
     fm = d.get('file_meta', {})
+    try:
+        source_app = st.secrets.get("SOURCE_APP", "") or Path(__file__).resolve().parent.parent.name
+    except Exception:
+        source_app = ""
     return [
+        source_app,
         now,
         d.get('session_id', ''),
         session_start,
@@ -289,6 +296,93 @@ def _ensure_sheet_headers(sheet):
         pass
 
 
+USER_HEADERS = [
+    "Email",
+    "Name",
+    "First Seen",
+    "Last Seen",
+    "Total Logins",
+    "Total Exports",
+    "Cities Evaluated",
+    "Largest Fleet CapEx ($)",
+]
+
+
+def _upsert_user(spreadsheet, email, name, *, increment_logins=False, increment_exports=False, city=None, fleet_capex=None):
+    """Upsert a row in the Users sheet — one row per unique email."""
+    try:
+        try:
+            sheet = spreadsheet.worksheet("Users")
+        except gspread.exceptions.WorksheetNotFound:
+            sheet = spreadsheet.add_worksheet(title="Users", rows=1000, cols=len(USER_HEADERS))
+            sheet.append_row(USER_HEADERS)
+
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        all_values = sheet.get_all_values()
+        if not all_values:
+            sheet.append_row(USER_HEADERS)
+            all_values = [USER_HEADERS]
+
+        col = {h: i for i, h in enumerate(all_values[0])}
+
+        user_row_idx = None
+        for i, row in enumerate(all_values[1:], start=2):
+            if row and len(row) > col.get("Email", 0) and row[col["Email"]] == email:
+                user_row_idx = i
+                break
+
+        if user_row_idx is None:
+            new_row = [""] * len(USER_HEADERS)
+            new_row[col["Email"]] = email
+            new_row[col["Name"]] = name
+            new_row[col["First Seen"]] = now
+            new_row[col["Last Seen"]] = now
+            new_row[col["Total Logins"]] = 1 if increment_logins else 0
+            new_row[col["Total Exports"]] = 1 if increment_exports else 0
+            new_row[col["Cities Evaluated"]] = city or ""
+            new_row[col["Largest Fleet CapEx ($)"]] = fleet_capex or ""
+            sheet.append_row(new_row)
+        else:
+            row_data = list(all_values[user_row_idx - 1])
+            while len(row_data) < len(USER_HEADERS):
+                row_data.append("")
+
+            row_data[col["Last Seen"]] = now
+            if name:
+                row_data[col["Name"]] = name
+
+            if increment_logins:
+                try:
+                    row_data[col["Total Logins"]] = int(row_data[col["Total Logins"]] or 0) + 1
+                except (ValueError, TypeError):
+                    row_data[col["Total Logins"]] = 1
+
+            if increment_exports:
+                try:
+                    row_data[col["Total Exports"]] = int(row_data[col["Total Exports"]] or 0) + 1
+                except (ValueError, TypeError):
+                    row_data[col["Total Exports"]] = 1
+
+            if city:
+                existing = row_data[col["Cities Evaluated"]] or ""
+                cities = [c.strip() for c in existing.split(",") if c.strip()]
+                if city not in cities:
+                    cities.append(city)
+                row_data[col["Cities Evaluated"]] = ", ".join(cities)
+
+            if fleet_capex:
+                try:
+                    if float(fleet_capex) > float(row_data[col["Largest Fleet CapEx ($)"]] or 0):
+                        row_data[col["Largest Fleet CapEx ($)"]] = fleet_capex
+                except (ValueError, TypeError):
+                    row_data[col["Largest Fleet CapEx ($)"]] = fleet_capex
+
+            end_col = _sheet_col_label(len(USER_HEADERS))
+            sheet.update(f"A{user_row_idx}:{end_col}{user_row_idx}", [row_data[:len(USER_HEADERS)]])
+    except Exception:
+        pass
+
+
 def _log_to_sheets(city, state, file_type, k_resp, k_guard, coverage, name, email, details=None):
     """Log deployment to Google Sheets."""
     try:
@@ -299,10 +393,16 @@ def _log_to_sheets(city, state, file_type, k_resp, k_guard, coverage, name, emai
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(dict(creds_dict), scopes=scopes)
         client = gspread.authorize(creds)
-        sheet = client.open_by_key(sheet_id).sheet1
+        spreadsheet = client.open_by_key(sheet_id)
+        sheet = spreadsheet.sheet1
         _ensure_sheet_headers(sheet)
         row = _build_sheets_row(city, state, file_type, k_resp, k_guard, coverage, name, email, details)
         sheet.append_row(row)
+        d = details or {}
+        _upsert_user(spreadsheet, email, name,
+                     increment_exports=True,
+                     city=city,
+                     fleet_capex=d.get('fleet_capex'))
     except:
         pass
 
@@ -319,16 +419,14 @@ def _log_login_to_sheets(email, name):
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(sheet_id)
 
-        # Try to get or create a "Logins" sheet
         try:
             sheet = spreadsheet.worksheet("Logins")
         except gspread.exceptions.WorksheetNotFound:
             sheet = spreadsheet.add_worksheet(title="Logins", rows=1000, cols=10)
-            # Add headers if new sheet
             sheet.append_row(["Timestamp", "Email", "Name", "Event"])
 
-        # Append login row
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         sheet.append_row([timestamp, email, name, "LOGIN"])
+        _upsert_user(spreadsheet, email, name, increment_logins=True)
     except:
         pass
