@@ -3039,6 +3039,18 @@ body{{background:transparent;overflow:hidden}}
 
             if not all_gdfs:
                 prog.empty()
+                components.html("""<!DOCTYPE html><html><head></head><body><script>
+(function(){
+  var doc=parent.document;
+  if(parent._brincFloWd){parent.clearInterval(parent._brincFloWd);parent._brincFloWd=null;}
+  var el=doc.getElementById('brinc-flo');
+  if(el){el.style.transition='opacity 0.35s ease';el.style.opacity='0';
+    parent.setTimeout(function(){
+      var e=doc.getElementById('brinc-flo');if(e&&e.parentNode)e.parentNode.removeChild(e);
+      var s=doc.getElementById('brinc-flo-css');if(s&&s.parentNode)s.parentNode.removeChild(s);
+    },360);}
+})();
+</script></body></html>""", height=0, scrolling=False)
                 st.error("❌ Could not find Census boundaries for any of the entered locations. Check spelling.")
                 st.stop()
 
@@ -4084,22 +4096,29 @@ body{{background:transparent;overflow:hidden}}
                 if _cov_state:
                     add_coverage_traces(fig, _cov_state, visible=True)
 
+            _max_zone_calls = max(
+                (int(d.get('raw_zone_calls_annual', 0) or 0) for d in active_drones), default=1
+            ) or 1
             for d in active_drones:
                 clats, clons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
                 lbl = f"{d['name'].split(',')[0]} ({'Resp' if d['type']=='RESPONDER' else 'Guard'})"
-        
+
+                # Scale center pin by calls served (range 12–34)
+                _zone_calls = int(d.get('raw_zone_calls_annual', 0) or 0)
+                _pin_size = int(12 + 22 * (_zone_calls / _max_zone_calls))
+
                 # Determine if this is an extended Guardian (so we can relax the outer ring)
                 is_extended_guardian = (d['type'] == 'GUARDIAN' and d['radius_m']/1609.34 > 5.0)
-        
+
                 # The outer ring becomes relaxed (thinner, more transparent) if > 5 miles
                 outer_width = 1.5 if is_extended_guardian else 4.5
                 outer_opac = 0.4 if is_extended_guardian else 1.0
-        
+
                 fig.add_trace(go.Scattermap(
                     lat=list(clats)+[None,d['lat']], lon=list(clons)+[None,d['lon']],
                     mode='lines+markers',
                     opacity=outer_opac,
-                    marker=dict(size=[0]*len(clats)+[0,20], color=d['color']),
+                    marker=dict(size=[0]*len(clats)+[0,_pin_size], color=d['color']),
                     line=dict(color=d['color'], width=outer_width),
                     fill='toself', fillcolor='rgba(0,0,0,0)', name=lbl, hoverinfo='name'))
 
@@ -4372,16 +4391,13 @@ body{{background:transparent;overflow:hidden}}
 
                 def _fleet_ring_slices(drones, fleet_label):
                     """Raw calls covered per station (independent of other fleet).
-                    Each slice = how many of the total calls fall inside that station's radius.
-                    Stations with low/zero coverage get a minimum visible slice so they always appear."""
+                    Each slice = how many of the total calls fall inside that station's radius."""
                     labels, values, colors, hovers = [], [], [], []
-                    # minimum display size = 3% of total so every station is visible
-                    _vis_min = max(1, int(total_calls * 0.03))
                     for d in drones:
                         raw = int(d.get('raw_zone_calls_annual', int(np.sum(d['cov_array']))))
                         name = d['name'].split(',')[0][:18]
                         labels.append(name)
-                        values.append(max(raw, _vis_min))
+                        values.append(max(raw, 1))
                         colors.append(d['color'])
                         _label = f'{raw:,} calls in radius' if raw > 0 else '0 calls in radius (outside boundary or overlap)'
                         hovers.append(f'<b>{name}</b> [{fleet_label}]<br>{_label}<extra></extra>')
