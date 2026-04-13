@@ -4238,40 +4238,58 @@ body{{background:transparent;overflow:hidden}}
                 _g_drones = [d for d in active_drones if d['type'] == 'GUARDIAN']
                 _r_drones = [d for d in active_drones if d['type'] == 'RESPONDER']
 
+                _min_display = max(1, int(total_calls * 0.004))
+
                 def _build_ring_data(drones, fleet_cov_mask):
-                    """Build labels/values/colors for one fleet's ring slices."""
-                    labels, values, colors = [], [], []
+                    """Build labels/values/colors/patterns for one fleet's ring slices.
+                    Stations with 0 marginal calls still appear as hatched thin slices."""
+                    labels, values, colors, patterns, hovers = [], [], [], [], []
                     remaining = int(fleet_cov_mask.sum()) if fleet_cov_mask is not None else 0
                     for d in drones:
                         _m = int(d.get('marginal_perc', 0) * total_calls)
+                        name = d['name'].split(',')[0][:18]
                         if _m > 0:
-                            labels.append(d['name'].split(',')[0][:18])
+                            labels.append(name)
                             values.append(_m)
                             colors.append(d['color'])
+                            patterns.append('')
+                            hovers.append(f'<b>{name}</b><br>{_m:,} calls (%{{percent}})<extra></extra>')
                             remaining = max(0, remaining - _m)
-                    return labels, values, colors
+                        else:
+                            # Station deployed but 0 marginal calls — show as hatched slice
+                            labels.append(f'{name} ◇')
+                            values.append(_min_display)
+                            colors.append(d['color'])
+                            patterns.append('/')
+                            hovers.append(f'<b>{name}</b><br>0 marginal calls — covered by other stations<extra></extra>')
+                    return labels, values, colors, patterns, hovers
 
-                _g_labels, _g_vals, _g_cols = _build_ring_data(_g_drones, cov_g)
-                _r_labels, _r_vals, _r_cols = _build_ring_data(_r_drones, cov_r)
+                _g_labels, _g_vals, _g_cols, _g_pats, _g_hovs = _build_ring_data(_g_drones, cov_g)
+                _r_labels, _r_vals, _r_cols, _r_pats, _r_hovs = _build_ring_data(_r_drones, cov_r)
 
                 # Uncovered slice for combined view
                 _combined_covered = int(np.logical_or(cov_r, cov_g).sum()) if total_calls > 0 else 0
                 _uncovered = max(0, total_calls - _combined_covered)
 
-                # Build a single donut: Guardian slices (gold ring) + Responder slices (cyan ring)
-                # separated by a small "uncovered" gap
-                all_labels = _g_labels + _r_labels + (["Uncovered"] if _uncovered > 0 else [])
-                all_values = _g_vals   + _r_vals   + ([_uncovered] if _uncovered > 0 else [])
-                all_colors = _g_cols   + _r_cols   + (["#1a1a1a"] if _uncovered > 0 else [])
+                all_labels   = _g_labels + _r_labels + (["Uncovered"] if _uncovered > 0 else [])
+                all_values   = _g_vals   + _r_vals   + ([_uncovered]  if _uncovered > 0 else [])
+                all_colors   = _g_cols   + _r_cols   + (["#1a1a1a"]   if _uncovered > 0 else [])
+                all_patterns = _g_pats   + _r_pats   + (['']          if _uncovered > 0 else [])
+                all_hovers   = _g_hovs   + _r_hovs   + (['<b>Uncovered</b><br>%{value:,} calls<extra></extra>'] if _uncovered > 0 else [])
 
                 if all_values:
                     fig_ring = go.Figure(go.Pie(
                         labels=all_labels,
                         values=all_values,
                         hole=0.58,
-                        marker=dict(colors=all_colors, line=dict(color='#000', width=1.5)),
+                        marker=dict(
+                            colors=all_colors,
+                            pattern=dict(shape=all_patterns, solidity=0.4, size=6),
+                            line=dict(color='#000', width=1.5),
+                        ),
                         textinfo='none',
-                        hovertemplate='<b>%{label}</b><br>%{value:,} calls (%{percent})<extra></extra>',
+                        customdata=all_hovers,
+                        hovertemplate='%{customdata}',
                         sort=False,
                     ))
                     _cov_pct = round(_combined_covered / total_calls * 100, 1)
