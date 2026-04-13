@@ -4240,15 +4240,18 @@ body{{background:transparent;overflow:hidden}}
 
                 def _fleet_ring_slices(drones, fleet_label):
                     """Raw calls covered per station (independent of other fleet).
-                    Each slice = how many of the total calls fall inside that station's radius."""
+                    Each slice = how many of the total calls fall inside that station's radius.
+                    Stations with low/zero coverage get a minimum visible slice so they always appear."""
                     labels, values, colors, hovers = [], [], [], []
+                    _vis_min = max(1, int(total_calls * 0.03))
                     for d in drones:
                         raw = int(d.get('raw_zone_calls_annual', int(np.sum(d['cov_array']))))
                         name = d['name'].split(',')[0][:18]
                         labels.append(name)
-                        values.append(max(raw, 1))
+                        values.append(max(raw, _vis_min))
                         colors.append(d['color'])
-                        hovers.append(f'<b>{name}</b> [{fleet_label}]<br>{raw:,} calls in radius<extra></extra>')
+                        _label = f'{raw:,} calls in radius' if raw > 0 else '0 calls in radius (outside boundary or overlap)'
+                        hovers.append(f'<b>{name}</b> [{fleet_label}]<br>{_label}<extra></extra>')
                     if drones:
                         _any = np.logical_or.reduce([d['cov_array'] for d in drones])
                         _uncov = max(0, total_calls - int(_any.sum()))
