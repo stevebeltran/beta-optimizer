@@ -2977,12 +2977,20 @@ body{{background:transparent;overflow:hidden}}
   }}
   parent.setTimeout(function(){{
     parent._brincFloWd=parent.setInterval(function(){{
-      var hasChart=doc.querySelector('[data-testid="stPlotlyChart"]')||doc.querySelector('.js-plotly-plot');
+      var hasChart=
+        doc.querySelector('[data-testid="stPlotlyChart"]')||
+        doc.querySelector('.js-plotly-plot')||
+        doc.querySelector('.stPlotlyChart')||
+        doc.querySelector('[class*="js-plotly"]')||
+        doc.querySelector('.mapboxgl-canvas')||
+        doc.querySelector('.maplibregl-canvas')||
+        doc.querySelector('[data-testid="stPlotly"]')||
+        doc.querySelector('.plot-container');
       if(hasChart) removeFlo();
-    }},500);
-  }},5000);
-  /* safety net: hard-remove after 90s */
-  parent.setTimeout(removeFlo, 90000);
+    }},400);
+  }},2500);
+  /* safety net: hard-remove after 30s */
+  parent.setTimeout(removeFlo, 30000);
 }})();
 </script>
 </body></html>
@@ -4392,14 +4400,16 @@ body{{background:transparent;overflow:hidden}}
                 def _fleet_ring_slices(drones, fleet_label):
                     """Raw calls covered per station (independent of other fleet).
                     Each slice = how many of the total calls fall inside that station's radius."""
-                    labels, values, colors, hovers = [], [], [], []
+                    labels, values, colors, hovers, texts = [], [], [], [], []
                     for d in drones:
                         raw = int(d.get('raw_zone_calls_annual', int(np.sum(d['cov_array']))))
                         name = d['name'].split(',')[0][:18]
+                        pct = raw / total_calls * 100 if total_calls > 0 else 0.0
                         labels.append(name)
                         values.append(max(raw, 1))
                         colors.append(d['color'])
-                        _label = f'{raw:,} calls in radius' if raw > 0 else '0 calls in radius (outside boundary or overlap)'
+                        texts.append(f'{pct:.1f}%')
+                        _label = f'{raw:,} calls in radius ({pct:.1f}% of total)' if raw > 0 else '0 calls in radius'
                         hovers.append(f'<b>{name}</b> [{fleet_label}]<br>{_label}<extra></extra>')
                     # uncovered by this fleet
                     if drones:
@@ -4408,11 +4418,13 @@ body{{background:transparent;overflow:hidden}}
                     else:
                         _uncov = total_calls
                     if _uncov > 0:
+                        _uncov_pct = _uncov / total_calls * 100 if total_calls > 0 else 0.0
                         labels.append(f'Uncovered ({fleet_label})')
                         values.append(_uncov)
                         colors.append('#1a1a1a')
-                        hovers.append(f'<b>Uncovered by {fleet_label}</b><br>{_uncov:,} calls<extra></extra>')
-                    return labels, values, colors, hovers
+                        texts.append(f'{_uncov_pct:.1f}%')
+                        hovers.append(f'<b>Uncovered by {fleet_label}</b><br>{_uncov:,} calls ({_uncov_pct:.1f}%)<extra></extra>')
+                    return labels, values, colors, hovers, texts
 
                 _combined_covered = int(np.logical_or(cov_r, cov_g).sum()) if total_calls > 0 else 0
                 _cov_pct   = round(_combined_covered / total_calls * 100, 1)
@@ -4422,13 +4434,14 @@ body{{background:transparent;overflow:hidden}}
 
                 # ── Outer ring: Guardians ─────────────────────────────────────────
                 if _g_drones:
-                    _gl, _gv, _gc, _gh = _fleet_ring_slices(_g_drones, 'Guardian')
+                    _gl, _gv, _gc, _gh, _gt = _fleet_ring_slices(_g_drones, 'Guardian')
                     fig_ring.add_trace(go.Pie(
                         name='Guardians',
                         labels=_gl, values=_gv,
                         hole=0.72,
                         marker=dict(colors=_gc, line=dict(color='#000', width=1.5)),
-                        textinfo='none',
+                        text=_gt, textinfo='text', textposition='inside',
+                        insidetextfont=dict(size=10, color='#ffffff'),
                         customdata=_gh,
                         hovertemplate='%{customdata}',
                         sort=False,
@@ -4438,7 +4451,7 @@ body{{background:transparent;overflow:hidden}}
 
                 # ── Inner ring: Responders ────────────────────────────────────────
                 if _r_drones:
-                    _rl, _rv, _rc, _rh = _fleet_ring_slices(_r_drones, 'Responder')
+                    _rl, _rv, _rc, _rh, _rt = _fleet_ring_slices(_r_drones, 'Responder')
                     _inner_domain = dict(x=[0.12, 0.88], y=[0.12, 0.88])
                     fig_ring.add_trace(go.Pie(
                         name='Responders',
@@ -4446,7 +4459,8 @@ body{{background:transparent;overflow:hidden}}
                         hole=0.52,
                         domain=_inner_domain,
                         marker=dict(colors=_rc, line=dict(color='#000', width=1.5)),
-                        textinfo='none',
+                        text=_rt, textinfo='text', textposition='inside',
+                        insidetextfont=dict(size=10, color='#ffffff'),
                         customdata=_rh,
                         hovertemplate='%{customdata}',
                         sort=False,
@@ -4456,11 +4470,13 @@ body{{background:transparent;overflow:hidden}}
 
                 # ── If only one fleet type, show single ring ──────────────────────
                 if not _g_drones and _r_drones:
-                    _rl, _rv, _rc, _rh = _fleet_ring_slices(_r_drones, 'Responder')
+                    _rl, _rv, _rc, _rh, _rt = _fleet_ring_slices(_r_drones, 'Responder')
                     fig_ring = go.Figure(go.Pie(
                         labels=_rl, values=_rv, hole=0.58,
                         marker=dict(colors=_rc, line=dict(color='#000', width=1.5)),
-                        textinfo='none', customdata=_rh,
+                        text=_rt, textinfo='text', textposition='inside',
+                        insidetextfont=dict(size=10, color='#ffffff'),
+                        customdata=_rh,
                         hovertemplate='%{customdata}', sort=False,
                     ))
 
