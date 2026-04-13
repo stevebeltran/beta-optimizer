@@ -2546,6 +2546,20 @@ def main():
                 st.session_state['active_city']  = f"{str(active_targets[0]['city']).title()} & {len(active_targets)-1} others"
                 st.session_state['active_state'] = active_targets[0]['state']
 
+            # ── Fetch real population for upload path ─────────────────────────────
+            try:
+                _upload_pop = 0
+                for _t in active_targets:
+                    _fips = STATE_FIPS.get(_t.get('state', ''), '')
+                    if _fips:
+                        _p = fetch_census_population(_fips, _t.get('city', ''))
+                        if _p:
+                            _upload_pop += _p
+                if _upload_pop > 0:
+                    st.session_state['estimated_pop'] = _upload_pop
+            except Exception:
+                pass
+
             # ── Flight-path loading overlay ───────────────────────────────────────
             _swarm_city = str(active_targets[0]['city']).title() if active_targets else "Jurisdiction"
             _swarm_logo_b64 = get_themed_logo_base64("logo.png", theme="dark") or ""

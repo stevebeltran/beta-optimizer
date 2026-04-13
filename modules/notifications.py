@@ -27,20 +27,14 @@ EXPORT_HEADERS = [
     "Session Start",
     "Session Duration (min)",
     "Data Source",
+    "Sim or Upload",
     "BRINC Rep Name",
     "BRINC Rep Email",
     "City",
     "State",
     "Population",
     "Area (sq mi)",
-    "File Inferred City",
-    "File Inferred State",
-    "File City Matched Selection",
-    "Multi-City Targets (JSON)",
-    "Num Cities Targeted",
     "Total Annual Calls",
-    "Daily Calls",
-    "Calls Per Capita",
     "Event Type",
     "Responders",
     "Guardians",
@@ -58,27 +52,31 @@ EXPORT_HEADERS = [
     "Allow Overlap",
     "Responder Radius (mi)",
     "Guardian Radius (mi)",
-    "Population Input by User",
     "Uploaded Filename(s)",
-    "File Row Count",
-    "File Column Count",
-    "File Column Names (JSON)",
     "File Date Range Start",
     "File Date Range End",
-    "File Date Span (days)",
-    "Null Rate % (key fields)",
-    "Lat/Lon Detected",
-    "Priority Col Detected",
     "Call Type Breakdown (JSON)",
     "Priority Distribution (JSON)",
     "Peak Hour (0-23)",
     "Peak Day of Week (0=Mon)",
     "Peak Month (1-12)",
     "Boundary Kind",
-    "Boundary Source Path",
-    "Sim or Upload",
-    "Total Exports in Session",
     "Drone Details (JSON)",
+]
+
+SESSION_HEADERS = [
+    "Source App",
+    "Timestamp",
+    "Session ID",
+    "Session Start",
+    "BRINC Rep Name",
+    "BRINC Rep Email",
+    "City",
+    "State",
+    "Population",
+    "Total Annual Calls",
+    "Data Source",
+    "Sim or Upload",
 ]
 
 
@@ -173,20 +171,14 @@ def _build_sheets_row(city, state, event_type, k_resp, k_guard, coverage, name, 
         session_start,
         dur,
         d.get('data_source', ''),
+        d.get('sim_or_upload', ''),
         name,
         email,
         city,
         state,
         d.get('population', ''),
         d.get('area_sq_mi', ''),
-        fm.get('file_inferred_city', ''),
-        fm.get('file_inferred_state', ''),
-        d.get('city_confirmed_match', ''),
-        d.get('multi_city_targets', ''),
-        d.get('num_cities_targeted', ''),
         d.get('total_calls', ''),
-        d.get('daily_calls', ''),
-        d.get('calls_per_capita', ''),
         event_type,
         k_resp,
         k_guard,
@@ -204,26 +196,15 @@ def _build_sheets_row(city, state, event_type, k_resp, k_guard, coverage, name, 
         d.get('allow_redundancy', ''),
         d.get('r_resp_radius', ''),
         d.get('r_guard_radius', ''),
-        d.get('estimated_pop_input', ''),
         fm.get('uploaded_filename', ''),
-        fm.get('file_row_count', ''),
-        fm.get('file_col_count', ''),
-        fm.get('file_col_names', ''),
         fm.get('file_date_range_start', ''),
         fm.get('file_date_range_end', ''),
-        fm.get('file_date_span_days', ''),
-        fm.get('file_null_rate_pct', ''),
-        fm.get('file_has_lat_lon', ''),
-        fm.get('file_has_priority', ''),
         fm.get('call_type_breakdown', ''),
         fm.get('priority_distribution', ''),
         fm.get('peak_hour', ''),
         fm.get('peak_day_of_week', ''),
         fm.get('peak_month', ''),
         d.get('boundary_kind', ''),
-        d.get('boundary_source_path', ''),
-        d.get('sim_or_upload', ''),
-        d.get('total_exports_in_session', ''),
         json.dumps([{"name": dr.get("name"), "type": dr.get("type"),
                      "lat": dr.get("lat"), "lon": dr.get("lon"),
                      "avg_time_min": dr.get("avg_time_min"),
@@ -384,7 +365,7 @@ def _upsert_user(spreadsheet, email, name, *, increment_logins=False, increment_
 
 
 def _log_to_sheets(city, state, file_type, k_resp, k_guard, coverage, name, email, details=None):
-    """Log deployment to Google Sheets."""
+    """Log deployment to Google Sheets. MAP_BUILD events go to Sessions sheet; all others to sheet1."""
     try:
         sheet_id = st.secrets.get("GOOGLE_SHEET_ID", "")
         creds_dict = st.secrets.get("gcp_service_account", {})
@@ -394,6 +375,35 @@ def _log_to_sheets(city, state, file_type, k_resp, k_guard, coverage, name, emai
         creds = Credentials.from_service_account_info(dict(creds_dict), scopes=scopes)
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(sheet_id)
+
+        if file_type == 'MAP_BUILD':
+            try:
+                sessions_sheet = spreadsheet.worksheet("Sessions")
+            except gspread.exceptions.WorksheetNotFound:
+                sessions_sheet = spreadsheet.add_worksheet(title="Sessions", rows=1000, cols=len(SESSION_HEADERS))
+                sessions_sheet.append_row(SESSION_HEADERS)
+            d = details or {}
+            try:
+                source_app = st.secrets.get("SOURCE_APP", "") or Path(__file__).resolve().parent.parent.name
+            except Exception:
+                source_app = ""
+            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            sessions_sheet.append_row([
+                source_app,
+                now,
+                d.get('session_id', ''),
+                d.get('session_start', now),
+                name,
+                email,
+                city,
+                state,
+                d.get('population', ''),
+                d.get('total_calls', ''),
+                d.get('data_source', ''),
+                d.get('sim_or_upload', ''),
+            ])
+            return
+
         sheet = spreadsheet.sheet1
         _ensure_sheet_headers(sheet)
         row = _build_sheets_row(city, state, file_type, k_resp, k_guard, coverage, name, email, details)
