@@ -4398,32 +4398,30 @@ body{{background:transparent;overflow:hidden}}
                 _r_drones = [d for d in active_drones if d['type'] == 'RESPONDER']
 
                 def _fleet_ring_slices(drones, fleet_label):
-                    """Raw calls covered per station (independent of other fleet).
-                    Each slice = how many of the total calls fall inside that station's radius."""
+                    """Ring slices sized as station_calls/total_calls so each slice's
+                    visual proportion equals its share of the total area call load."""
                     labels, values, colors, hovers, texts = [], [], [], [], []
+                    _sum_raw = 0
                     for d in drones:
-                        raw = int(d.get('raw_zone_calls_annual', int(np.sum(d['cov_array']))))
-                        name = d['name'].split(',')[0][:18]
+                        raw = int(np.sum(d['cov_array']))  # calls from dataset inside this station's radius
                         pct = raw / total_calls * 100 if total_calls > 0 else 0.0
+                        name = d['name'].split(',')[0][:18]
                         labels.append(name)
                         values.append(max(raw, 1))
                         colors.append(d['color'])
                         texts.append(f'{pct:.1f}%')
-                        _label = f'{raw:,} calls in radius ({pct:.1f}% of total)' if raw > 0 else '0 calls in radius'
+                        _label = f'{raw:,} calls in radius ({pct:.1f}% of {total_calls:,} total)' if raw > 0 else '0 calls in radius'
                         hovers.append(f'<b>{name}</b> [{fleet_label}]<br>{_label}<extra></extra>')
-                    # uncovered by this fleet
-                    if drones:
-                        _any = np.logical_or.reduce([d['cov_array'] for d in drones])
-                        _uncov = max(0, total_calls - int(_any.sum()))
-                    else:
-                        _uncov = total_calls
+                        _sum_raw += raw
+                    # Uncovered = remainder so ring sums to total_calls → each slice = raw/total_calls
+                    _uncov = max(0, total_calls - _sum_raw)
                     if _uncov > 0:
                         _uncov_pct = _uncov / total_calls * 100 if total_calls > 0 else 0.0
                         labels.append(f'Uncovered ({fleet_label})')
                         values.append(_uncov)
                         colors.append('#1a1a1a')
                         texts.append(f'{_uncov_pct:.1f}%')
-                        hovers.append(f'<b>Uncovered by {fleet_label}</b><br>{_uncov:,} calls ({_uncov_pct:.1f}%)<extra></extra>')
+                        hovers.append(f'<b>Uncovered by {fleet_label}</b><br>{_uncov:,} calls ({_uncov_pct:.1f}% of {total_calls:,} total)<extra></extra>')
                     return labels, values, colors, hovers, texts
 
                 _combined_covered = int(np.logical_or(cov_r, cov_g).sum()) if total_calls > 0 else 0
