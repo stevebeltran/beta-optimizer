@@ -129,6 +129,55 @@ def aggressive_parse_calls(uploaded_files):
         norm.columns = base_cols[:width]
         return norm
 
+    def _looks_like_headerless_cad_export(df):
+        try:
+            if df is None or df.empty or len(df.columns) < 4:
+                return False
+            known_header_hints = {
+                'date', 'time', 'datetime', 'latitude', 'longitude', 'lat', 'lon',
+                'priority', 'call type', 'call_type', 'call_type_desc', 'nature',
+                'description', 'event_type', 'location', 'address'
+            }
+            col_names = [str(c).strip().lower() for c in df.columns]
+            if any(c in known_header_hints for c in col_names):
+                return False
+
+            sample = pd.concat([pd.DataFrame([df.columns], columns=df.columns), df.head(12)], ignore_index=True)
+            if sample.empty or len(sample.columns) < 4:
+                return False
+
+            dt_rate = pd.to_datetime(sample.iloc[:, 1], errors='coerce').notna().mean()
+            c2 = pd.to_numeric(sample.iloc[:, 2], errors='coerce')
+            c3 = pd.to_numeric(sample.iloc[:, 3], errors='coerce')
+            lon_lat_rate = (c2.between(-180, 180) & c3.between(-90, 90)).mean()
+            lat_lon_rate = (c2.between(-90, 90) & c3.between(-180, 180)).mean()
+
+            first_col = sample.iloc[:, 0].astype(str).str.strip()
+            text_rate = (~first_col.str.fullmatch(r'-?\d+(?:\.\d+)?')).mean()
+
+            return dt_rate >= 0.8 and text_rate >= 0.8 and max(lon_lat_rate, lat_lon_rate) >= 0.8
+        except Exception:
+            return False
+
+    def _normalize_headerless_cad_export(content, sep):
+        raw = pd.read_csv(io.StringIO(content), sep=sep, dtype=str, header=None)
+        width = len(raw.columns)
+        if width >= 4:
+            c2 = pd.to_numeric(raw.iloc[:, 2], errors='coerce')
+            c3 = pd.to_numeric(raw.iloc[:, 3], errors='coerce')
+            lon_first_score = (c2.between(-180, 180) & c3.between(-90, 90)).mean()
+            lat_first_score = (c2.between(-90, 90) & c3.between(-180, 180)).mean()
+            if lon_first_score >= lat_first_score:
+                base_cols = ['call_type_desc', 'date', 'lon', 'lat']
+            else:
+                base_cols = ['call_type_desc', 'date', 'lat', 'lon']
+        else:
+            base_cols = ['call_type_desc', 'date']
+        if width > len(base_cols):
+            base_cols += [f'extra_{i}' for i in range(1, width - len(base_cols) + 1)]
+        raw.columns = base_cols[:width]
+        return raw
+
     def _extract_lonlat_pair(series):
         s = series.astype(str).str.strip()
         pair = s.str.extract(r'^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$')
@@ -324,6 +373,8 @@ def aggressive_parse_calls(uploaded_files):
                 raw_df = pd.read_csv(io.StringIO(content), sep=delim, dtype=str)
                 if _looks_like_headerless_geocoder_export(raw_df):
                     raw_df = _normalize_headerless_geocoder_export(raw_df)
+                elif _looks_like_headerless_cad_export(raw_df):
+                    raw_df = _normalize_headerless_cad_export(content, delim)
                 raw_df.columns = [str(c).lower().strip() for c in raw_df.columns]
 
                 # ── Census Geocoder: split combined 'lonlat' column ──────────
@@ -683,7 +734,7 @@ def aggressive_parse_calls(uploaded_files):
             for _cand in _agency_candidates:
                 try:
                     _vals = raw_df[_cand].astype(str).str.strip().str.lower()
-                    if _vals.str.contains(r'\b(fire|police|ems|sheriff)\b', regex=True, na=False).any():
+                    if _vals.str.contains(r'\b(?:fire|police|ems|sheriff)\b', regex=True, na=False).any():
                         _agency_col = _cand
                         break
                 except Exception:
