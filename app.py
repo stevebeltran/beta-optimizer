@@ -5222,6 +5222,10 @@ body{{background:transparent;overflow:hidden}}
                 f"</div>"
                 for d in active_drones[:6]
             ) or "<div class='ssub'>No active stations.</div>"
+            _qr_total_calls = int(full_total_calls or total_calls or 0)
+            _qr_active_stns = len(active_drones)
+            _qr_area_cov    = round(float(area_covered_perc or 0), 1)
+            _qr_time_saved  = round(float(avg_time_saved or 0), 1)
             _public_summary_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5243,50 +5247,47 @@ body{{background:transparent;overflow:hidden}}
       --green:#58f5a5;
       --gold:#ffd76a;
       --violet:#c2a9ff;
+      --red:#ff7b7b;
       --link-bg:#dff8ff;
       --link-text:#06283a;
     }}
     *{{box-sizing:border-box;margin:0;padding:0}}
     html{{background:var(--bg)}}
     body{{font-family:'Inter',sans-serif;background:linear-gradient(180deg,#12263d 0%,#08111d 34%,#050b14 100%);color:var(--text);min-height:100vh}}
-    .page{{max-width:none;width:100%;margin:0;padding:10px 8px 18px}}
-    .hero{{background:linear-gradient(180deg,var(--hero-top) 0%,var(--hero-bottom) 100%);border:1px solid rgba(110,231,255,.18);border-radius:20px;padding:18px 16px 15px;margin-bottom:10px;box-shadow:0 18px 34px rgba(0,0,0,.28)}}
-    .eyebrow{{color:var(--cyan);font-size:12px;letter-spacing:.14em;text-transform:uppercase;font-weight:800;margin-bottom:8px}}
-    .dept{{font-size:clamp(32px,9.6vw,42px);font-weight:800;line-height:1.01;letter-spacing:-.035em}}
-    .loc{{color:var(--muted);font-size:16px;margin-top:9px}}
-    .site{{display:inline-flex;align-items:center;justify-content:center;margin-top:14px;padding:9px 13px;border-radius:999px;border:1px solid rgba(110,231,255,.22);background:rgba(110,231,255,.09);color:var(--cyan);text-decoration:none;font-size:14px;font-weight:700}}
-    .metrics{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:10px}}
-    .metric{{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:12px 12px 13px;min-width:0;box-shadow:0 8px 18px rgba(0,0,0,.15)}}
-    .metric .k{{font-size:12px;text-transform:uppercase;letter-spacing:.10em;font-weight:700;margin-bottom:6px;opacity:.9}}
-    .metric .v{{font-size:clamp(22px,6.6vw,28px);font-weight:800;line-height:1.05;word-break:break-word}}
+    .page{{width:100%;margin:0;padding:12px 10px 28px}}
+    .hero{{background:linear-gradient(180deg,var(--hero-top) 0%,var(--hero-bottom) 100%);border:1px solid rgba(110,231,255,.18);border-radius:22px;padding:22px 18px 18px;margin-bottom:12px;box-shadow:0 18px 34px rgba(0,0,0,.28)}}
+    .eyebrow{{color:var(--cyan);font-size:15px;letter-spacing:.13em;text-transform:uppercase;font-weight:800;margin-bottom:10px}}
+    .dept{{font-size:clamp(38px,10.5vw,54px);font-weight:800;line-height:1.0;letter-spacing:-.03em}}
+    .loc{{color:var(--muted);font-size:20px;margin-top:10px;font-weight:600}}
+    .site{{display:inline-flex;align-items:center;justify-content:center;margin-top:16px;padding:11px 18px;border-radius:999px;border:1px solid rgba(110,231,255,.22);background:rgba(110,231,255,.09);color:var(--cyan);text-decoration:none;font-size:16px;font-weight:700}}
+    .metrics{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px}}
+    .metric{{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px 14px 20px;min-width:0;box-shadow:0 8px 18px rgba(0,0,0,.18)}}
+    .metric .k{{font-size:14px;text-transform:uppercase;letter-spacing:.09em;font-weight:700;margin-bottom:10px;opacity:.9}}
+    .metric .v{{font-size:clamp(30px,8.8vw,42px);font-weight:800;line-height:1.04;word-break:break-word}}
+    .m-calls .k,.m-calls .v{{color:var(--red)}}
     .m-capex .k,.m-capex .v{{color:var(--green)}}
     .m-save .k,.m-save .v{{color:var(--gold)}}
     .m-cov .k,.m-cov .v{{color:var(--cyan)}}
     .m-fleet .k,.m-fleet .v{{color:var(--violet)}}
-    .section{{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:15px 14px;box-shadow:0 10px 20px rgba(0,0,0,.14)}}
-    .section + .section{{margin-top:10px}}
-    .section-title{{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:.12em;color:var(--cyan);margin-bottom:11px}}
+    .m-time .k,.m-time .v{{color:var(--gold)}}
+    .m-area .k,.m-area .v{{color:var(--cyan)}}
+    .m-stns .k,.m-stns .v{{color:var(--green)}}
+    .section{{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:18px 16px;box-shadow:0 10px 20px rgba(0,0,0,.14)}}
+    .section + .section{{margin-top:12px}}
+    .section-title{{font-size:16px;font-weight:800;text-transform:uppercase;letter-spacing:.11em;color:var(--cyan);margin-bottom:14px}}
     .list{{display:flex;flex-direction:column;gap:0}}
-    .row{{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.06)}}
+    .row{{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:14px 0;border-bottom:1px solid rgba(255,255,255,.06)}}
     .row:last-child{{border-bottom:none;padding-bottom:0}}
-    .sname{{font-weight:700;font-size:18px;line-height:1.22}}
-    .ssub{{color:var(--muted);font-size:14px;margin-top:4px}}
-    .badge{{flex:0 0 auto;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}}
+    .sname{{font-weight:700;font-size:22px;line-height:1.2}}
+    .ssub{{color:var(--muted);font-size:17px;margin-top:5px}}
+    .badge{{flex:0 0 auto;border-radius:999px;padding:8px 16px;font-size:15px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}}
     .guard{{background:rgba(255,215,106,.14);color:var(--gold);border:1px solid rgba(255,215,106,.28)}}
     .resp{{background:rgba(110,231,255,.13);color:var(--cyan);border:1px solid rgba(110,231,255,.24)}}
     .contact-card{{background:linear-gradient(180deg,var(--panel-soft) 0%,var(--panel) 100%);border:1px solid rgba(110,231,255,.12)}}
-    .contact-label{{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--cyan);font-weight:800;margin-bottom:8px}}
-    .contact-name{{font-size:24px;font-weight:800;line-height:1.08;margin-bottom:10px}}
-    .contact-email{{display:block;width:100%;padding:13px 14px;border-radius:14px;background:var(--link-bg);color:var(--link-text) !important;text-decoration:none;font-size:17px;font-weight:700;word-break:break-word;box-shadow:inset 0 0 0 1px rgba(6,40,58,.08)}}
+    .contact-label{{font-size:15px;text-transform:uppercase;letter-spacing:.12em;color:var(--cyan);font-weight:800;margin-bottom:10px}}
+    .contact-name{{font-size:30px;font-weight:800;line-height:1.08;margin-bottom:12px}}
+    .contact-email{{display:block;width:100%;padding:16px 18px;border-radius:16px;background:var(--link-bg);color:var(--link-text) !important;text-decoration:none;font-size:20px;font-weight:700;word-break:break-word;box-shadow:inset 0 0 0 1px rgba(6,40,58,.08)}}
     .contact-email:visited{{color:var(--link-text) !important}}
-    @media(max-width:380px){{
-      .page{{padding:8px 6px 14px}}
-      .hero{{padding:15px 13px 13px;border-radius:18px}}
-      .metric{{padding:10px}}
-      .metric .v{{font-size:19px}}
-      .row{{flex-direction:column;align-items:flex-start}}
-      .badge{{margin-top:2px}}
-    }}
   </style>
 </head>
 <body>
@@ -5299,10 +5300,14 @@ body{{background:transparent;overflow:hidden}}
   </section>
 
   <section class="metrics">
+    <div class="metric m-calls"><div class="k">Annual 911 Calls</div><div class="v">{_qr_total_calls:,}</div></div>
+    <div class="metric m-cov"><div class="k">Call Coverage</div><div class="v">{calls_covered_perc:.1f}%</div></div>
     <div class="metric m-capex"><div class="k">Fleet CapEx</div><div class="v">${fleet_capex:,.0f}</div></div>
     <div class="metric m-save"><div class="k">Annual Savings</div><div class="v">${annual_savings:,.0f}</div></div>
-    <div class="metric m-cov"><div class="k">Call Coverage</div><div class="v">{calls_covered_perc:.1f}%</div></div>
     <div class="metric m-fleet"><div class="k">Fleet</div><div class="v">{actual_k_responder}R / {actual_k_guardian}G</div></div>
+    <div class="metric m-time"><div class="k">Avg Time Saved</div><div class="v">{_qr_time_saved} min</div></div>
+    <div class="metric m-area"><div class="k">Area Coverage</div><div class="v">{_qr_area_cov:.1f}%</div></div>
+    <div class="metric m-stns"><div class="k">Active Stations</div><div class="v">{_qr_active_stns}</div></div>
   </section>
 
   <section class="section">
