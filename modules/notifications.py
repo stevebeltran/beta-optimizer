@@ -440,3 +440,41 @@ def _log_login_to_sheets(email, name):
         _upsert_user(spreadsheet, email, name, increment_logins=True)
     except:
         pass
+
+
+def _log_qr_scan_to_sheets(report_id, city, state, rep_name, rep_email,
+                           device="", user_agent="", language="", ip=""):
+    """Log a QR code scan to a dedicated QR Scans sheet."""
+    try:
+        sheet_id = st.secrets.get("GOOGLE_SHEET_ID", "")
+        creds_dict = st.secrets.get("gcp_service_account", {})
+        if not sheet_id or not creds_dict:
+            return
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(dict(creds_dict), scopes=scopes)
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(sheet_id)
+
+        try:
+            sheet = spreadsheet.worksheet("QR Scans")
+        except gspread.exceptions.WorksheetNotFound:
+            sheet = spreadsheet.add_worksheet(title="QR Scans", rows=1000, cols=12)
+            sheet.append_row([
+                "Timestamp", "Source App", "Report ID",
+                "City", "State", "Rep Name", "Rep Email",
+                "Device", "Language", "IP Address", "User Agent",
+            ])
+
+        try:
+            source_app = st.secrets.get("SOURCE_APP", "") or Path(__file__).resolve().parent.parent.name
+        except Exception:
+            source_app = ""
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sheet.append_row([
+            timestamp, source_app, report_id,
+            city, state, rep_name, rep_email,
+            device, language, ip, user_agent,
+        ])
+    except:
+        pass

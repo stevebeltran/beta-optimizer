@@ -156,6 +156,53 @@ def _render_public_report_route():
         st.warning("This public report is not available yet.")
         st.stop()
 
+    # ── Log QR scan to Google Sheets ─────────────────────────────────────────
+    try:
+        from modules.notifications import _log_qr_scan_to_sheets
+        _meta_path = PUBLIC_REPORTS_DIR / f"{_report_id}.json"
+        _scan_meta = {}
+        if _meta_path.exists():
+            import json as _json
+            _scan_meta = _json.loads(_meta_path.read_text(encoding="utf-8"))
+
+        # Harvest device/network info from HTTP headers
+        try:
+            _headers = dict(st.context.headers)
+        except Exception:
+            _headers = {}
+        _ua        = _headers.get("User-Agent", _headers.get("user-agent", ""))
+        _lang      = _headers.get("Accept-Language", _headers.get("accept-language", ""))
+        _ip        = (_headers.get("X-Forwarded-For", "") or
+                      _headers.get("x-forwarded-for", "") or
+                      _headers.get("Remote-Addr", "")).split(",")[0].strip()
+
+        # Parse device type from User-Agent
+        _ua_lower = _ua.lower()
+        if "iphone" in _ua_lower or "ipad" in _ua_lower:
+            _device = "iOS"
+        elif "android" in _ua_lower:
+            _device = "Android"
+        elif "mobile" in _ua_lower:
+            _device = "Mobile"
+        elif _ua:
+            _device = "Desktop"
+        else:
+            _device = ""
+
+        _log_qr_scan_to_sheets(
+            report_id=_report_id,
+            city=_scan_meta.get("city", ""),
+            state=_scan_meta.get("state", ""),
+            rep_name=_scan_meta.get("rep_name", ""),
+            rep_email=_scan_meta.get("rep_email", ""),
+            device=_device,
+            user_agent=_ua,
+            language=_lang,
+            ip=_ip,
+        )
+    except Exception:
+        pass
+
     st.set_page_config(layout="wide", page_title="BRINC Public Report")
     st.markdown(
         "<style>section[data-testid='stSidebar'], header, footer, #MainMenu { display:none !important; }</style>",
@@ -4245,6 +4292,7 @@ body{{background:transparent;overflow:hidden}}
                     Each slice = how many of the total calls fall inside that station's radius.
                     Stations with low/zero coverage get a minimum visible slice so they always appear."""
                     labels, values, colors, hovers = [], [], [], []
+                    # minimum display size = 3% of total so every station is visible
                     _vis_min = max(1, int(total_calls * 0.03))
                     for d in drones:
                         raw = int(d.get('raw_zone_calls_annual', int(np.sum(d['cov_array']))))
@@ -4254,6 +4302,7 @@ body{{background:transparent;overflow:hidden}}
                         colors.append(d['color'])
                         _label = f'{raw:,} calls in radius' if raw > 0 else '0 calls in radius (outside boundary or overlap)'
                         hovers.append(f'<b>{name}</b> [{fleet_label}]<br>{_label}<extra></extra>')
+                    # uncovered by this fleet
                     if drones:
                         _any = np.logical_or.reduce([d['cov_array'] for d in drones])
                         _uncov = max(0, total_calls - int(_any.sum()))
@@ -4272,6 +4321,7 @@ body{{background:transparent;overflow:hidden}}
 
                 fig_ring = go.Figure()
 
+                # ── Outer ring: Guardians ─────────────────────────────────────────
                 if _g_drones:
                     _gl, _gv, _gc, _gh = _fleet_ring_slices(_g_drones, 'Guardian')
                     fig_ring.add_trace(go.Pie(
@@ -4287,6 +4337,7 @@ body{{background:transparent;overflow:hidden}}
                         legendgroup='g',
                     ))
 
+                # ── Inner ring: Responders ────────────────────────────────────────
                 if _r_drones:
                     _rl, _rv, _rc, _rh = _fleet_ring_slices(_r_drones, 'Responder')
                     _inner_domain = dict(x=[0.12, 0.88], y=[0.12, 0.88])
@@ -4304,6 +4355,7 @@ body{{background:transparent;overflow:hidden}}
                         legendgroup='r',
                     ))
 
+                # ── If only one fleet type, show single ring ──────────────────────
                 if not _g_drones and _r_drones:
                     _rl, _rv, _rc, _rh = _fleet_ring_slices(_r_drones, 'Responder')
                     fig_ring = go.Figure(go.Pie(
@@ -5177,6 +5229,8 @@ body{{background:transparent;overflow:hidden}}
                     "report_id": st.session_state.get('public_report_id', ''),
                     "city": _qr_city,
                     "state": _qr_state,
+                    "rep_name": _qr_name,
+                    "rep_email": _qr_email,
                     "updated_at": datetime.datetime.now().isoformat(),
                     "public_url": st.session_state.get('public_report_url', ''),
                     "kind": "qr_summary",
@@ -6988,13 +7042,12 @@ body{{background:transparent;overflow:hidden}}
             # ── Track export event ───────────────────────────────────────────────
             st.session_state['export_event_log'] = st.session_state.get('export_event_log', []) + ['BRINC']
             st.session_state['export_count'] = st.session_state.get('export_count', 0) + 1
-            if fleet_capex > 0:
-                _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                              "BRINC", k_responder, k_guardian, calls_covered_perc,
-                              prop_name, prop_email, details=export_details)
-                _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
-                               "BRINC", k_responder, k_guardian, calls_covered_perc,
-                               prop_name, prop_email, details=export_details)
+            _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                          "BRINC", k_responder, k_guardian, calls_covered_perc,
+                          prop_name, prop_email, details=export_details)
+            _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                           "BRINC", k_responder, k_guardian, calls_covered_perc,
+                           prop_name, prop_email, details=export_details)
         # 2. Executive Summary / proposal HTML export
         if fleet_capex > 0:
             if st.sidebar.download_button(f"📄 {prop_city}, {prop_state} — Executive Summary",
