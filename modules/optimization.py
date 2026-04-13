@@ -15,7 +15,11 @@ def precompute_spatial_data(df_calls, df_calls_full, df_stations_all, _city_m, e
     gdf_calls = gpd.GeoDataFrame(df_calls, geometry=gpd.points_from_xy(df_calls.lon, df_calls.lat), crs="EPSG:4326")
     gdf_calls_utm = gdf_calls.to_crs(epsg=int(epsg_code))
     try:
-        calls_in_city = gdf_calls_utm[gdf_calls_utm.within(_city_m)]
+        # Use same 300 m buffer as build_display_calls so coverage denominator
+        # matches the call dots shown on the map (avoids false 100% when fringe
+        # calls outside the exact boundary are visible but not counted).
+        _clip_geom = _city_m.buffer(300) if _city_m is not None else _city_m
+        calls_in_city = gdf_calls_utm[gdf_calls_utm.within(_clip_geom)]
     except Exception:
         calls_in_city = gdf_calls_utm
     radius_resp_m = resp_radius_mi * 1609.34
