@@ -27,7 +27,6 @@ EXPORT_HEADERS = [
     "Session Start",
     "Session Duration (min)",
     "Data Source",
-    "Sim or Upload",
     "BRINC Rep Name",
     "BRINC Rep Email",
     "City",
@@ -35,33 +34,6 @@ EXPORT_HEADERS = [
     "Population",
     "Area (sq mi)",
     "Total Annual Calls",
-    "Event Type",
-    "Responders",
-    "Guardians",
-    "Call Coverage %",
-    "Area Coverage %",
-    "Avg Response Time (min)",
-    "Time Saved vs Patrol (min)",
-    "Fleet CapEx ($)",
-    "Annual Savings ($)",
-    "Break-Even",
-    "Optimization Strategy",
-    "DFR Dispatch Rate %",
-    "Deflection Rate %",
-    "Incremental Build",
-    "Allow Overlap",
-    "Responder Radius (mi)",
-    "Guardian Radius (mi)",
-    "Uploaded Filename(s)",
-    "File Date Range Start",
-    "File Date Range End",
-    "Call Type Breakdown (JSON)",
-    "Priority Distribution (JSON)",
-    "Peak Hour (0-23)",
-    "Peak Day of Week (0=Mon)",
-    "Peak Month (1-12)",
-    "Boundary Kind",
-    "Drone Details (JSON)",
 ]
 
 SESSION_HEADERS = [
@@ -77,6 +49,23 @@ SESSION_HEADERS = [
     "Total Annual Calls",
     "Data Source",
     "Sim or Upload",
+]
+
+PUBLIC_REPORT_HEADERS = [
+    "Report ID",
+    "Updated At",
+    "Source App",
+    "Department",
+    "City",
+    "State",
+    "Rep Name",
+    "Rep Email",
+    "Fleet CapEx",
+    "Annual Savings",
+    "Call Coverage",
+    "Fleet Summary",
+    "Stations JSON",
+    "Public HTML",
 ]
 
 
@@ -159,7 +148,6 @@ def _build_sheets_row(city, state, event_type, k_resp, k_guard, coverage, name, 
             dur = round((datetime.datetime.now() - start_dt).total_seconds() / 60, 1)
     except Exception:
         dur = ''
-    fm = d.get('file_meta', {})
     try:
         source_app = st.secrets.get("SOURCE_APP", "") or Path(__file__).resolve().parent.parent.name
     except Exception:
@@ -171,7 +159,6 @@ def _build_sheets_row(city, state, event_type, k_resp, k_guard, coverage, name, 
         session_start,
         dur,
         d.get('data_source', ''),
-        d.get('sim_or_upload', ''),
         name,
         email,
         city,
@@ -179,38 +166,6 @@ def _build_sheets_row(city, state, event_type, k_resp, k_guard, coverage, name, 
         d.get('population', ''),
         d.get('area_sq_mi', ''),
         d.get('total_calls', ''),
-        event_type,
-        k_resp,
-        k_guard,
-        round(coverage, 1) if coverage else '',
-        d.get('area_covered_pct', ''),
-        d.get('avg_response_min', ''),
-        d.get('avg_time_saved_min', ''),
-        d.get('fleet_capex', ''),
-        d.get('annual_savings', ''),
-        d.get('break_even', ''),
-        d.get('opt_strategy', ''),
-        d.get('dfr_rate', ''),
-        d.get('deflect_rate', ''),
-        d.get('incremental_build', ''),
-        d.get('allow_redundancy', ''),
-        d.get('r_resp_radius', ''),
-        d.get('r_guard_radius', ''),
-        fm.get('uploaded_filename', ''),
-        fm.get('file_date_range_start', ''),
-        fm.get('file_date_range_end', ''),
-        fm.get('call_type_breakdown', ''),
-        fm.get('priority_distribution', ''),
-        fm.get('peak_hour', ''),
-        fm.get('peak_day_of_week', ''),
-        fm.get('peak_month', ''),
-        d.get('boundary_kind', ''),
-        json.dumps([{"name": dr.get("name"), "type": dr.get("type"),
-                     "lat": dr.get("lat"), "lon": dr.get("lon"),
-                     "avg_time_min": dr.get("avg_time_min"),
-                     "faa_ceiling": dr.get("faa_ceiling"),
-                     "annual_savings": dr.get("annual_savings")}
-                    for dr in d.get('active_drones', [])]),
     ]
 
 
@@ -476,5 +431,70 @@ def _log_qr_scan_to_sheets(report_id, city, state, rep_name, rep_email,
             city, state, rep_name, rep_email,
             device, language, ip, user_agent,
         ])
+    except:
+        pass
+
+
+def _publish_public_report_to_sheets(report_id, department, city, state, rep_name, rep_email,
+                                     fleet_capex, annual_savings, call_coverage,
+                                     fleet_summary, stations_json, public_html):
+    """Upsert one public-facing report row into a dedicated public spreadsheet."""
+    try:
+        sheet_id = st.secrets.get("PUBLIC_REPORTS_SHEET_ID", "")
+        creds_dict = st.secrets.get("gcp_service_account", {})
+        if not sheet_id or not creds_dict:
+            return
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(dict(creds_dict), scopes=scopes)
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(sheet_id)
+        worksheet_name = str(st.secrets.get("PUBLIC_REPORTS_WORKSHEET", "Public Reports") or "Public Reports")
+
+        try:
+            sheet = spreadsheet.worksheet(worksheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            sheet = spreadsheet.add_worksheet(title=worksheet_name, rows=1000, cols=max(20, len(PUBLIC_REPORT_HEADERS)))
+            sheet.append_row(PUBLIC_REPORT_HEADERS)
+
+        first_row = sheet.row_values(1)
+        if [str(v).strip() for v in first_row] != PUBLIC_REPORT_HEADERS:
+            end_col = _sheet_col_label(len(PUBLIC_REPORT_HEADERS))
+            sheet.update(f"A1:{end_col}1", [PUBLIC_REPORT_HEADERS])
+
+        try:
+            source_app = st.secrets.get("SOURCE_APP", "") or Path(__file__).resolve().parent.parent.name
+        except Exception:
+            source_app = ""
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        row = [
+            report_id,
+            timestamp,
+            source_app,
+            department,
+            city,
+            state,
+            rep_name,
+            rep_email,
+            fleet_capex,
+            annual_savings,
+            call_coverage,
+            fleet_summary,
+            stations_json,
+            public_html,
+        ]
+
+        values = sheet.get_all_values()
+        row_idx = None
+        for i, existing in enumerate(values[1:], start=2):
+            if existing and existing[0] == report_id:
+                row_idx = i
+                break
+
+        end_col = _sheet_col_label(len(PUBLIC_REPORT_HEADERS))
+        if row_idx is None:
+            sheet.append_row(row)
+        else:
+            sheet.update(f"A{row_idx}:{end_col}{row_idx}", [row])
     except:
         pass

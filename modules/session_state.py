@@ -65,8 +65,8 @@ def init_session_state(session_state, slugify, build_public_report_url) -> None:
 
     if not session_state.get("public_report_id"):
         city_slug = slugify(session_state.get("active_city", "report"))
-        session_id = session_state.get("session_id", str(uuid.uuid4())[:8])
-        session_state["public_report_id"] = f"{city_slug}-{session_id}"
+        public_token = uuid.uuid4().hex[:16]
+        session_state["public_report_id"] = f"{city_slug}-{public_token}"
 
     session_state["public_report_url"] = build_public_report_url(session_state["public_report_id"])
 

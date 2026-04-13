@@ -54,7 +54,7 @@ from modules.image_utils import (
     get_base64_of_bin_file, get_themed_logo_base64, get_transparent_product_base64
 )
 from modules.notifications import (
-    _notify_email, _log_to_sheets, _log_login_to_sheets
+    _notify_email, _log_to_sheets, _log_login_to_sheets, _publish_public_report_to_sheets
 )
 from modules.cad_parser import (
     aggressive_parse_calls, _extract_file_meta, _get_annualized_calls
@@ -122,7 +122,16 @@ def _sign_public_report_id(report_id):
 
 
 def _build_public_report_url(report_id):
-    return f"{_get_request_base_url()}/?public_report={report_id}&sig={_sign_public_report_id(report_id)}"
+    _sig = _sign_public_report_id(report_id)
+    try:
+        _public_webapp_url = str(st.secrets.get("PUBLIC_REPORT_WEBAPP_URL", "")).strip()
+    except Exception:
+        _public_webapp_url = ""
+    if _public_webapp_url:
+        _query = urllib.parse.urlencode({"report_id": report_id, "sig": _sig})
+        _sep = "&" if "?" in _public_webapp_url else "?"
+        return f"{_public_webapp_url}{_sep}{_query}"
+    return f"{_get_request_base_url()}/?public_report={report_id}&sig={_sig}"
 
 
 def _public_report_html_path(report_id):
@@ -203,11 +212,85 @@ def _render_public_report_route():
     except Exception:
         pass
 
-    st.set_page_config(layout="wide", page_title="BRINC Public Report")
-    st.markdown(
-        "<style>section[data-testid='stSidebar'], header, footer, #MainMenu { display:none !important; }</style>",
-        unsafe_allow_html=True,
-    )
+    st.set_page_config(layout="wide", page_title="BRINC DFR")
+    st.markdown("""
+        <style>
+            header, footer, #MainMenu,
+            [data-testid="stToolbar"],
+            [data-testid="stDecoration"],
+            [data-testid="stStatusWidget"],
+            [data-testid="stSidebar"],
+            [data-testid="stGithubButton"],
+            [data-testid="stActionButton"],
+            [data-testid="stBaseButton-header"],
+            [data-testid*="github"],
+            [data-testid*="Github"],
+            .stDeployButton,
+            .viewerBadge_container__,
+            .viewerBadge_link__,
+            .viewerBadge_text__,
+            #stDecoration,
+            a[href*="github.com"],
+            a[href*="streamlit.io"],
+            [aria-label*="GitHub"],
+            [aria-label*="github"],
+            [title*="GitHub"],
+            [title*="github"],
+            iframe[title="streamlit_analytics"] { display: none !important; }
+            .main .block-container { padding: 0 !important; max-width: 100% !important; }
+            .stApp { background: #07101c !important; }
+        </style>
+        <script>
+            (function () {
+                const selectors = [
+                    'header',
+                    'footer',
+                    '#MainMenu',
+                    '[data-testid="stToolbar"]',
+                    '[data-testid="stDecoration"]',
+                    '[data-testid="stStatusWidget"]',
+                    '[data-testid="stSidebar"]',
+                    '[data-testid="stGithubButton"]',
+                    '[data-testid="stActionButton"]',
+                    '[data-testid="stBaseButton-header"]',
+                    '[data-testid*="github"]',
+                    '[data-testid*="Github"]',
+                    '.stDeployButton',
+                    '.viewerBadge_container__',
+                    '.viewerBadge_link__',
+                    '.viewerBadge_text__',
+                    'a[href*="github.com"]',
+                    'a[href*="streamlit.io"]',
+                    '[aria-label*="GitHub"]',
+                    '[aria-label*="github"]',
+                    '[title*="GitHub"]',
+                    '[title*="github"]'
+                ];
+
+                function stripChrome(root) {
+                    selectors.forEach(function (selector) {
+                        root.querySelectorAll(selector).forEach(function (node) {
+                            node.remove();
+                        });
+                    });
+                }
+
+                function run() {
+                    stripChrome(document);
+                    if (window.parent && window.parent !== window) {
+                        try {
+                            stripChrome(window.parent.document);
+                        } catch (e) {}
+                    }
+                }
+
+                run();
+                new MutationObserver(run).observe(document.documentElement, { childList: true, subtree: true });
+                window.addEventListener('load', run);
+                setInterval(run, 1000);
+            })();
+        </script>
+    """, unsafe_allow_html=True)
     components.html(_html_path.read_text(encoding="utf-8"), height=9000, scrolling=True)
     st.stop()
 
@@ -5075,7 +5158,9 @@ body{{background:transparent;overflow:hidden}}
                 "m_calls": _calls_str,
             })
             _fallback_qr_url = f"{_qr_base}/?view=mobile&{_qr_params}"
-            _qr_url = st.session_state.get("public_report_url", "") or _fallback_qr_url
+            _tracked_report_id = str(st.session_state.get("public_report_id", "")).strip()
+            _tracked_qr_url = _build_public_report_url(_tracked_report_id) if _tracked_report_id else ""
+            _qr_url = _tracked_qr_url or st.session_state.get("public_report_url", "") or _fallback_qr_url
 
             # ── QR code image — high readability with BRINC logo overlay ──────────
             # Use highest error correction (H) for better phone scanning reliability
@@ -5111,10 +5196,15 @@ body{{background:transparent;overflow:hidden}}
             import base64 as _b64
             _qr_b64 = _b64.b64encode(_qr_buf.getvalue()).decode()
 
-            # ── Salesman info from session state ───────────────────────────────────
-            _qr_user  = str(st.session_state.get("brinc_user", "")).strip() or "unknown"
-            _qr_name  = " ".join(w.capitalize() for w in _qr_user.split("."))
-            _qr_email = f"{_qr_user}@brincdrones.com"
+            # ── Sales contact info from authenticated session ─────────────────────
+            _qr_email = str(st.session_state.get("google_user_email", "")).strip()
+            _qr_name = str(st.session_state.get("google_user_name", "")).strip()
+            _qr_user = str(st.session_state.get("brinc_user", "")).strip()
+            if not _qr_email and _qr_user:
+                _qr_email = f"{_qr_user}@brincdrones.com"
+            if not _qr_name:
+                _name_seed = (_qr_email.split("@")[0] if _qr_email else _qr_user or "BRINC Representative")
+                _qr_name = " ".join(w.capitalize() for w in _name_seed.replace("_", ".").split("."))
             _qr_city  = st.session_state.get("active_city", "")
             _qr_state = st.session_state.get("active_state", "")
             _qr_loc   = f"{_qr_city}, {_qr_state}" if _qr_city else "your city"
@@ -5130,7 +5220,7 @@ body{{background:transparent;overflow:hidden}}
                 f"<div class='ssub'>{float(d.get('avg_time_min', 0) or 0):.1f} min avg</div></div>"
                 f"<span class='badge {'guard' if d['type']=='GUARDIAN' else 'resp'}'>{'Guardian' if d['type']=='GUARDIAN' else 'Resp'}</span>"
                 f"</div>"
-                for d in active_drones[:8]
+                for d in active_drones[:6]
             ) or "<div class='ssub'>No active stations.</div>"
             _public_summary_html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -5142,21 +5232,17 @@ body{{background:transparent;overflow:hidden}}
   <style>
     *{{box-sizing:border-box;margin:0;padding:0}}
     body{{font-family:'Inter',sans-serif;background:#07101c;color:#e8f2ff;min-height:100vh}}
-    .page{{max-width:1080px;margin:0 auto;padding:16px}}
-    /* ── header bar ── */
-    .hdr{{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;
-          background:linear-gradient(120deg,#0b1a2e 0%,#0d2240 60%,#091522 100%);
-          border:1px solid rgba(0,210,255,0.28);border-radius:16px;padding:14px 20px;margin-bottom:12px}}
-    .hdr-left .eyebrow{{color:#00D2FF;font-size:10px;letter-spacing:.18em;text-transform:uppercase;font-weight:700;margin-bottom:4px}}
-    .hdr-left .dept{{font-size:clamp(18px,3vw,28px);font-weight:800;line-height:1.1}}
-    .hdr-left .loc{{color:#7a9ab5;font-size:13px;margin-top:3px}}
+    .page{{max-width:920px;margin:0 auto;padding:12px}}
+    .hdr{{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;background:linear-gradient(120deg,#0b1a2e 0%,#0d2240 60%,#091522 100%);border:1px solid rgba(0,210,255,0.24);border-radius:14px;padding:12px 16px;margin-bottom:10px}}
+    .hdr-left .eyebrow{{color:#00D2FF;font-size:10px;letter-spacing:.16em;text-transform:uppercase;font-weight:700;margin-bottom:3px}}
+    .hdr-left .dept{{font-size:clamp(17px,2.5vw,24px);font-weight:800;line-height:1.1}}
+    .hdr-left .loc{{color:#7a9ab5;font-size:12px;margin-top:2px}}
     .hdr-right{{display:flex;gap:6px;align-items:center;flex-wrap:wrap}}
-    .social{{font-size:11px;font-weight:700;border-radius:6px;padding:4px 9px;text-decoration:none;white-space:nowrap}}
-    /* ── metrics strip ── */
-    .metrics{{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}}
-    .metric{{border-radius:12px;padding:10px 14px;border:1px solid}}
-    .metric .k{{font-size:10px;text-transform:uppercase;letter-spacing:.12em;font-weight:700;margin-bottom:4px;opacity:.75}}
-    .metric .v{{font-size:clamp(18px,2.5vw,24px);font-weight:800}}
+    .social{{font-size:11px;font-weight:700;border-radius:999px;padding:4px 9px;text-decoration:none;white-space:nowrap}}
+    .metrics{{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}}
+    .metric{{border-radius:12px;padding:9px 12px;border:1px solid}}
+    .metric .k{{font-size:10px;text-transform:uppercase;letter-spacing:.12em;font-weight:700;margin-bottom:3px;opacity:.75}}
+    .metric .v{{font-size:clamp(16px,2.2vw,21px);font-weight:800}}
     .m-capex{{background:rgba(0,255,136,.07);border-color:rgba(0,255,136,.3)}}
     .m-capex .k{{color:#00ff88}}.m-capex .v{{color:#00ff88}}
     .m-save{{background:rgba(255,215,0,.07);border-color:rgba(255,215,0,.3)}}
@@ -5165,29 +5251,25 @@ body{{background:transparent;overflow:hidden}}
     .m-cov .k{{color:#00D2FF}}.m-cov .v{{color:#00D2FF}}
     .m-fleet{{background:rgba(168,139,250,.07);border-color:rgba(168,139,250,.3)}}
     .m-fleet .k{{color:#a78bfa}}.m-fleet .v{{color:#a78bfa}}
-    /* ── station card ── */
-    .card{{background:#0c1828;border:1px solid rgba(255,255,255,.09);border-radius:14px;padding:14px;overflow:hidden;max-width:480px}}
-    .card-title{{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#00D2FF;margin-bottom:10px}}
-    /* ── station list ── */
+    .card{{background:#0c1828;border:1px solid rgba(255,255,255,.09);border-radius:14px;padding:12px;overflow:hidden;max-width:520px}}
+    .card-title{{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#00D2FF;margin-bottom:8px}}
     .list{{display:flex;flex-direction:column;gap:0}}
-    .row{{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06)}}
+    .row{{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06)}}
     .row:last-child{{border-bottom:none;padding-bottom:0}}
     .sname{{font-weight:700;font-size:13px}}
     .ssub{{color:#6a8aa5;font-size:11px;margin-top:1px}}
     .badge{{border-radius:999px;padding:3px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}}
     .guard{{background:rgba(255,215,0,.15);color:#FFD700;border:1px solid rgba(255,215,0,.35)}}
     .resp{{background:rgba(0,210,255,.13);color:#00D2FF;border:1px solid rgba(0,210,255,.32)}}
-    /* ── contact block ── */
-    .contact{{margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,.08)}}
+    .contact{{margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08)}}
     .contact .label{{font-size:10px;text-transform:uppercase;letter-spacing:.14em;color:#00D2FF;font-weight:700;margin-bottom:4px}}
-    .contact .name{{font-size:16px;font-weight:800;margin-bottom:2px}}
+    .contact .name{{font-size:15px;font-weight:800;margin-bottom:2px}}
     .contact a{{color:#00D2FF;text-decoration:none;font-size:13px}}
     @media(max-width:720px){{.metrics{{grid-template-columns:repeat(2,1fr)}}.card{{max-width:100%}}}}
   </style>
 </head>
 <body>
 <div class="page">
-  <!-- header -->
   <div class="hdr">
     <div class="hdr-left">
       <div class="eyebrow">BRINC DFR Deployment Proposal</div>
@@ -5196,19 +5278,14 @@ body{{background:transparent;overflow:hidden}}
     </div>
     <div class="hdr-right">
       <a class="social" href="https://brincdrones.com" target="_blank" style="color:#00D2FF;background:rgba(0,210,255,.1);border:1px solid rgba(0,210,255,.35)">brincdrones.com</a>
-      <a class="social" href="https://linkedin.com/company/brinc" target="_blank" style="color:#0a66c2;background:rgba(10,102,194,.12);border:1px solid rgba(10,102,194,.35)">LinkedIn</a>
-      <a class="social" href="https://instagram.com/brincdrones" target="_blank" style="color:#e1306c;background:rgba(225,48,108,.1);border:1px solid rgba(225,48,108,.35)">Instagram</a>
-      <a class="social" href="https://x.com/BRINCDrones" target="_blank" style="color:#d0d0d0;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.22)">X</a>
     </div>
   </div>
-  <!-- metrics -->
   <div class="metrics">
     <div class="metric m-capex"><div class="k">Fleet CapEx</div><div class="v">${fleet_capex:,.0f}</div></div>
     <div class="metric m-save"><div class="k">Annual Savings</div><div class="v">${annual_savings:,.0f}</div></div>
     <div class="metric m-cov"><div class="k">Call Coverage</div><div class="v">{calls_covered_perc:.1f}%</div></div>
     <div class="metric m-fleet"><div class="k">Fleet</div><div class="v">{actual_k_responder}R / {actual_k_guardian}G</div></div>
   </div>
-  <!-- station list -->
   <div class="card">
     <div class="card-title">Stations</div>
     <div class="list">{_station_rows_html}</div>
@@ -5221,12 +5298,22 @@ body{{background:transparent;overflow:hidden}}
 </div>
 </body>
 </html>"""
+            _report_id = st.session_state.get('public_report_id', '')
+            _fleet_summary = f"{actual_k_responder}R / {actual_k_guardian}G"
+            _stations_json = json.dumps([
+                {
+                    "name": str(d.get("name", "")),
+                    "type": str(d.get("type", "")),
+                    "avg_time_min": round(float(d.get("avg_time_min", 0) or 0), 1),
+                }
+                for d in active_drones[:6]
+            ], ensure_ascii=True)
             st.session_state['_public_summary_html'] = _public_summary_html
             _publish_public_report_html(
-                st.session_state.get('public_report_id', ''),
+                _report_id,
                 _public_summary_html,
                 metadata={
-                    "report_id": st.session_state.get('public_report_id', ''),
+                    "report_id": _report_id,
                     "city": _qr_city,
                     "state": _qr_state,
                     "rep_name": _qr_name,
@@ -5236,6 +5323,20 @@ body{{background:transparent;overflow:hidden}}
                     "kind": "qr_summary",
                 },
             )
+            _publish_public_report_to_sheets(
+                report_id=_report_id,
+                department=_qr_dept,
+                city=_qr_city,
+                state=_qr_state,
+                rep_name=_qr_name,
+                rep_email=_qr_email,
+                fleet_capex=round(float(fleet_capex or 0), 0),
+                annual_savings=round(float(annual_savings or 0), 0),
+                call_coverage=round(float(calls_covered_perc or 0), 1),
+                fleet_summary=_fleet_summary,
+                stations_json=_stations_json,
+                public_html=_public_summary_html,
+            )
 
 
             # ── Render full-width banner ───────────────────────────────────────────
@@ -5243,31 +5344,25 @@ body{{background:transparent;overflow:hidden}}
             # 4+ leading spaces as a code block, which renders HTML as raw text.
             _qr_banner = (
                 '<div style="background:linear-gradient(135deg,#0a1220 0%,#0d1630 50%,#080d18 100%);'
-                'border:2px solid #00D2FF;border-radius:20px;padding:40px;margin-top:12px;overflow:hidden;">'
+                'border:2px solid #00D2FF;border-radius:18px;padding:24px;margin-top:12px;overflow:hidden;max-width:920px;">'
 
                 # Header with department name and info
-                '<div style="margin-bottom:28px;">'
-                '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap;">'
+                '<div style="margin-bottom:18px;">'
+                '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;">'
 
                 # Left side: Department info
-                '<div style="flex:1;min-width:280px;">'
-                f'<div style="font-size:2.2rem;font-weight:900;color:#ffffff;line-height:1.2;margin-bottom:8px;">{_qr_dept}</div>'
-                f'<div style="font-size:0.95rem;color:#00D2FF;font-weight:600;letter-spacing:0.5px;margin-bottom:4px;">DFR Deployment Proposal</div>'
-                f'<div style="font-size:0.85rem;color:#889aaa;">{_qr_city}, {_qr_state}</div>'
+                '<div style="flex:1;min-width:260px;">'
+                f'<div style="font-size:1.8rem;font-weight:900;color:#ffffff;line-height:1.15;margin-bottom:6px;">{_qr_dept}</div>'
+                f'<div style="font-size:0.9rem;color:#00D2FF;font-weight:700;letter-spacing:0.4px;margin-bottom:3px;">DFR Deployment Proposal</div>'
+                f'<div style="font-size:0.8rem;color:#889aaa;">{_qr_city}, {_qr_state}</div>'
                 '</div>'
 
-                # Right side: BRINC contact and socials
+                # Right side: BRINC contact
                 '<div style="flex:0 0 auto;text-align:right;">'
-                '<div style="font-size:0.75rem;color:#00D2FF;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:8px;">BRINC Drones</div>'
-                '<div style="font-size:0.85rem;color:#aabbcc;margin-bottom:8px;">'
-                '<div>🌐 <a href="https://brincdrones.com" target="_blank" style="color:#00D2FF;text-decoration:none;font-weight:600;">brincdrones.com</a></div>'
-                '<div>✉ <a href="mailto:info@brincdrones.com" style="color:#00D2FF;text-decoration:none;">info@brincdrones.com</a></div>'
-                '</div>'
-                '<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">'
-                '<a href="https://linkedin.com/company/brinc" target="_blank" style="font-size:0.7rem;color:#0a66c2;background:rgba(10,102,194,0.15);border:1px solid rgba(10,102,194,0.4);border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;transition:all 0.2s;">LinkedIn</a>'
-                '<a href="https://instagram.com/brincdrones" target="_blank" style="font-size:0.7rem;color:#e1306c;background:rgba(225,48,108,0.12);border:1px solid rgba(225,48,108,0.4);border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;transition:all 0.2s;">Instagram</a>'
-                '<a href="https://x.com/BRINCDrones" target="_blank" style="font-size:0.7rem;color:#d0d0d0;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.25);border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;transition:all 0.2s;">X/Twitter</a>'
-                '<a href="https://youtube.com/@BRINCDrones" target="_blank" style="font-size:0.7rem;color:#ff0000;background:rgba(255,0,0,0.12);border:1px solid rgba(255,0,0,0.35);border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;transition:all 0.2s;">YouTube</a>'
+                '<div style="font-size:0.72rem;color:#00D2FF;text-transform:uppercase;letter-spacing:1.2px;font-weight:700;margin-bottom:6px;">BRINC Drones</div>'
+                '<div style="font-size:0.82rem;color:#aabbcc;">'
+                '<div><a href="https://brincdrones.com" target="_blank" style="color:#00D2FF;text-decoration:none;font-weight:600;">brincdrones.com</a></div>'
+                '<div><a href="mailto:info@brincdrones.com" style="color:#00D2FF;text-decoration:none;">info@brincdrones.com</a></div>'
                 '</div>'
                 '</div>'
 
@@ -5275,21 +5370,21 @@ body{{background:transparent;overflow:hidden}}
                 '</div>'  # end header
 
                 # QR code section — large and centered with white background for readability
-                '<div style="display:flex;flex-direction:column;align-items:center;gap:16px;margin:24px 0 28px;">'
-                f'<div style="background:#ffffff;border-radius:18px;padding:18px;display:inline-block;box-shadow:0 12px 32px rgba(0,210,255,0.25);">'
-                f'<img src="data:image/png;base64,{_qr_b64}" style="width:380px;height:380px;display:block;border-radius:14px;" alt="BRINC Mobile Summary QR"/>'
+                '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;margin:16px 0 18px;">'
+                f'<div style="background:#ffffff;border-radius:16px;padding:14px;display:inline-block;box-shadow:0 10px 24px rgba(0,210,255,0.2);">'
+                f'<img src="data:image/png;base64,{_qr_b64}" style="width:300px;height:300px;display:block;border-radius:12px;" alt="BRINC Mobile Summary QR"/>'
                 '</div>'
                 '<div style="text-align:center;">'
-                '<div style="font-size:1.05rem;font-weight:800;color:#00D2FF;letter-spacing:0.3px;margin-bottom:6px;">📱 Scan with any smartphone</div>'
-                '<div style="font-size:0.8rem;color:#889aaa;">No login required • Works on iOS & Android • Landscape viewing recommended</div>'
+                '<div style="font-size:0.98rem;font-weight:800;color:#00D2FF;letter-spacing:0.2px;margin-bottom:4px;">Scan with any smartphone</div>'
+                '<div style="font-size:0.76rem;color:#889aaa;">No login required</div>'
                 '</div>'
                 '</div>'
 
                 # Footer: Rep info
-                '<div style="border-top:1px solid rgba(0,210,255,0.15);padding-top:20px;">'
-                '<div style="font-size:0.7rem;color:#00D2FF;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:6px;">Your BRINC Representative</div>'
-                f'<div style="font-size:1.15rem;font-weight:800;color:#ffffff;margin-bottom:4px;">{_qr_name}</div>'
-                f'<div style="font-size:0.85rem;color:#00D2FF;">✉ <a href="mailto:{_qr_email}" style="color:#00D2FF;text-decoration:none;">{_qr_email}</a></div>'
+                '<div style="border-top:1px solid rgba(0,210,255,0.15);padding-top:14px;">'
+                '<div style="font-size:0.68rem;color:#00D2FF;text-transform:uppercase;letter-spacing:1.3px;font-weight:700;margin-bottom:5px;">Your BRINC Representative</div>'
+                f'<div style="font-size:1.02rem;font-weight:800;color:#ffffff;margin-bottom:3px;">{_qr_name}</div>'
+                f'<div style="font-size:0.82rem;color:#00D2FF;"><a href="mailto:{_qr_email}" style="color:#00D2FF;text-decoration:none;">{_qr_email}</a></div>'
                 '</div>'
 
                 '</div>'  # end banner
