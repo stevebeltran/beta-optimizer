@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from shapely.geometry import Point, Polygon, MultiPolygon, box, shape
 from shapely.ops import unary_union
 from shapely.wkb import loads as _wkb_loads
-import itertools, glob, math, simplekml, heapq, re, random, json, io, datetime, base64, smtplib, uuid, traceback, tempfile, hashlib, hmac, time
+import itertools, glob, math, simplekml, heapq, re, random, json, io, datetime, base64, smtplib, uuid, traceback, tempfile, hashlib, hmac, time, html
 import concurrent.futures as cf
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -5672,30 +5672,134 @@ body{{background:transparent;overflow:hidden}}
             _qr_dept = st.session_state.get('active_dept_name', '') or _qr_city or 'Jurisdiction'
             _qr_dept = str(_qr_dept).strip().title()
 
-            # ── Public QR summary page (condensed, no login) ────────────────────────
-            _station_rows_html = "".join(
-                f"<div class='row'>"
-                f"<div><div class='sname'>{d['name']}</div>"
-                f"<div class='ssub'>{float(d.get('avg_time_min', 0) or 0):.1f} min avg</div></div>"
-                f"<span class='badge {'guard' if d['type']=='GUARDIAN' else 'resp'}'>{'Guardian' if d['type']=='GUARDIAN' else 'Resp'}</span>"
-                f"</div>"
-                for d in active_drones[:6]
-            ) or "<div class='ssub'>No active stations.</div>"
+            # ── Public QR summary page (expanded, no login) ─────────────────────────
             _qr_total_calls = int(full_total_calls or total_calls or 0)
             _qr_active_stns = len(active_drones)
-            _qr_area_cov    = round(float(area_covered_perc or 0), 1)
-            _qr_time_saved  = round(float(avg_time_saved or 0), 1)
+            _qr_area_cov = round(float(area_covered_perc or 0), 1)
+            _qr_time_saved = round(float(avg_time_saved or 0), 1)
+            _qr_avg_resp = round(float(avg_resp_time or 0), 1)
+            _qr_covered_calls = int(round(_qr_total_calls * float(calls_covered_perc or 0) / 100.0))
+            _qr_fleet_total = int(actual_k_responder or 0) + int(actual_k_guardian or 0)
+            _qr_summary_text = (
+                f"This analysis modeled Drone as First Responder deployment for {_qr_city}, {_qr_state} "
+                f"using jurisdiction-specific geography and incident demand. The recommended configuration "
+                f"of {actual_k_responder} responder aircraft and {actual_k_guardian} guardian aircraft is "
+                f"projected to cover {float(calls_covered_perc or 0):.1f}% of modeled calls, reduce average "
+                f"response time by {_qr_time_saved:.1f} minutes, and improve aerial first-arrival consistency "
+                f"across the jurisdiction."
+            )
+
+            def _h(value):
+                return html.escape(str(value or ""))
+
+            def _rank_station_role(station_type):
+                _stype = str(station_type or "").upper()
+                return "Guardian" if "GUARD" in _stype else "Responder"
+
+            def _coverage_band(idx, total):
+                if total <= 1:
+                    return "Primary gap closure"
+                if idx == 0:
+                    return "Primary gap closure"
+                if idx < max(2, total // 3):
+                    return "High"
+                if idx < max(4, (2 * total) // 3):
+                    return "Medium"
+                return "Supporting"
+
+            _station_table_rows_html = "".join(
+                f"<tr>"
+                f"<td>{idx + 1}</td>"
+                f"<td>{_h(d.get('name', 'Unnamed Station'))}</td>"
+                f"<td>{_rank_station_role(d.get('type', ''))}</td>"
+                f"<td>{float(d.get('avg_time_min', 0) or 0):.1f} min</td>"
+                f"</tr>"
+                for idx, d in enumerate(active_drones[:6])
+            ) or "<tr><td colspan='4'>No active stations available for this scenario.</td></tr>"
+
+            _why_sites_html = "".join([
+                "<li>Selected from jurisdiction-specific call density and travel geometry</li>",
+                "<li>Optimized for fastest first-arrival coverage, not arbitrary spacing</li>",
+                "<li>Balanced to improve coverage while maintaining deployable fleet utilization</li>",
+                "<li>Defensible for operational planning, leadership review, and budget justification</li>",
+            ])
+            _impact_html = "".join([
+                "<li>Faster first-arriving aerial presence on in-progress calls</li>",
+                "<li>Earlier live video and scene intelligence for responding officers</li>",
+                "<li>More consistent coverage across high-demand areas</li>",
+                "<li>Stronger justification for phased DFR deployment and funding decisions</li>",
+            ])
+
+            _call_points_svg = ""
+            try:
+                _qr_df_calls_plot = df_calls_full if (df_calls_full is not None and not df_calls_full.empty) else df_calls
+                if _qr_df_calls_plot is not None and not _qr_df_calls_plot.empty and 'lat' in _qr_df_calls_plot.columns and 'lon' in _qr_df_calls_plot.columns:
+                    _sample = _qr_df_calls_plot[['lat', 'lon']].dropna().sample(min(90, len(_qr_df_calls_plot)), random_state=42)
+                    _station_lats = [float(d.get('lat')) for d in active_drones if d.get('lat') is not None]
+                    _station_lons = [float(d.get('lon')) for d in active_drones if d.get('lon') is not None]
+                    _all_lats = list(_sample['lat'].astype(float)) + _station_lats
+                    _all_lons = list(_sample['lon'].astype(float)) + _station_lons
+                    if _all_lats and _all_lons:
+                        _min_lat, _max_lat = min(_all_lats), max(_all_lats)
+                        _min_lon, _max_lon = min(_all_lons), max(_all_lons)
+                        _lat_span = max(_max_lat - _min_lat, 0.01)
+                        _lon_span = max(_max_lon - _min_lon, 0.01)
+
+                        def _xy(lat, lon):
+                            _x = 8 + ((float(lon) - _min_lon) / _lon_span) * 84
+                            _y = 8 + (1 - ((float(lat) - _min_lat) / _lat_span)) * 84
+                            return _x, _y
+
+                        _call_points = []
+                        for _, _row in _sample.iterrows():
+                            _x, _y = _xy(_row['lat'], _row['lon'])
+                            _call_points.append(f"<circle cx='{_x:.2f}' cy='{_y:.2f}' r='1.1' fill='rgba(110,231,255,0.34)' />")
+
+                        _station_points = []
+                        for _d in active_drones[:8]:
+                            if _d.get('lat') is None or _d.get('lon') is None:
+                                continue
+                            _x, _y = _xy(_d['lat'], _d['lon'])
+                            _stroke = '#ffd76a' if _rank_station_role(_d.get('type', '')) == 'Guardian' else '#6ee7ff'
+                            _fill = 'rgba(255,215,106,.18)' if _stroke == '#ffd76a' else 'rgba(110,231,255,.18)'
+                            _station_points.append(
+                                f"<circle cx='{_x:.2f}' cy='{_y:.2f}' r='6.6' fill='none' stroke='{_stroke}' stroke-opacity='0.26' stroke-width='2.4' />"
+                                f"<circle cx='{_x:.2f}' cy='{_y:.2f}' r='3.0' fill='{_fill}' stroke='{_stroke}' stroke-width='1.3' />"
+                            )
+                        _call_points_svg = ''.join(_call_points) + ''.join(_station_points)
+            except Exception:
+                _call_points_svg = ""
+
+            _map_visual_html = f"""
+              <div class='map-shell'>
+                <div class='map-head'>
+                  <div>
+                    <div class='section-kicker'>Recommended Deployment Layout</div>
+                    <div class='map-title'>Coverage model for {_h(_qr_loc)}</div>
+                  </div>
+                  <div class='map-caption'>Stations, sample demand points, and responder posture.</div>
+                </div>
+                <div class='map-stage'>
+                  <svg viewBox='0 0 100 100' preserveAspectRatio='none' role='img' aria-label='Deployment overview map'>
+                    <rect x='2' y='2' width='96' height='96' rx='8' fill='rgba(255,255,255,0.02)' stroke='rgba(255,255,255,0.09)' />
+                    <path d='M12 24 C28 11, 46 14, 61 21 S88 38, 87 55 74 85, 46 86 10 70, 11 45 12 24, 12 24Z' fill='rgba(110,231,255,0.06)' stroke='rgba(110,231,255,0.16)' stroke-width='1.2' />
+                    {_call_points_svg}
+                  </svg>
+                </div>
+              </div>
+            """
+
             _public_summary_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <title>BRINC DFR — {_qr_city}, {_qr_state}</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
   <style>
     :root{{
       --bg:#050b14;
-      --hero-top:#15314f;
+      --hero-top:#16314f;
       --hero-bottom:#091523;
       --panel:#0d1827;
       --panel-soft:#112337;
@@ -5707,77 +5811,151 @@ body{{background:transparent;overflow:hidden}}
       --gold:#ffd76a;
       --violet:#c2a9ff;
       --red:#ff7b7b;
-      --link-bg:#dff8ff;
-      --link-text:#06283a;
+      --ink:#06283a;
+      --cta:#dff8ff;
     }}
     *{{box-sizing:border-box;margin:0;padding:0}}
     html{{background:var(--bg)}}
     body{{font-family:'Inter',sans-serif;background:linear-gradient(180deg,#12263d 0%,#08111d 34%,#050b14 100%);color:var(--text);min-height:100vh}}
-    .page{{width:100%;margin:0;padding:12px 10px 28px}}
+    .page{{width:100%;max-width:1120px;margin:0 auto;padding:12px 10px 28px}}
     .hero{{background:linear-gradient(180deg,var(--hero-top) 0%,var(--hero-bottom) 100%);border:1px solid rgba(110,231,255,.18);border-radius:22px;padding:22px 18px 18px;margin-bottom:12px;box-shadow:0 18px 34px rgba(0,0,0,.28)}}
-    .eyebrow{{color:var(--cyan);font-size:15px;letter-spacing:.13em;text-transform:uppercase;font-weight:800;margin-bottom:10px}}
-    .dept{{font-size:clamp(38px,10.5vw,54px);font-weight:800;line-height:1.0;letter-spacing:-.03em}}
-    .loc{{color:var(--muted);font-size:20px;margin-top:10px;font-weight:600}}
-    .site{{display:inline-flex;align-items:center;justify-content:center;margin-top:16px;padding:11px 18px;border-radius:999px;border:1px solid rgba(110,231,255,.22);background:rgba(110,231,255,.09);color:var(--cyan);text-decoration:none;font-size:16px;font-weight:700}}
+    .eyebrow{{color:var(--cyan);font-size:13px;letter-spacing:.13em;text-transform:uppercase;font-weight:800;margin-bottom:10px}}
+    .headline{{font-size:clamp(34px,10vw,58px);font-weight:900;line-height:.96;letter-spacing:-.04em;max-width:12ch}}
+    .hero-copy{{font-size:17px;color:var(--muted);line-height:1.55;max-width:38rem;margin-top:12px}}
+    .hero-meta{{color:var(--cyan);font-size:15px;font-weight:700;margin-top:14px}}
+    .cta-row{{display:flex;gap:10px;margin-top:18px}}
+    .cta{{display:inline-flex;align-items:center;justify-content:center;flex:1 1 0;min-width:0;min-height:58px;padding:13px 16px;border-radius:16px;text-decoration:none;font-size:16px;font-weight:800;text-align:center}}
+    .cta-primary{{background:var(--cta);color:var(--ink)}}
+    .cta-secondary{{border:1px solid rgba(110,231,255,.22);background:rgba(110,231,255,.09);color:var(--cyan)}}
     .metrics{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px}}
     .metric{{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px 14px 20px;min-width:0;box-shadow:0 8px 18px rgba(0,0,0,.18)}}
-    .metric .k{{font-size:14px;text-transform:uppercase;letter-spacing:.09em;font-weight:700;margin-bottom:10px;opacity:.9}}
-    .metric .v{{font-size:clamp(30px,8.8vw,42px);font-weight:800;line-height:1.04;word-break:break-word}}
-    .m-calls .k,.m-calls .v{{color:var(--red)}}
-    .m-capex .k,.m-capex .v{{color:var(--green)}}
+    .metric .k{{font-size:12px;text-transform:uppercase;letter-spacing:.1em;font-weight:800;margin-bottom:10px;opacity:.9}}
+    .metric .v{{font-size:clamp(22px,7.6vw,36px);font-weight:900;line-height:1.04;word-break:break-word}}
+    .m-resp .k,.m-resp .v{{color:var(--cyan)}}
     .m-save .k,.m-save .v{{color:var(--gold)}}
-    .m-cov .k,.m-cov .v{{color:var(--cyan)}}
+    .m-cov .k,.m-cov .v{{color:var(--green)}}
+    .m-calls .k,.m-calls .v{{color:var(--red)}}
     .m-fleet .k,.m-fleet .v{{color:var(--violet)}}
-    .m-time .k,.m-time .v{{color:var(--gold)}}
-    .m-area .k,.m-area .v{{color:var(--cyan)}}
-    .m-stns .k,.m-stns .v{{color:var(--green)}}
+    .m-roi .k,.m-roi .v{{color:var(--gold)}}
     .section{{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:18px 16px;box-shadow:0 10px 20px rgba(0,0,0,.14)}}
     .section + .section{{margin-top:12px}}
-    .section-title{{font-size:16px;font-weight:800;text-transform:uppercase;letter-spacing:.11em;color:var(--cyan);margin-bottom:14px}}
-    .list{{display:flex;flex-direction:column;gap:0}}
-    .row{{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:14px 0;border-bottom:1px solid rgba(255,255,255,.06)}}
-    .row:last-child{{border-bottom:none;padding-bottom:0}}
-    .sname{{font-weight:700;font-size:22px;line-height:1.2}}
-    .ssub{{color:var(--muted);font-size:17px;margin-top:5px}}
-    .badge{{flex:0 0 auto;border-radius:999px;padding:8px 16px;font-size:15px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}}
-    .guard{{background:rgba(255,215,106,.14);color:var(--gold);border:1px solid rgba(255,215,106,.28)}}
-    .resp{{background:rgba(110,231,255,.13);color:var(--cyan);border:1px solid rgba(110,231,255,.24)}}
+    .section-kicker{{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.13em;color:var(--cyan);margin-bottom:10px}}
+    .section-title{{font-size:32px;font-weight:900;line-height:1.02;letter-spacing:-.03em;margin-bottom:10px}}
+    .section-text{{font-size:18px;line-height:1.7;color:var(--muted)}}
+    .compare{{display:grid;grid-template-columns:1fr;gap:10px}}
+    .compare-card{{background:var(--panel-soft);border:1px solid rgba(255,255,255,.06);border-radius:18px;padding:18px}}
+    .compare-card.after{{border-color:rgba(110,231,255,.18)}}
+    .compare-card .label{{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px;color:var(--cyan)}}
+    .compare-card.after .label{{color:var(--gold)}}
+    .compare-card h4{{font-size:24px;font-weight:800;margin-bottom:10px}}
+    .compare-card p{{font-size:17px;color:var(--muted);line-height:1.7}}
+    .delta-grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}}
+    .delta{{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:14px 12px}}
+    .delta .k{{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:8px}}
+    .delta .v{{font-size:24px;font-weight:900}}
+    .bullet-list{{display:grid;gap:12px;margin-top:12px;padding-left:22px}}
+    .bullet-list li{{color:var(--muted);font-size:17px;line-height:1.7}}
+    .stations-table{{width:100%;border-collapse:collapse;font-size:18px;margin-top:12px}}
+    .stations-table th,.stations-table td{{padding:16px 12px;text-align:left;border-bottom:1px solid rgba(255,255,255,.06)}}
+    .stations-table th{{font-size:13px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);font-weight:800}}
+    .stations-table td{{color:var(--text)}}
+    .stations-table tbody tr:last-child td{{border-bottom:none}}
+    .split{{display:grid;grid-template-columns:1fr;gap:12px}}
     .contact-card{{background:linear-gradient(180deg,var(--panel-soft) 0%,var(--panel) 100%);border:1px solid rgba(110,231,255,.12)}}
-    .contact-label{{font-size:15px;text-transform:uppercase;letter-spacing:.12em;color:var(--cyan);font-weight:800;margin-bottom:10px}}
-    .contact-name{{font-size:30px;font-weight:800;line-height:1.08;margin-bottom:12px}}
-    .contact-email{{display:block;width:100%;padding:16px 18px;border-radius:16px;background:var(--link-bg);color:var(--link-text) !important;text-decoration:none;font-size:20px;font-weight:700;word-break:break-word;box-shadow:inset 0 0 0 1px rgba(6,40,58,.08)}}
-    .contact-email:visited{{color:var(--link-text) !important}}
+    .contact-label{{font-size:13px;text-transform:uppercase;letter-spacing:.12em;color:var(--cyan);font-weight:800;margin-bottom:10px}}
+    .contact-name{{font-size:32px;font-weight:900;line-height:1.05;margin-bottom:12px}}
+    .contact-email{{display:block;width:100%;padding:18px 18px;border-radius:16px;background:var(--cta);color:var(--ink)!important;text-decoration:none;font-size:20px;font-weight:800;word-break:break-word;text-align:center}}
+    .assumptions{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}}
+    .assumption{{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:12px 12px}}
+    .assumption .k{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);font-weight:800;margin-bottom:7px}}
+    .assumption .v{{font-size:17px;font-weight:800}}
+    @media (min-width: 860px){{
+      .metrics{{grid-template-columns:repeat(3,minmax(0,1fr))}}
+      .compare{{grid-template-columns:1fr 1fr}}
+    }}
   </style>
 </head>
 <body>
 <div class="page">
   <section class="hero">
-    <div class="eyebrow">BRINC DFR Deployment Proposal</div>
-    <div class="dept">{_qr_dept}</div>
-    <div class="loc">{_qr_city}, {_qr_state}</div>
-    <a class="site" href="https://brincdrones.com" target="_blank">brincdrones.com</a>
+    <div class="eyebrow">BRINC DFR Deployment Analysis</div>
+    <div class="headline">Optimize DFR Coverage in Minutes</div>
+    <div class="hero-copy">Reduce response times, expand effective coverage, and justify deployment with jurisdiction-specific data.</div>
+    <div class="hero-meta">Built for {_h(_qr_dept)} in {_h(_qr_city)}, {_h(_qr_state)}</div>
+    <div class="cta-row">
+      <a class="cta cta-primary" href="mailto:{_qr_email}?subject=Full Deployment Analysis - {_h(_qr_loc)}">Request Full Analysis</a>
+      <a class="cta cta-secondary" href="mailto:{_qr_email}?subject=Book 15-Minute Demo - {_h(_qr_loc)}">Book 15-Min Demo</a>
+    </div>
   </section>
 
   <section class="metrics">
-    <div class="metric m-calls"><div class="k">Annual 911 Calls</div><div class="v">{_qr_total_calls:,}</div></div>
-    <div class="metric m-cov"><div class="k">Call Coverage</div><div class="v">{calls_covered_perc:.1f}%</div></div>
-    <div class="metric m-capex"><div class="k">Fleet CapEx</div><div class="v">${fleet_capex:,.0f}</div></div>
-    <div class="metric m-save"><div class="k">Annual Savings</div><div class="v">${annual_savings:,.0f}</div></div>
-    <div class="metric m-fleet"><div class="k">Fleet</div><div class="v">{actual_k_responder}R / {actual_k_guardian}G</div></div>
-    <div class="metric m-time"><div class="k">Avg Time Saved</div><div class="v">{_qr_time_saved} min</div></div>
-    <div class="metric m-area"><div class="k">Area Coverage</div><div class="v">{_qr_area_cov:.1f}%</div></div>
-    <div class="metric m-stns"><div class="k">Active Stations</div><div class="v">{_qr_active_stns}</div></div>
+    <div class="metric m-resp"><div class="k">Avg Drone Response Time</div><div class="v">{_qr_avg_resp:.1f} min</div></div>
+    <div class="metric m-save"><div class="k">Avg Time Saved</div><div class="v">{_qr_time_saved:.1f} min</div></div>
+    <div class="metric m-cov"><div class="k">Call Coverage</div><div class="v">{float(calls_covered_perc or 0):.1f}%</div></div>
+    <div class="metric m-calls"><div class="k">Annual Calls Covered</div><div class="v">{_qr_covered_calls:,}</div></div>
+    <div class="metric m-fleet"><div class="k">Recommended Fleet</div><div class="v">{actual_k_responder}R / {actual_k_guardian}G</div></div>
+    <div class="metric m-roi"><div class="k">Annual Savings</div><div class="v">${float(annual_savings or 0):,.0f}</div></div>
   </section>
 
   <section class="section">
-    <div class="section-title">Stations</div>
-    <div class="list">{_station_rows_html}</div>
+    <div class="section-kicker">Executive Summary</div>
+    <div class="section-title">Deployment recommendation for {_h(_qr_loc)}</div>
+    <div class="section-text">{_h(_qr_summary_text)}</div>
+  </section>
+
+  <section class="section">
+    <div class="section-kicker">Before / After</div>
+    <div class="section-title">Conventional response versus optimized DFR layout</div>
+    <div class="compare">
+      <div class="compare-card">
+        <div class="label">Before</div>
+        <h4>Conventional Response</h4>
+        <p>Ground-only response depends on unit availability, travel congestion, and uneven spatial coverage. Arrival times vary widely, and command staff receive limited scene intelligence before officers reach the call.</p>
+      </div>
+      <div class="compare-card after">
+        <div class="label">After</div>
+        <h4>Optimized DFR Layout</h4>
+        <p>Recommended drone placement is tied to real call demand and jurisdiction geometry. Aircraft are positioned to improve first-arrival speed, expand aerial reach, and give command staff live scene awareness earlier in the response cycle.</p>
+      </div>
+    </div>
+    <div class="delta-grid">
+      <div class="delta"><div class="k">Response Improvement</div><div class="v">{_qr_time_saved:.1f} min faster</div></div>
+      <div class="delta"><div class="k">Coverage Improvement</div><div class="v">{float(calls_covered_perc or 0):.1f}% modeled</div></div>
+      <div class="delta"><div class="k">Operational Posture</div><div class="v">{_qr_fleet_total} active aircraft</div></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-kicker">Why It Matters</div>
+    <div class="section-title">A quick operational teaser</div>
+    <ul class="bullet-list">{_impact_html}</ul>
+  </section>
+
+  <section class="section">
+    <div class="section-kicker">Recommended Stations</div>
+    <div class="section-title">Top recommended station sites</div>
+    <table class="stations-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Station</th>
+          <th>Fleet Role</th>
+          <th>Avg Response Time</th>
+        </tr>
+      </thead>
+      <tbody>{_station_table_rows_html}</tbody>
+    </table>
   </section>
 
   <section class="section contact-card">
-    <div class="contact-label">BRINC Representative</div>
-    <div class="contact-name">{_qr_name}</div>
-    <a class="contact-email" href="mailto:{_qr_email}">{_qr_email}</a>
+    <div class="contact-label">Next Step</div>
+    <div class="contact-name">{_h(_qr_name)}</div>
+    <div class="section-text" style="margin-bottom:16px;">Email {_h(_qr_name)} to schedule a 15-minute walkthrough or request the full deployment analysis for {_h(_qr_loc)}.</div>
+    <div class="cta-row" style="margin-top:0;margin-bottom:14px;">
+      <a class="cta cta-primary" href="mailto:{_qr_email}?subject=Book 15-Minute Demo - {_h(_qr_loc)}">Book 15-Min Demo</a>
+      <a class="cta cta-secondary" href="mailto:{_qr_email}?subject=Full Deployment Analysis - {_h(_qr_loc)}">Request Full Analysis</a>
+    </div>
+    <a class="contact-email" href="mailto:{_qr_email}?subject=Book 15-Minute Demo - {_h(_qr_loc)}">{_h(_qr_email)}</a>
   </section>
 </div>
 </body>
