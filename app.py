@@ -2910,6 +2910,26 @@ def main():
 </script>
 </body></html>""", height=0, scrolling=False)
 
+                def _clear_upload_overlay():
+                    components.html("""<!DOCTYPE html><html><head></head><body><script>
+(function(){
+  var doc = parent.document;
+  if(parent._brincFloWd){ parent.clearInterval(parent._brincFloWd); parent._brincFloWd = null; }
+  if(parent._brincFloMsgs){ parent.clearInterval(parent._brincFloMsgs); parent._brincFloMsgs = null; }
+  var el = doc.getElementById('brinc-flo');
+  if(el){
+    el.style.transition = 'opacity 0.25s ease';
+    el.style.opacity = '0';
+  }
+  parent.setTimeout(function(){
+    var e = doc.getElementById('brinc-flo');
+    if(e && e.parentNode) e.parentNode.removeChild(e);
+    var s = doc.getElementById('brinc-flo-css');
+    if(s && s.parentNode) s.parentNode.removeChild(s);
+  }, 280);
+})();
+</script></body></html>""", height=0, scrolling=False)
+
                 # --- 1. INTELLIGENTLY CHECK FOR .BRINC FILE ---
                 # Browsers sometimes append .json to .brinc files on download
                 brinc_file = detect_brinc_file(uploaded_files)
@@ -2922,6 +2942,7 @@ def main():
                             st.toast("✅ Deployment restored successfully!")
                             st.rerun()
                         except Exception as e:
+                            _clear_upload_overlay()
                             st.error(f"❌ Error loading .brinc file: {e}")
                             st.stop()
 
@@ -2945,6 +2966,7 @@ def main():
                             df_c = aggressive_parse_calls(call_files)
 
                         if df_c is None or df_c.empty:
+                            _clear_upload_overlay()
                             st.error("❌ Calls file error: Could not parse valid coordinates.")
                             st.stop()
 
@@ -2969,6 +2991,7 @@ def main():
                                 except Exception as e:
                                     df_s, osm_note = None, f"Failed: {e}"
                             if df_s is None or df_s.empty:
+                                _clear_upload_overlay()
                                 st.error(f"❌ Stations file error: {osm_note}")
                                 st.stop()
                         else:
