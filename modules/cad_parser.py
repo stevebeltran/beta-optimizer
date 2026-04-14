@@ -146,23 +146,39 @@ def aggressive_parse_calls(uploaded_files):
             if sample.empty or len(sample.columns) < 4:
                 return False
 
-            dt_rate = pd.to_datetime(sample.iloc[:, 1], errors='coerce').notna().mean()
-            c2 = pd.to_numeric(sample.iloc[:, 2], errors='coerce')
-            c3 = pd.to_numeric(sample.iloc[:, 3], errors='coerce')
-            lon_lat_rate = (c2.between(-180, 180) & c3.between(-90, 90)).mean()
-            lat_lon_rate = (c2.between(-90, 90) & c3.between(-180, 180)).mean()
+            def _coord_pair_score(a, b):
+                a_num = pd.to_numeric(sample.iloc[:, a], errors='coerce')
+                b_num = pd.to_numeric(sample.iloc[:, b], errors='coerce')
+                lon_lat_rate = (a_num.between(-180, 180) & b_num.between(-90, 90)).mean()
+                lat_lon_rate = (a_num.between(-90, 90) & b_num.between(-180, 180)).mean()
+                return max(lon_lat_rate, lat_lon_rate)
 
-            first_col = sample.iloc[:, 0].astype(str).str.strip()
-            text_rate = (~first_col.str.fullmatch(r'-?\d+(?:\.\d+)?')).mean()
+            date_rate = pd.to_datetime(sample.iloc[:, 0], errors='coerce').notna().mean()
+            time_rate = pd.to_datetime(sample.iloc[:, 1], format='%H:%M:%S', errors='coerce').notna().mean() if len(sample.columns) > 1 else 0.0
+            datetime_rate = pd.to_datetime((sample.iloc[:, 0].astype(str).str.strip() + ' ' + sample.iloc[:, 1].astype(str).str.strip()), errors='coerce').notna().mean() if len(sample.columns) > 1 else 0.0
+            textish_rate = sample.iloc[:, 2].astype(str).str.strip().ne('').mean() if len(sample.columns) > 2 else 0.0
+            coord_score = 0.0
+            max_scan = min(len(sample.columns) - 1, 7)
+            for i in range(2, max_scan):
+                coord_score = max(coord_score, _coord_pair_score(i, i + 1))
 
-            return dt_rate >= 0.8 and text_rate >= 0.8 and max(lon_lat_rate, lat_lon_rate) >= 0.8
+            return date_rate >= 0.8 and max(time_rate, datetime_rate) >= 0.8 and textish_rate >= 0.8 and coord_score >= 0.8
         except Exception:
             return False
 
     def _normalize_headerless_cad_export(content, sep):
         raw = pd.read_csv(io.StringIO(content), sep=sep, dtype=str, header=None)
         width = len(raw.columns)
-        if width >= 4:
+        if width >= 6:
+            c4 = pd.to_numeric(raw.iloc[:, 4], errors='coerce')
+            c5 = pd.to_numeric(raw.iloc[:, 5], errors='coerce')
+            lat_lon_score = (c4.between(-90, 90) & c5.between(-180, 180)).mean()
+            lon_lat_score = (c4.between(-180, 180) & c5.between(-90, 90)).mean()
+            if lat_lon_score >= lon_lat_score:
+                base_cols = ['date', 'time', 'call_type_desc', 'priority', 'lat', 'lon']
+            else:
+                base_cols = ['date', 'time', 'call_type_desc', 'priority', 'lon', 'lat']
+        elif width >= 4:
             c2 = pd.to_numeric(raw.iloc[:, 2], errors='coerce')
             c3 = pd.to_numeric(raw.iloc[:, 3], errors='coerce')
             lon_first_score = (c2.between(-180, 180) & c3.between(-90, 90)).mean()
