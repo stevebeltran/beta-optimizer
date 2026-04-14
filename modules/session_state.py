@@ -68,7 +68,12 @@ def init_session_state(session_state, slugify, build_public_report_url) -> None:
         public_token = uuid.uuid4().hex[:16]
         session_state["public_report_id"] = f"{city_slug}-{public_token}"
 
-    session_state["public_report_url"] = build_public_report_url(session_state["public_report_id"])
+    _built_public_report_url = build_public_report_url(session_state["public_report_id"])
+    _current_public_report_url = str(session_state.get("public_report_url", "") or "").strip()
+    if (not _current_public_report_url) or (
+        "script.google.com" in _built_public_report_url and "script.google.com" not in _current_public_report_url
+    ):
+        session_state["public_report_url"] = _built_public_report_url
 
     if "target_cities" not in session_state:
         session_state["target_cities"] = [

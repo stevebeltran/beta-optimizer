@@ -296,7 +296,6 @@ def render_sidebar_jurisdiction_selector(
     selected_labels = st.sidebar.multiselect(
         'Jurisdictions',
         options=all_options,
-        default=session_state.get('jurisdictions_multiselect', default_selection),
         key='jurisdictions_multiselect',
         help='Select which geographic areas to include in coverage analysis.',
     )
