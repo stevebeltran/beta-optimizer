@@ -3302,6 +3302,12 @@ body{{background:transparent;overflow:hidden}}
   var pDrones = addSvgEl('g', {{id:'fl-drones'}}, mapSvg);
   var startX = vx + vw * 0.12;
   var startY = vy + vh * 0.28;
+  var launchState = statePaths.find(function(path){{ return path.id === 'US-WA'; }}) || null;
+  if(launchState) {{
+    var launchBox = launchState.getBBox();
+    startX = launchBox.x + launchBox.width * 0.30;
+    startY = launchBox.y + launchBox.height * 0.36;
+  }}
   var tx = vx + vw * 0.68;
   var ty = vy + vh * 0.48;
   if(targetState) {{
@@ -3823,26 +3829,64 @@ body{{background:transparent;overflow:hidden}}
         active_geos = resp_geos + guard_geos
 
         city_area = city_m.area if (city_m and not city_m.is_empty) else 1.0
+        _metric_total_calls = total_calls
+        _station_city_call_counts = {}
+        _metric_cov_r = cov_r.copy()
+        _metric_cov_g = cov_g.copy()
+
+        _metric_df = df_calls_full if (df_calls_full is not None and not df_calls_full.empty) else df_calls
+        if _metric_df is not None and len(_metric_df) > 0:
+            try:
+                _metric_gdf = gpd.GeoDataFrame(
+                    _metric_df,
+                    geometry=gpd.points_from_xy(_metric_df.lon, _metric_df.lat),
+                    crs='EPSG:4326'
+                ).to_crs(epsg=int(epsg_code))
+                _metric_clip_geom = city_m.buffer(300) if city_m is not None else city_m
+                _metric_calls_in_city = _metric_gdf[_metric_gdf.within(_metric_clip_geom)] if _metric_clip_geom is not None else _metric_gdf
+            except Exception:
+                _metric_calls_in_city = None
+            if _metric_calls_in_city is not None and len(_metric_calls_in_city) > 0:
+                _metric_total_calls = len(_metric_calls_in_city)
+                _metric_xy = np.array(list(zip(_metric_calls_in_city.geometry.x, _metric_calls_in_city.geometry.y)))
+                if active_resp_idx:
+                    _metric_cov_r = np.zeros(_metric_total_calls, dtype=bool)
+                    for _idx in active_resp_idx:
+                        _sx = station_metadata[_idx]['clipped_2m'].centroid.x if station_metadata[_idx]['clipped_2m'] is not None else None
+                        _sy = station_metadata[_idx]['clipped_2m'].centroid.y if station_metadata[_idx]['clipped_2m'] is not None else None
+                        _station_pt = gpd.GeoSeries([Point(station_metadata[_idx]['lon'], station_metadata[_idx]['lat'])], crs='EPSG:4326').to_crs(epsg=int(epsg_code)).iloc[0]
+                        _d = np.sqrt((_metric_xy[:, 0] - _station_pt.x) ** 2 + (_metric_xy[:, 1] - _station_pt.y) ** 2)
+                        _mask = _d <= (resp_radius_mi * 1609.34)
+                        _metric_cov_r |= _mask
+                        _station_city_call_counts[('RESPONDER', _idx)] = int(_mask.sum())
+                if active_guard_idx:
+                    _metric_cov_g = np.zeros(_metric_total_calls, dtype=bool)
+                    for _idx in active_guard_idx:
+                        _station_pt = gpd.GeoSeries([Point(station_metadata[_idx]['lon'], station_metadata[_idx]['lat'])], crs='EPSG:4326').to_crs(epsg=int(epsg_code)).iloc[0]
+                        _d = np.sqrt((_metric_xy[:, 0] - _station_pt.x) ** 2 + (_metric_xy[:, 1] - _station_pt.y) ** 2)
+                        _mask = _d <= (guard_radius_mi * 1609.34)
+                        _metric_cov_g |= _mask
+                        _station_city_call_counts[('GUARDIAN', _idx)] = int(_mask.sum())
 
         # Guardian-only metrics
         if guard_geos:
             guard_area_perc = (unary_union(guard_geos).area / city_area) * 100
-        if active_guard_idx and total_calls > 0:
-            cov_g = guard_matrix[active_guard_idx].any(axis=0)
-            guard_calls_perc = cov_g.sum() / total_calls * 100
+        if active_guard_idx and _metric_total_calls > 0:
+            cov_g = _metric_cov_g
+            guard_calls_perc = cov_g.sum() / _metric_total_calls * 100
 
         # Responder-only metrics
         if resp_geos:
             resp_area_perc = (unary_union(resp_geos).area / city_area) * 100
-        if active_resp_idx and total_calls > 0:
-            cov_r = resp_matrix[active_resp_idx].any(axis=0)
-            resp_calls_perc = cov_r.sum() / total_calls * 100
+        if active_resp_idx and _metric_total_calls > 0:
+            cov_r = _metric_cov_r
+            resp_calls_perc = cov_r.sum() / _metric_total_calls * 100
 
         # Combined metrics
         if active_geos:
             area_covered_perc = (unary_union(active_geos).area / city_area) * 100
-        if total_calls > 0:
-            calls_covered_perc = (np.logical_or(cov_r, cov_g).sum() / total_calls) * 100
+        if _metric_total_calls > 0:
+            calls_covered_perc = (np.logical_or(cov_r, cov_g).sum() / _metric_total_calls) * 100
             st.session_state['calls_covered_perc'] = calls_covered_perc
         if len(active_geos) >= 2:
             inters = [active_geos[i].intersection(active_geos[j])
@@ -4826,23 +4870,28 @@ body{{background:transparent;overflow:hidden}}
                 _r_drones = [d for d in active_drones if d['type'] == 'RESPONDER']
 
                 def _fleet_ring_slices(drones, fleet_label):
-                    """Ring slices sized as station_calls/total_calls so each slice's
-                    visual proportion equals its share of the total area call load."""
+                    """Ring slices stay marginal so the donut still closes to total calls,
+                    while displayed station values show each station's raw share of total city calls."""
                     labels, values, colors, hovers, texts = [], [], [], [], []
-                    _sum_raw = 0
+                    _sum_assigned = 0
                     for d in drones:
-                        raw = int(np.sum(d['cov_array']))  # calls from dataset inside this station's radius
-                        pct = raw / total_calls * 100 if total_calls > 0 else 0.0
+                        assigned = int(len(d.get('assigned_indices', [])))
+                        raw = int(_station_city_call_counts.get((d['type'], d['idx']), int(np.sum(d['cov_array']))))
+                        pct = raw / _metric_total_calls * 100 if _metric_total_calls > 0 else 0.0
                         name = d['name'].split(',')[0][:18]
                         labels.append(name)
-                        values.append(max(raw, 1))
+                        values.append(max(assigned, 1))
                         colors.append(d['color'])
                         texts.append(f'{pct:.1f}%')
-                        _label = f'{raw:,} calls in radius ({pct:.1f}% of {total_calls:,} total)' if raw > 0 else '0 calls in radius'
+                        _label = (
+                            f'{raw:,} calls in radius ({pct:.1f}% of {_metric_total_calls:,} total city calls)'
+                            if raw > 0 else
+                            '0 calls in radius'
+                        )
                         hovers.append(f'<b>{name}</b> [{fleet_label}]<br>{_label}<extra></extra>')
-                        _sum_raw += raw
-                    # Uncovered = remainder so ring sums to total_calls → each slice = raw/total_calls
-                    _uncov = max(0, total_calls - _sum_raw)
+                        _sum_assigned += assigned
+                    # Uncovered = remainder so ring sums to total_calls → each slice uses marginal assigned load.
+                    _uncov = max(0, total_calls - _sum_assigned)
                     if _uncov > 0:
                         _uncov_pct = _uncov / total_calls * 100 if total_calls > 0 else 0.0
                         labels.append(f'Uncovered ({fleet_label})')
