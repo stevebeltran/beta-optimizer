@@ -3831,7 +3831,7 @@ body{{background:transparent;overflow:hidden}}
         city_area = city_m.area if (city_m and not city_m.is_empty) else 1.0
         _metric_total_calls = total_calls
         _station_city_call_counts = {}
-        _station_city_assigned_counts = {}
+        _station_city_weighted_counts = {}
         _station_city_masks = {}
         _metric_cov_r = cov_r.copy()
         _metric_cov_g = cov_g.copy()
@@ -3869,15 +3869,25 @@ body{{background:transparent;overflow:hidden}}
                         _metric_cov_g |= _mask
                         _station_city_masks[('GUARDIAN', _idx)] = _mask
                         _station_city_call_counts[('GUARDIAN', _idx)] = int(_mask.sum())
-                _assigned_seen = np.zeros(_metric_total_calls, dtype=bool)
-                for _idx, _d_type in ordered_deployments_raw:
-                    _station_key = (_d_type, _idx)
-                    _mask = _station_city_masks.get(_station_key)
-                    if _mask is None:
+                for _fleet_type, _fleet_order in (
+                    ('GUARDIAN', [idx for idx, d_type in ordered_deployments_raw if d_type == 'GUARDIAN']),
+                    ('RESPONDER', [idx for idx, d_type in ordered_deployments_raw if d_type == 'RESPONDER']),
+                ):
+                    _fleet_masks = [
+                        _station_city_masks.get((_fleet_type, _idx))
+                        for _idx in _fleet_order
+                        if _station_city_masks.get((_fleet_type, _idx)) is not None
+                    ]
+                    if not _fleet_masks:
                         continue
-                    _assigned_mask = _mask & ~_assigned_seen
-                    _station_city_assigned_counts[_station_key] = int(_assigned_mask.sum())
-                    _assigned_seen |= _mask
+                    _fleet_cover_counts = np.sum(np.vstack(_fleet_masks), axis=0)
+                    for _idx in _fleet_order:
+                        _station_key = (_fleet_type, _idx)
+                        _mask = _station_city_masks.get(_station_key)
+                        if _mask is None:
+                            continue
+                        _weights = np.where(_mask, 1.0 / np.maximum(_fleet_cover_counts, 1), 0.0)
+                        _station_city_weighted_counts[_station_key] = float(_weights.sum())
 
         # Guardian-only metrics
         if guard_geos:
@@ -4881,33 +4891,33 @@ body{{background:transparent;overflow:hidden}}
                 _r_drones = [d for d in active_drones if d['type'] == 'RESPONDER']
 
                 def _fleet_ring_slices(drones, fleet_label):
-                    """Ring slices show each station's unique share of total city calls,
-                    with the remaining portion rendered as uncovered so the ring sums to 100%."""
+                    """Ring slices show each station's overlap-weighted share of total city calls.
+                    Exclusive calls count fully; overlapping calls are split across stations in the same fleet."""
                     labels, values, colors, hovers, texts = [], [], [], [], []
-                    _sum_assigned = 0
+                    _sum_weighted = 0.0
                     for d in drones:
-                        assigned = int(_station_city_assigned_counts.get((d['type'], d['idx']), 0))
-                        pct = assigned / _metric_total_calls * 100 if _metric_total_calls > 0 else 0.0
+                        weighted = float(_station_city_weighted_counts.get((d['type'], d['idx']), 0.0))
+                        pct = weighted / _metric_total_calls * 100 if _metric_total_calls > 0 else 0.0
                         name = d['name'].split(',')[0][:18]
                         labels.append(name)
-                        values.append(max(assigned, 1))
+                        values.append(max(weighted, 1e-9))
                         colors.append(d['color'])
                         texts.append(f'{pct:.1f}%')
                         _label = (
-                            f'{assigned:,} assigned city calls ({pct:.1f}% of {_metric_total_calls:,} total city calls)'
-                            if assigned > 0 else
-                            '0 assigned city calls'
+                            f'{weighted:,.1f} weighted city calls ({pct:.1f}% of {_metric_total_calls:,} total city calls)'
+                            if weighted > 0 else
+                            '0 weighted city calls'
                         )
                         hovers.append(f'<b>{name}</b> [{fleet_label}]<br>{_label}<extra></extra>')
-                        _sum_assigned += assigned
-                    _uncov = max(0, _metric_total_calls - _sum_assigned)
+                        _sum_weighted += weighted
+                    _uncov = max(0.0, _metric_total_calls - _sum_weighted)
                     if _uncov > 0:
                         _uncov_pct = _uncov / _metric_total_calls * 100 if _metric_total_calls > 0 else 0.0
                         labels.append(f'Uncovered ({fleet_label})')
                         values.append(_uncov)
                         colors.append('#1a1a1a')
                         texts.append(f'{_uncov_pct:.1f}%')
-                        hovers.append(f'<b>Uncovered by {fleet_label}</b><br>{_uncov:,} calls ({_uncov_pct:.1f}% of {_metric_total_calls:,} total city calls)<extra></extra>')
+                        hovers.append(f'<b>Uncovered by {fleet_label}</b><br>{_uncov:,.1f} calls ({_uncov_pct:.1f}% of {_metric_total_calls:,} total city calls)<extra></extra>')
                     return labels, values, colors, hovers, texts
 
                 _combined_covered = int(np.logical_or(cov_r, cov_g).sum()) if total_calls > 0 else 0
