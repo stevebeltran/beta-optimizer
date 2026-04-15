@@ -4164,8 +4164,16 @@ body{{background:transparent;overflow:hidden}}
                 _raw_calls_in_range_day = _raw_zone_calls / 365.0
                 _dispatchable_calls_day = _raw_calls_in_range_day * _effective_dfr
                 _dispatchable_calls_yr = _raw_zone_calls * _effective_dfr
-                _weighted_dispatchable_calls_day = (_weighted_zone_calls / 365.0) * _effective_dfr
-                _weighted_dispatchable_calls_yr = _weighted_zone_calls * _effective_dfr
+                # Cap weighted dispatchable to never exceed total dispatchable — attributed
+                # demand (overlap-shared) cannot logically exceed the ring's full demand.
+                _weighted_dispatchable_calls_day = min(
+                    (_weighted_zone_calls / 365.0) * _effective_dfr,
+                    _dispatchable_calls_day,
+                )
+                _weighted_dispatchable_calls_yr = min(
+                    _weighted_zone_calls * _effective_dfr,
+                    _dispatchable_calls_yr,
+                )
                 _call_capacity_util = _weighted_dispatchable_calls_day / max(_max_flights_cap, 0.001) if _max_flights_cap > 0 else (1.0 if _weighted_dispatchable_calls_day > 0 else 0.0)
                 # Utilization is based on dispatchable calls in range versus physical call-handling capacity.
                 # If dispatchable calls are left unanswered, the unit is at 100% utilization.

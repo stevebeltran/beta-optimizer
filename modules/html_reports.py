@@ -1447,7 +1447,7 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
     <div style="background:rgba(255,255,255,0.04); border:1px solid {card_border}; border-radius:5px; padding:5px 7px;">
       <div style="color:{text_muted}; font-size:0.60rem; text-transform:uppercase; letter-spacing:0.3px; margin-bottom:1px;">Dispatchable Calls<span class="tip" data-tip="Raw calls in range multiplied by the drone dispatch rate. This is total drone demand inside the unit's physical coverage area before overlap sharing.">?</span></div>
       <div style="font-weight:800; color:{"#dc3545" if d_capacity_limited else "#2ecc71"}; font-size:0.82rem;">{int(d_dispatchable_calls_yr):,}</div>
-      <div style="font-size:0.59rem; color:{text_muted};">{d_max_cap:.1f}/day max</div>
+      <div style="font-size:0.59rem; color:{text_muted};">{(d_dispatchable_calls_yr / 365.0):.1f}/day</div>
     </div>
     <div style="background:{"rgba(220,53,69,0.08)" if d_calls_unanswered_yr > 0.1 else "rgba(255,255,255,0.04)"}; border:1px solid {"#dc3545" if d_calls_unanswered_yr > 0.1 else card_border}; border-radius:5px; padding:5px 7px;">
       <div style="color:{text_muted}; font-size:0.60rem; text-transform:uppercase; letter-spacing:0.3px; margin-bottom:1px;">Calls Unanswered<span class="tip" data-tip="Dispatchable calls in range that exceed this unit's physical capacity under the 10-minute on-scene floor model.">?</span></div>
