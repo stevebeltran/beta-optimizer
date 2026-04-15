@@ -229,7 +229,7 @@ def build_high_activity_staffing_html(overtime_stats, dark=True, compact=False):
                 <div style="font-size:{metric_size}; font-weight:800; color:{text_main}; font-family:'IBM Plex Mono', monospace;">${overtime_stats['ot_hourly']:.2f}</div>
             </div>
         </div>
-        <div style="font-size:{body_size}; color:{text_muted}; margin-bottom:10px;">Peak month: <span style="color:{text_main}; font-weight:700;">{overtime_stats['peak_month']}</span> · estimated OT spend <span style="color:{accent}; font-weight:700;">${overtime_stats['peak_ot_cost']:,.0f}</span></div>
+        <div style="font-size:{body_size}; color:{text_muted}; margin-bottom:10px;">Peak month: <span style="color:{text_main}; font-weight:700;">{overtime_stats['peak_month']}</span> Â· estimated OT spend <span style="color:{accent}; font-weight:700;">${overtime_stats['peak_ot_cost']:,.0f}</span></div>
         <div style="overflow-x:auto;">
             <table style="width:100%; border-collapse:collapse; font-size:{body_size};">
                 <thead>
@@ -606,11 +606,11 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False):
                 const dow = parseInt(el.getAttribute('data-dow'));
                 
                 let loadText = '';
-                if (ratio >= 0.85) loadText = '<span style="color:#FF5B6E">■ PEAK</span> — Full crew';
-                else if (ratio >= 0.65) loadText = '<span style="color:#FF9F43">■ HIGH</span> — Priority deploy';
-                else if (ratio >= 0.45) loadText = '<span style="color:#FFD84D">■ MEDIUM</span> — Standard ops';
-                else if (ratio >= 0.25) loadText = '<span style="color:#45E28A">■ LOW</span> — Light staffing';
-                else loadText = '<span style="color:#59B7FF">■ VERY LOW</span> — Opportunistic coverage';
+                if (ratio >= 0.85) loadText = '<span style="color:#FF5B6E">â–  PEAK</span> â€” Full crew';
+                else if (ratio >= 0.65) loadText = '<span style="color:#FF9F43">â–  HIGH</span> â€” Priority deploy';
+                else if (ratio >= 0.45) loadText = '<span style="color:#FFD84D">â–  MEDIUM</span> â€” Standard ops';
+                else if (ratio >= 0.25) loadText = '<span style="color:#45E28A">â–  LOW</span> â€” Light staffing';
+                else loadText = '<span style="color:#59B7FF">â–  VERY LOW</span> â€” Opportunistic coverage';
                 
                 const hrArr = window.dateHourly[dk] || Array(24).fill(0);
                 let bestV = 0, bestS = 0;
@@ -625,11 +625,11 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False):
                 
                 const tt = document.getElementById('dfr-tooltip');
                 tt.innerHTML = `
-                    <div style="color:#00D2FF; margin-bottom:6px; font-size:12px; font-weight:bold; border-bottom:1px solid #252535; padding-bottom:4px;">${{mName}} ${{d}}, ${{y}} · ${{dowNames[dow]}}</div>
-                    <div style="margin-bottom:8px; font-size:13px;">Calls: <span style="color:#fff; font-weight:bold;">${{cnt}}</span>  ·  ${{loadText}}</div>
+                    <div style="color:#00D2FF; margin-bottom:6px; font-size:12px; font-weight:bold; border-bottom:1px solid #252535; padding-bottom:4px;">${{mName}} ${{d}}, ${{y}} Â· ${{dowNames[dow]}}</div>
+                    <div style="margin-bottom:8px; font-size:13px;">Calls: <span style="color:#fff; font-weight:bold;">${{cnt}}</span> Â Â·Â  ${{loadText}}</div>
                     <div style="background:#1a1a26; padding:8px; border-radius:4px;">
                         <div style="color:#7777a0; font-size:9px; letter-spacing:1px; text-transform:uppercase; margin-bottom:4px;">Best ${{currentShift}}hr Shift</div>
-                        <div style="color:#00D2FF; font-size:14px; font-weight:bold; margin-bottom:2px;">${{fmt(bestS)}} – ${{fmt(eHr)}}</div>
+                        <div style="color:#00D2FF; font-size:14px; font-weight:bold; margin-bottom:2px;">${{fmt(bestS)}} â€“ ${{fmt(eHr)}}</div>
                         <div style="color:#aaa; font-size:10px;">Covers <span style="color:#fff;">${{dayPct}}%</span> of daily volume</div>
                     </div>
                 `;
@@ -667,7 +667,7 @@ def _build_cad_charts_html(df_calls):
     try:
         total_calls = len(df_calls)
 
-        # ── Apprehension metric calculations ─────────────────────────────────
+        # â”€â”€ Apprehension metric calculations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         import streamlit as _st
         dfr_rate        = float(_st.session_state.get('dfr_rate', 12)) / 100.0
         pursuit_rate    = 0.18
@@ -694,14 +694,14 @@ def _build_cad_charts_html(df_calls):
             score_color = "#b00020"
 
         rows = [
-            ("Average officer response time",          "8 – 12 min",             "2 – 4 min (DFR first on scene)",    "BRINC field deployments"),
+            ("Average officer response time",          "8 â€“ 12 min",             "2 â€“ 4 min (DFR first on scene)",    "BRINC field deployments"),
             ("Suspect located before officer arrival", "~18% of pursuits",        "~62% of pursuits",                  "Aerial ID + thermal"),
             ("Apprehension rate per pursuit incident", "34%",                     "54%  (+20 pp)",                     "Perimeter intel, real-time relay"),
-            ("Additional arrests per 100 calls",       "—",                       "+20 apprehensions",                 "Net lift on DFR-covered incidents"),
+            ("Additional arrests per 100 calls",       "â€”",                       "+20 apprehensions",                 "Net lift on DFR-covered incidents"),
             ("Thermal imaging (nighttime pursuits)",   "Unavailable",             "100% of flight hours",              "Eliminates blind foot searches"),
-            ("Perimeter containment",                  "4 – 6 officers required", "Drone in < 90 sec",                 "Officers freed for contact"),
-            ("DFR-dispatched pursuit calls / year",    "—",                       f"{dfr_pursuit:,}",                  f"{int(dfr_rate*100)}% DFR × {pursuit_calls:,} pursuit calls"),
-            ("Est. additional arrests / year",         "—",                       f"+ {additional_arr:,} arrests",     "DFR pursuit calls × +20 pp lift"),
+            ("Perimeter containment",                  "4 â€“ 6 officers required", "Drone in < 90 sec",                 "Officers freed for contact"),
+            ("DFR-dispatched pursuit calls / year",    "â€”",                       f"{dfr_pursuit:,}",                  f"{int(dfr_rate*100)}% DFR Ã— {pursuit_calls:,} pursuit calls"),
+            ("Est. additional arrests / year",         "â€”",                       f"+ {additional_arr:,} arrests",     "DFR pursuit calls Ã— +20 pp lift"),
         ]
 
         rows_html = ""
@@ -715,7 +715,7 @@ def _build_cad_charts_html(df_calls):
     <td style="padding:9px 12px; font-size:11px; color:#888; border-bottom:1px solid #e5e7eb; width:26%;">{source}</td>
   </tr>"""
 
-        # ── Top event types ───────────────────────────────────────────────────
+        # â”€â”€ Top event types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         type_labels, type_vals = [], []
         for _c in ['call_type_desc','agencyeventtypecodedesc','eventdesc','calldesc','description','nature','event_desc']:
             if _c in df_calls.columns and df_calls[_c].dropna().nunique() > 2:
@@ -738,9 +738,9 @@ def _build_cad_charts_html(df_calls):
 </p>
 
 <p style="font-size:12px; font-weight:700; color:#333; text-transform:uppercase;
-          letter-spacing:0.6px; margin:0 0 8px;">🎯 Drone Apprehension Impact Value</p>
+          letter-spacing:0.6px; margin:0 0 8px;">ðŸŽ¯ Drone Apprehension Impact Value</p>
 <p style="font-size:12px; color:#666; margin:0 0 12px 0;">
-  How drone deployment improves suspect apprehension — derived from your call volume and DFR
+  How drone deployment improves suspect apprehension â€” derived from your call volume and DFR
   dispatch rate. Baseline figures from national law enforcement benchmarks.
 </p>
 <div style="overflow-x:auto; border-radius:8px; border:1px solid #e5e7eb; margin-bottom:10px;">
@@ -763,7 +763,7 @@ def _build_cad_charts_html(df_calls):
       <td style="padding:10px 12px; font-size:14px; font-weight:700; color:#111; border-bottom:1px solid #d1d5db;">
         Apprehension Value Score
       </td>
-      <td style="padding:10px 12px; color:#888; border-bottom:1px solid #d1d5db; text-align:right;">—</td>
+      <td style="padding:10px 12px; color:#888; border-bottom:1px solid #d1d5db; text-align:right;">â€”</td>
       <td colspan="2" style="padding:10px 12px; font-size:18px; font-weight:800;
           color:{score_color}; border-bottom:1px solid #d1d5db;">
         {score_label} &nbsp;<span style="font-size:12px; font-weight:400; color:#888;">({score}/100 composite)</span>
@@ -773,7 +773,7 @@ def _build_cad_charts_html(df_calls):
 </table>
 </div>
 <p style="font-size:10px; color:#aaa; margin:4px 0 28px 0;">
-  Score weighted: 40% geographic coverage · 35% time saved vs patrol · 25% DFR dispatch rate.
+  Score weighted: 40% geographic coverage Â· 35% time saved vs patrol Â· 25% DFR dispatch rate.
   Arrest estimates are model projections; actual results vary by deployment, terrain, and incident type.
 </p>
 
@@ -808,7 +808,7 @@ def _build_cad_charts_html(df_calls):
 """
     except Exception as e:
         print(f"[BRINC] _build_cad_charts_html failed: {e}\n{traceback.format_exc()}")
-        return "<div style='color:#888;padding:20px;text-align:center;font-size:13px;'>Chart unavailable — data could not be rendered.</div>"
+        return "<div style='color:#888;padding:20px;text-align:center;font-size:13px;'>Chart unavailable â€” data could not be rendered.</div>"
 
 
 
@@ -817,22 +817,22 @@ def _build_apprehension_table(df_calls, text_main, text_muted, card_bg, card_bor
     """Compute and render the Drone Apprehension Impact Value table.
 
     Derived metrics use call volume, DFR dispatch rate, and coverage percentage
-    stored in session state — no static placeholders.
+    stored in session state â€” no static placeholders.
     """
     if df_calls is None or df_calls.empty:
         return
 
-    # ── Pull session values ───────────────────────────────────────────────────
+    # â”€â”€ Pull session values â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     total_calls      = int(st.session_state.get('total_original_calls', len(df_calls)) or len(df_calls))
     dfr_rate         = float(st.session_state.get('dfr_rate', 12)) / 100.0   # fraction dispatched by drone
     calls_per_year   = _get_annualized_calls(total_calls)
 
     # Pursuit-eligible calls: incidents where a suspect is potentially fleeing
-    # — conservatively 18% of all calls (PERF national average for patrol pursuits)
+    # â€” conservatively 18% of all calls (PERF national average for patrol pursuits)
     pursuit_rate     = 0.18
     pursuit_calls    = round(calls_per_year * pursuit_rate)
 
-    # Apprehension lift: drone raises locate-before-arrival from 18 % → 62 %
+    # Apprehension lift: drone raises locate-before-arrival from 18 % â†’ 62 %
     # (+20 pp net apprehension rate lift per BRINC field deployments)
     baseline_arr_rate  = 0.34   # officer-only apprehension rate per pursuit incident
     drone_arr_rate     = 0.54   # with drone aerial ID + perimeter intel
@@ -842,7 +842,7 @@ def _build_apprehension_table(df_calls, text_main, text_muted, card_bg, card_bor
     dfr_pursuit_calls   = round(pursuit_calls * dfr_rate)
     additional_arrests  = round(dfr_pursuit_calls * (drone_arr_rate - baseline_arr_rate))
 
-    # Apprehension Value Score: composite of speed + coverage + thermal (0–100)
+    # Apprehension Value Score: composite of speed + coverage + thermal (0â€“100)
     coverage_pct  = float(st.session_state.get('calls_covered_perc', 70) or 70)
     time_saved    = float(st.session_state.get('avg_time_saved_min', 6) or 6)
     # Weighted: 40% coverage, 35% time saved (normalized to 10-min max), 25% DFR rate
@@ -853,16 +853,16 @@ def _build_apprehension_table(df_calls, text_main, text_muted, card_bg, card_bor
     )
     score = max(0, min(score, 100))
     if score >= 75:
-        score_label = "🟢 HIGH"
+        score_label = "ðŸŸ¢ HIGH"
         score_color = "#00D2FF"
     elif score >= 50:
-        score_label = "🟡 MODERATE"
+        score_label = "ðŸŸ¡ MODERATE"
         score_color = "#EF9F27"
     else:
-        score_label = "🔴 LOW"
+        score_label = "ðŸ”´ LOW"
         score_color = "#E24B4A"
 
-    # ── HTML table ────────────────────────────────────────────────────────────
+    # â”€â”€ HTML table â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     row_style_a = f"background:{card_bg};"
     row_style_b = f"background:rgba(0,210,255,0.04);"
     th_style    = (f"padding:10px 14px; text-align:left; font-size:11px; font-weight:700; "
@@ -879,7 +879,7 @@ def _build_apprehension_table(df_calls, text_main, text_muted, card_bg, card_bor
 
     rows = [
         ("row_a", "Average officer response time",
-         "8 – 12 min", "2 – 4 min (DFR first on scene)",
+         "8 â€“ 12 min", "2 â€“ 4 min (DFR first on scene)",
          "BRINC field deployments; avg aerial ETA"),
         ("row_b", "Suspect located before officer arrival",
          "~18% of pursuits", "~62% of pursuits",
@@ -888,28 +888,28 @@ def _build_apprehension_table(df_calls, text_main, text_muted, card_bg, card_bor
          f"{int(baseline_arr_rate*100)}%", f"{int(drone_arr_rate*100)}%  (+{int(arr_lift_pp)} pp)",
          "Aerial ID, perimeter intel, real-time relay"),
         ("row_b", "Additional arrests per 100 pursuit calls",
-         "—", f"+{int(arr_lift_pp)} apprehensions",
+         "â€”", f"+{int(arr_lift_pp)} apprehensions",
          "Net lift applied to DFR-covered incidents"),
         ("row_a", "Thermal imaging (nighttime pursuits)",
          "Unavailable", "100% of flight hours",
          "Eliminates blind foot searches in darkness"),
         ("row_b", "Perimeter containment established",
-         "4 – 6 officers required", "Drone in < 90 sec",
+         "4 â€“ 6 officers required", "Drone in < 90 sec",
          "Officers freed for contact; drone holds perimeter"),
         ("row_a", "DFR-dispatched pursuit calls / year",
-         "—", f"{dfr_pursuit_calls:,}",
-         f"{int(dfr_rate*100)}% DFR rate × {pursuit_calls:,} pursuit-eligible calls"),
+         "â€”", f"{dfr_pursuit_calls:,}",
+         f"{int(dfr_rate*100)}% DFR rate Ã— {pursuit_calls:,} pursuit-eligible calls"),
         ("row_b", "Est. additional arrests / year",
-         "—", f"+ {additional_arrests:,} arrests",
-         "DFR pursuit calls × +20 pp apprehension lift"),
+         "â€”", f"+ {additional_arrests:,} arrests",
+         "DFR pursuit calls Ã— +20 pp apprehension lift"),
     ]
 
     table_html = f"""
 <div style="margin-top:4px; margin-bottom:20px;">
   <p style="font-size:13px; font-weight:700; color:{text_main}; text-transform:uppercase;
-            letter-spacing:0.6px; margin:0 0 10px 0;">🎯 Drone Apprehension Impact Value</p>
+            letter-spacing:0.6px; margin:0 0 10px 0;">ðŸŽ¯ Drone Apprehension Impact Value</p>
   <p style="font-size:12px; color:{text_muted}; margin:0 0 14px 0;">
-    How drone deployment improves suspect apprehension — derived from your call volume,
+    How drone deployment improves suspect apprehension â€” derived from your call volume,
     DFR dispatch rate, and coverage. Baseline figures from national law enforcement benchmarks.
   </p>
   <div style="overflow-x:auto; border-radius:8px; border:1px solid {card_border};">
@@ -940,7 +940,7 @@ def _build_apprehension_table(df_calls, text_main, text_muted, card_bg, card_bor
         <td style="{td_l_style} font-weight:700; color:{text_main}; font-size:14px;">
           Apprehension Value Score
         </td>
-        <td style="{td_b_style}">—</td>
+        <td style="{td_b_style}">â€”</td>
         <td colspan="2" style="padding:10px 14px; font-size:16px; font-weight:800;
             color:{score_color}; border-bottom:1px solid {card_border};">
           {score_label} &nbsp;<span style="font-size:12px; font-weight:400;
@@ -951,8 +951,8 @@ def _build_apprehension_table(df_calls, text_main, text_muted, card_bg, card_bor
   </table>
   </div>
   <p style="font-size:10px; color:{text_muted}; margin:6px 0 0 0;">
-    Score weighted: 40% geographic coverage · 35% time saved vs patrol · 25% DFR dispatch rate.
-    Arrest estimates are model projections — actual results depend on deployment, terrain, and incident type.
+    Score weighted: 40% geographic coverage Â· 35% time saved vs patrol Â· 25% DFR dispatch rate.
+    Arrest estimates are model projections â€” actual results depend on deployment, terrain, and incident type.
   </p>
 </div>
 """
@@ -974,7 +974,7 @@ def _build_apprehension_table(df_calls, text_main, text_muted, card_bg, card_bor
 {table_html}
 </body>
 </html>"""
-    # Height: header ~60px + description ~40px + 9 rows × 44px + score row 54px + footnote 30px
+    # Height: header ~60px + description ~40px + 9 rows Ã— 44px + score row 54px + footnote 30px
     _table_height = 60 + 40 + (len(rows) * 44) + 54 + 44 + 30
     import streamlit.components.v1 as _comp
     _comp.html(full_html, height=_table_height, scrolling=False)
@@ -998,10 +998,10 @@ def _build_cad_charts(df_calls, text_main, text_muted, card_bg, card_border, acc
     )
     grid_color = card_border
 
-    # ── Apprehension Impact Value table (replaces priority donut + density curve) ──
+    # â”€â”€ Apprehension Impact Value table (replaces priority donut + density curve) â”€â”€
     _build_apprehension_table(df_calls, text_main, text_muted, card_bg, card_border, accent_color)
 
-    # ── Top event types (horizontal bar) ──────────────────────────────────────
+    # â”€â”€ Top event types (horizontal bar) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     desc_col = None
     for _c in ['call_type_desc','agencyeventtypecodedesc','eventdesc','calldesc','description','nature','event_desc']:
         if _c in df_calls.columns and df_calls[_c].dropna().nunique() > 2:
@@ -1072,8 +1072,8 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
     if not active_drones:
         return ""
     # Per-type daily airtime budgets derived from CONFIG duty cycles:
-    #   Guardian: 60 min flight + 3 min swap → (24*60/63)*60 = 1371.4 min = 22.86 hr
-    #   Responder: 30 min flight + 30 min recharge → 720 min = 12.0 hr
+    #   Guardian: 60 min flight + 3 min swap â†’ (24*60/63)*60 = 1371.4 min = 22.86 hr
+    #   Responder: 30 min flight + 30 min recharge â†’ 720 min = 12.0 hr
     _GUARDIAN_DAILY_MINS  = CONFIG["GUARDIAN_DAILY_FLIGHT_MIN"]   # ~1371.4
     _GUARDIAN_DAILY_HOURS = CONFIG["GUARDIAN_PATROL_HOURS"]        # ~22.86
     _RESPONDER_DAILY_MINS  = CONFIG["RESPONDER_DAILY_FLIGHT_MIN"]  # 720
@@ -1099,7 +1099,7 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
         d_savings   = d["annual_savings"]
         d_flights   = d["marginal_flights"]
         d_shared    = d["shared_flights"]
-        # Resolved/day = total station flights (exclusive + shared) × deflection rate.
+        # Resolved/day = total station flights (exclusive + shared) Ã— deflection rate.
         d_deflected  = (d_flights + d_shared) * deflection_rate
         d_time      = d["avg_time_min"]
         d_faa       = d["faa_ceiling"]
@@ -1123,8 +1123,8 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
             _g_cyc = _g_fl + _g_ch
             _cycles_per_day = (24 * 60) / _g_cyc
             uptime_tooltip = (
-                f"{_g_fl}min flight + {_g_ch}min charge = {_g_cyc}min cycle · "
-                f"{_cycles_per_day:.1f} cycles/day · "
+                f"{_g_fl}min flight + {_g_ch}min charge = {_g_cyc}min cycle Â· "
+                f"{_cycles_per_day:.1f} cycles/day Â· "
                 f"{max_patrol_hours:.2f}hr airtime"
             )
         else:
@@ -1143,7 +1143,7 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
         d_zone_flights_day = float(d.get('zone_flights', d_flights + d_shared) or 0)
         d_zone_flights_annual = float(d.get("zone_flights_annual", d_zone_flights_day * 365.0) or 0)
         # Cap thermal/K9 base to physically serviceable flights (max_flights_cap * 365)
-        # zone_flights_annual is raw DEMANDED flights — thermal/K9 assists can only
+        # zone_flights_annual is raw DEMANDED flights â€” thermal/K9 assists can only
         # happen on flights actually flown within the 10-min scene-floor capacity.
         _serviceable_annual = float(d.get("max_flights_cap", 0) or 0) * 365.0
         _flight_base = min(d_zone_flights_annual, _serviceable_annual) if _serviceable_annual > 0 else d_zone_flights_annual
@@ -1178,7 +1178,7 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
         d_conc_annual  = d.get('concurrent_annual', 0)
         d_best         = d.get('best_case_annual', d_savings)
         d_best_be      = d.get('best_be_text', d_be)
-        d_display_annual = float(d_base_annual or 0)
+        d_display_annual = float(d.get('annual_savings', d_best) or 0)
         d_display_monthly = d_display_annual / 12.0
         d_display_be = f"{d_cost/d_display_monthly:.1f} MO" if d_display_monthly > 0 else "N/A"
         d_serviceable_day = min(d_assigned_flights_day, d_max_cap) if d_max_cap > 0 else d_assigned_flights_day
@@ -1246,11 +1246,11 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
             _excl_str = "exclusive zone coverage"
             _conc_str = ""
 
-        # ── DEFICIT FOOTER (compact strip at card bottom) ─────────────────────────────
+        # â”€â”€ DEFICIT FOOTER (compact strip at card bottom) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _sc_fmt = f"${d_extra_same_capex:,}" if d_capacity_limited else ""
         _ac_fmt = f"${d_extra_alt_capex:,}" if d_capacity_limited else ""
 
-        # ── Pre-build financial HTML blocks (conditionally included) ─────────
+        # â”€â”€ Pre-build financial HTML blocks (conditionally included) â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _specialty_total = d_thermal + d_k9 + d_fire
 
         # Simple card financial blocks
@@ -1289,7 +1289,7 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
 
         _sim_fin_specialty = (
             f'<div style="background:rgba(251,191,36,0.06);border:1px solid rgba(251,191,36,0.18);border-radius:5px;padding:5px 10px;display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">'
-            f'<span style="font-size:0.60rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.3px;">🔥🐕🚒 Specialty Value<span class="tip" data-tip="Combined value from thermal imaging assists (12% of flights), K-9 replacement (3% of flights), and fire scene support (5% of flights). Separate from Annual Capacity Value.">?</span></span>'
+            f'<span style="font-size:0.60rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.3px;">ðŸ”¥ðŸ•ðŸš’ Specialty Value<span class="tip" data-tip="Combined value from thermal imaging assists (12% of flights), K-9 replacement (3% of flights), and fire scene support (5% of flights). Separate from Annual Capacity Value.">?</span></span>'
             f'<span style="font-size:0.85rem;font-weight:800;color:#fbbf24;">${_specialty_total:,.0f}/yr</span>'
             f'</div>'
         ) if show_financials else ''
@@ -1347,7 +1347,7 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
             f'      <div style="color:{text_muted}; font-size:0.63rem;">concurrent<span class="tip" data-tip="Savings from overlap coverage attributed to this unit when shared demand is reconciled across active drones.">?</span></div>'
             f'    </div>'
             f'  </div>'
-            f'  <div style="font-size:0.65rem; color:{text_muted}; opacity:0.8; border-top:1px dashed rgba(255,255,255,0.1); padding-top:4px; text-align:center;">{util_pct} utilization{"  ·  ⚠️ maxed capacity" if d_capacity_limited else ""} · ROI {d_best_be}</div>'
+            f'  <div style="font-size:0.65rem; color:{text_muted}; opacity:0.8; border-top:1px dashed rgba(255,255,255,0.1); padding-top:4px; text-align:center;">{util_pct} utilization{"  Â·  âš ï¸ maxed capacity" if d_capacity_limited else ""} Â· ROI {d_best_be}</div>'
             f'</div>'
         ) if show_financials else ''
 
@@ -1360,31 +1360,31 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
             f'</div>'
         ) if show_financials else ''
 
-        # ── SIMPLE CARD (toggled from Display Options) ───────────────────────
+        # â”€â”€ SIMPLE CARD (toggled from Display Options) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if simple:
             _pin_badge = (
-                f'<span style="font-size:0.55rem;background:rgba(255,215,0,0.15);color:#FFD700;border:1px solid rgba(255,215,0,0.4);border-radius:3px;padding:1px 5px;margin-left:4px;">🔒 Guardian</span>'
+                f'<span style="font-size:0.55rem;background:rgba(255,215,0,0.15);color:#FFD700;border:1px solid rgba(255,215,0,0.4);border-radius:3px;padding:1px 5px;margin-left:4px;">ðŸ”’ Guardian</span>'
                 if (d.get("pinned") and d_type == "GUARDIAN") else
-                f'<span style="font-size:0.55rem;background:rgba(0,210,255,0.15);color:#00D2FF;border:1px solid rgba(0,210,255,0.4);border-radius:3px;padding:1px 5px;margin-left:4px;">🔒 Responder</span>'
+                f'<span style="font-size:0.55rem;background:rgba(0,210,255,0.15);color:#00D2FF;border:1px solid rgba(0,210,255,0.4);border-radius:3px;padding:1px 5px;margin-left:4px;">ðŸ”’ Responder</span>'
                 if (d.get("pinned") and d_type == "RESPONDER") else ""
             )
             _cap_strip = (
                 f'<div style="display:flex;align-items:center;gap:5px;margin-top:6px;padding-top:5px;border-top:1px solid rgba(220,53,69,0.3);">'
-                f'<span style="font-size:0.60rem;color:#dc3545;font-weight:700;">⚠️ Maxed capacity</span>'
-                f'<span style="font-size:0.59rem;color:{text_muted};">· {d_unserv_day:.0f} calls/day unserviceable</span></div>'
+                f'<span style="font-size:0.60rem;color:#dc3545;font-weight:700;">âš ï¸ Maxed capacity</span>'
+                f'<span style="font-size:0.59rem;color:{text_muted};">Â· {d_unserv_day:.0f} calls/day unserviceable</span></div>'
                 if d_capacity_limited else
                 f'<div style="display:flex;align-items:center;gap:5px;margin-top:6px;padding-top:5px;border-top:1px solid rgba(34,197,94,0.2);">'
-                f'<span style="font-size:0.60rem;color:#2ecc71;font-weight:700;">✓ Within capacity</span>'
-                f'<span style="font-size:0.59rem;color:{text_muted};">· {d_on_scene:.1f} min on-scene</span></div>'
+                f'<span style="font-size:0.60rem;color:#2ecc71;font-weight:700;">âœ“ Within capacity</span>'
+                f'<span style="font-size:0.59rem;color:{text_muted};">Â· {d_on_scene:.1f} min on-scene</span></div>'
             )
             cards_html.append(f'''
 <div class="unit-card" style="background:{card_bg};border:1px solid {"#dc3545" if d_capacity_limited else card_border};border-top:3px solid {d_color};border-radius:8px;padding:10px 12px;box-sizing:border-box;">
   <div style="display:flex;align-items:baseline;justify-content:space-between;gap:4px;margin-bottom:2px;">
-    <span style="font-weight:700;font-size:0.78rem;color:{card_title};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">{"🔒 " if d.get("pinned") else ""}{d["name"]}</span>
-    <span style="font-size:0.58rem;color:#666;text-transform:uppercase;white-space:nowrap;flex-shrink:0;">{d_type} · #{d_step}</span><span style="font-size:0.56rem;color:{status_color};background:{status_bg};border:1px solid {status_border};border-radius:999px;padding:2px 7px;font-weight:700;white-space:nowrap;">{status_text}</span>
+    <span style="font-weight:700;font-size:0.78rem;color:{card_title};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">{"ðŸ”’ " if d.get("pinned") else ""}{d["name"]}</span>
+    <span style="font-size:0.58rem;color:#666;text-transform:uppercase;white-space:nowrap;flex-shrink:0;">{d_type} Â· #{d_step}</span><span style="font-size:0.56rem;color:{status_color};background:{status_bg};border:1px solid {status_border};border-radius:999px;padding:2px 7px;font-weight:700;white-space:nowrap;">{status_text}</span>
   </div>
   <div style="font-size:0.62rem;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-    <a href="{gmaps_url}" target="_blank" style="color:{accent_color};text-decoration:none;opacity:0.85;">📍 {d_address} ↗</a>
+    <a href="{gmaps_url}" target="_blank" style="color:{accent_color};text-decoration:none;opacity:0.85;">ðŸ“ {d_address} â†—</a>
   </div>
   {_sim_fin_hero}
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:6px;">
@@ -1429,11 +1429,11 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
   <!-- Header: single compact row -->
   <div style="margin-bottom:5px; flex-shrink:0;">
     <div style="display:flex; align-items:baseline; gap:5px; overflow:hidden;">
-      <span style="font-weight:700; font-size:0.78rem; color:{card_title}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0;">{"🔒 " if d.get("pinned") else ""}{d["name"]}</span>
-      <span style="font-size:0.58rem; color:#666; text-transform:uppercase; letter-spacing:0.3px; white-space:nowrap; flex-shrink:0;">{d_type} · #{d_step}</span><span style="font-size:0.56rem;color:{status_color};background:{status_bg};border:1px solid {status_border};border-radius:999px;padding:2px 7px;font-weight:700;white-space:nowrap;">{status_text}</span>
+      <span style="font-weight:700; font-size:0.78rem; color:{card_title}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0;">{"ðŸ”’ " if d.get("pinned") else ""}{d["name"]}</span>
+      <span style="font-size:0.58rem; color:#666; text-transform:uppercase; letter-spacing:0.3px; white-space:nowrap; flex-shrink:0;">{d_type} Â· #{d_step}</span><span style="font-size:0.56rem;color:{status_color};background:{status_bg};border:1px solid {status_border};border-radius:999px;padding:2px 7px;font-weight:700;white-space:nowrap;">{status_text}</span>
     </div>
     <div style="font-size:0.65rem; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-      <a href="{gmaps_url}" target="_blank" style="color:{accent_color}; text-decoration:none; font-weight:500; opacity:0.85;">📍 {d_address} ↗</a>
+      <a href="{gmaps_url}" target="_blank" style="color:{accent_color}; text-decoration:none; font-weight:500; opacity:0.85;">ðŸ“ {d_address} â†—</a>
     </div>
   </div>
   {_full_fin_annual_cap}
@@ -1478,8 +1478,8 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
   {_full_fin_capex_roi}
 
   { (f'<div style="border-top:1px solid rgba(220,53,69,0.35);margin-top:4px;padding-top:5px;">'  
-      f'<div style="font-size:0.62rem;font-weight:800;color:#dc3545;margin-bottom:3px;">⚠️ MAXED CAPACITY<span class="tip" data-tip="This unit''s attributed demand exceeds its modeled physical capacity under the current mission profile and on-scene time assumption.">?</span> · {min(d_on_scene, 10.0):.1f} min on-scene floor<span class="tip" data-tip="Capacity is modeled with at least this many minutes spent on scene per dispatch before the drone can clear and recharge.">?</span></div>'  
-       f'<div style="font-size:0.59rem;color:{text_muted};margin-bottom:4px;">{d_unserv_day:.0f} calls/day unserviceable · {d_unserv_yr:,.0f}/yr</div>'  
+      f'<div style="font-size:0.62rem;font-weight:800;color:#dc3545;margin-bottom:3px;">âš ï¸ MAXED CAPACITY<span class="tip" data-tip="This unit''s attributed demand exceeds its modeled physical capacity under the current mission profile and on-scene time assumption.">?</span> Â· {min(d_on_scene, 10.0):.1f} min on-scene floor<span class="tip" data-tip="Capacity is modeled with at least this many minutes spent on scene per dispatch before the drone can clear and recharge.">?</span></div>'  
+       f'<div style="font-size:0.59rem;color:{text_muted};margin-bottom:4px;">{d_unserv_day:.0f} calls/day unserviceable Â· {d_unserv_yr:,.0f}/yr</div>'  
        f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px;margin-bottom:4px;">'  
        f'<div style="background:rgba(220,53,69,0.08);border:1px solid rgba(220,53,69,0.2);border-radius:4px;padding:3px 6px;font-size:0.59rem;">'  
       f'<div style="color:{text_muted};">Total Flights Possible<span class="tip" data-tip="Maximum annual dispatches this unit can physically fly under the modeled duty cycle, recharge time, and on-scene floor.">?</span></div>'  
@@ -1498,13 +1498,13 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
        f'</div></div>')  
     if d_capacity_limited else  
     (f'<div style="border-top:1px solid rgba(34,197,94,0.2);margin-top:4px;padding-top:4px;display:flex;align-items:center;gap:5px;">'  
-     f'<span style="font-size:0.60rem;color:#2ecc71;font-weight:700;">✓ WITHIN CAPACITY<span class="tip" data-tip="This unit''s attributed annual demand stays within its modeled physical capacity.">?</span></span>'  
-     f'<span style="font-size:0.60rem;color:{scene_color};font-weight:600;">· {d_on_scene:.1f} min on-scene<span class="tip" data-tip="Assumed average on-scene time per dispatch used in the capacity model for this unit.">?</span></span>'  
+     f'<span style="font-size:0.60rem;color:#2ecc71;font-weight:700;">âœ“ WITHIN CAPACITY<span class="tip" data-tip="This unit''s attributed annual demand stays within its modeled physical capacity.">?</span></span>'  
+     f'<span style="font-size:0.60rem;color:{scene_color};font-weight:600;">Â· {d_on_scene:.1f} min on-scene<span class="tip" data-tip="Assumed average on-scene time per dispatch used in the capacity model for this unit.">?</span></span>'  
      f'</div>') }
   <!-- Inline lock status indicators -->
   <div style="display:grid; grid-template-columns:1fr 1fr; gap:3px; margin-top:auto; padding-top:4px; flex-shrink:0;">
-    <div style="{"background:rgba(255,215,0,0.15);border:1px solid rgba(255,215,0,0.5);" if (d.get("pinned") and d_type=="GUARDIAN") else "background:rgba(255,255,255,0.03);border:1px dashed rgba(255,215,0,0.18);"} border-radius:4px; padding:3px 6px; font-size:0.57rem; color:{"#FFD700" if (d.get("pinned") and d_type=="GUARDIAN") else "rgba(255,215,0,0.35)"}; text-align:center; line-height:1.5; white-space:nowrap;">{"🔒 Guardian" if (d.get("pinned") and d_type=="GUARDIAN") else "🦅 lock guard"}</div>
-    <div style="{"background:rgba(0,210,255,0.15);border:1px solid rgba(0,210,255,0.5);" if (d.get("pinned") and d_type=="RESPONDER") else "background:rgba(255,255,255,0.03);border:1px dashed rgba(0,210,255,0.18);"} border-radius:4px; padding:3px 6px; font-size:0.57rem; color:{"#00D2FF" if (d.get("pinned") and d_type=="RESPONDER") else "rgba(0,210,255,0.35)"}; text-align:center; line-height:1.5; white-space:nowrap;">{"🔒 Responder" if (d.get("pinned") and d_type=="RESPONDER") else "🚁 lock resp"}</div>
+    <div style="{"background:rgba(255,215,0,0.15);border:1px solid rgba(255,215,0,0.5);" if (d.get("pinned") and d_type=="GUARDIAN") else "background:rgba(255,255,255,0.03);border:1px dashed rgba(255,215,0,0.18);"} border-radius:4px; padding:3px 6px; font-size:0.57rem; color:{"#FFD700" if (d.get("pinned") and d_type=="GUARDIAN") else "rgba(255,215,0,0.35)"}; text-align:center; line-height:1.5; white-space:nowrap;">{"ðŸ”’ Guardian" if (d.get("pinned") and d_type=="GUARDIAN") else "ðŸ¦… lock guard"}</div>
+    <div style="{"background:rgba(0,210,255,0.15);border:1px solid rgba(0,210,255,0.5);" if (d.get("pinned") and d_type=="RESPONDER") else "background:rgba(255,255,255,0.03);border:1px dashed rgba(0,210,255,0.18);"} border-radius:4px; padding:3px 6px; font-size:0.57rem; color:{"#00D2FF" if (d.get("pinned") and d_type=="RESPONDER") else "rgba(0,210,255,0.35)"}; text-align:center; line-height:1.5; white-space:nowrap;">{"ðŸ”’ Responder" if (d.get("pinned") and d_type=="RESPONDER") else "ðŸš lock resp"}</div>
   </div>
 </div>''')
 
@@ -1622,7 +1622,7 @@ def generate_community_impact_dashboard_html(
     """
     import json as _json
 
-    # ── Derived metrics ──────────────────────────────────────────────────────
+    # â”€â”€ Derived metrics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     daily_flights   = max(0.0, float(daily_dfr_responses or 0))
     annual_flights  = daily_flights * 365
 
@@ -1648,8 +1648,8 @@ def generate_community_impact_dashboard_html(
     _guard_drones = [d for d in active_drones if d.get('type') == 'GUARDIAN']
     resp_drone_min  = (sum(d['avg_time_min'] for d in _resp_drones)  / len(_resp_drones))  if _resp_drones  else None
     guard_drone_min = (sum(d['avg_time_min'] for d in _guard_drones) / len(_guard_drones)) if _guard_drones else None
-    # Ground time uses the corrected formula: avg_dist × 1.4 / ground_speed
-    # avg_dist = avg_time_min × drone_speed / 60  →  ground_time = avg_time_min × drone_speed × 1.4 / ground_speed
+    # Ground time uses the corrected formula: avg_dist Ã— 1.4 / ground_speed
+    # avg_dist = avg_time_min Ã— drone_speed / 60  â†’  ground_time = avg_time_min Ã— drone_speed Ã— 1.4 / ground_speed
     resp_ground_min  = (resp_drone_min  * _RESP_SPEED  * 1.4 / _GROUND_SPEED) if resp_drone_min  is not None else None
     guard_ground_min = (guard_drone_min * _GUARD_SPEED * 1.4 / _GROUND_SPEED) if guard_drone_min is not None else None
     # Reference ground time for the chart = best available single ground estimate
@@ -1667,7 +1667,7 @@ def generate_community_impact_dashboard_html(
             f'<div class="rt-bar-fill" style="height:{_resp_bar_h:.0f}%;background:linear-gradient(180deg,var(--accent-blue),#3b82f6);"></div>'
             '</div>'
             '<div class="rt-bar-label">&#x1F681; Responder '
-            '<span class="tip-cid" data-tip="Avg flight time for Responder drones (45 mph airspeed, 2-mile zone). Direct line-of-sight flight — no traffic, no turns.">?</span></div>'
+            '<span class="tip-cid" data-tip="Avg flight time for Responder drones (45 mph airspeed, 2-mile zone). Direct line-of-sight flight â€” no traffic, no turns.">?</span></div>'
             f'<div class="rt-bar-value" style="color:var(--accent-blue);">{resp_drone_min:.1f} min</div>'
             '</div>'
         )
@@ -1745,7 +1745,7 @@ def generate_community_impact_dashboard_html(
             pass
 
     if not call_type_data:
-        # Reasonable DFR-program defaults — use a floor of 500 so bars are always visible
+        # Reasonable DFR-program defaults â€” use a floor of 500 so bars are always visible
         _ct_base = max(int(total_annual_dfr), 500)
         call_type_data = {
             "Shots Fired / Weapon": int(_ct_base * 0.12),
@@ -1772,27 +1772,27 @@ def generate_community_impact_dashboard_html(
 
     # Facility type counts for the Protected Facilities section
     _fac_icon_map = {
-        "Police": "🚔", "Fire": "🚒", "EMS": "🚑", "School": "🏫",
-        "Hospital": "🏥", "University": "🎓", "Transit": "🚌",
-        "Community": "🏛️", "Courthouse": "⚖️", "Social Services": "🤝",
-        "Government": "🏛️", "Library": "📚",
-        "Power Station": "⚡", "Water Treatment": "💧",
+        "Police": "ðŸš”", "Fire": "ðŸš’", "EMS": "ðŸš‘", "School": "ðŸ«",
+        "Hospital": "ðŸ¥", "University": "ðŸŽ“", "Transit": "ðŸšŒ",
+        "Community": "ðŸ›ï¸", "Courthouse": "âš–ï¸", "Social Services": "ðŸ¤",
+        "Government": "ðŸ›ï¸", "Library": "ðŸ“š",
+        "Power Station": "âš¡", "Water Treatment": "ðŸ’§",
     }
     _fac_src_map = {
-        "Police":          "DHS HIFLD Law Enforcement Locations · OpenStreetMap (amenity=police, ODbL)",
-        "Fire":            "DHS HIFLD Fire Stations (public domain) · OpenStreetMap (amenity=fire_station)",
-        "EMS":             "OpenStreetMap (amenity=ambulance_station) · NEMSIS National EMS Database (nemsis.org)",
-        "School":          "OpenStreetMap (amenity=school) · NCES Common Core of Data (nces.ed.gov)",
-        "Hospital":        "OpenStreetMap (amenity=hospital) · CMS Hospital Compare (cms.gov)",
-        "University":      "OpenStreetMap (amenity=university/college) · IPEDS (nces.ed.gov/ipeds)",
-        "Transit":         "OpenStreetMap (amenity=bus_station · railway=station) · NTD (transit.dot.gov)",
-        "Community":       "OpenStreetMap (amenity=community_centre) · IMLS Public Libraries Survey",
-        "Courthouse":      "OpenStreetMap (amenity=courthouse) · US Courts PACER (uscourts.gov)",
-        "Social Services": "OpenStreetMap (amenity=social_facility) · HUD Location Affordability Index",
-        "Government":      "OpenStreetMap (building=government) · Census TIGER/Line (census.gov)",
-        "Library":         "OpenStreetMap (amenity=library) · IMLS Public Libraries Survey (imls.gov)",
-        "Power Station":   "OpenStreetMap (power=station) · US Energy Information Administration (eia.gov)",
-        "Water Treatment": "OpenStreetMap (man_made=water_treatment) · EPA Enviromapper · US Water Infrastructure Database",
+        "Police":          "DHS HIFLD Law Enforcement Locations Â· OpenStreetMap (amenity=police, ODbL)",
+        "Fire":            "DHS HIFLD Fire Stations (public domain) Â· OpenStreetMap (amenity=fire_station)",
+        "EMS":             "OpenStreetMap (amenity=ambulance_station) Â· NEMSIS National EMS Database (nemsis.org)",
+        "School":          "OpenStreetMap (amenity=school) Â· NCES Common Core of Data (nces.ed.gov)",
+        "Hospital":        "OpenStreetMap (amenity=hospital) Â· CMS Hospital Compare (cms.gov)",
+        "University":      "OpenStreetMap (amenity=university/college) Â· IPEDS (nces.ed.gov/ipeds)",
+        "Transit":         "OpenStreetMap (amenity=bus_station Â· railway=station) Â· NTD (transit.dot.gov)",
+        "Community":       "OpenStreetMap (amenity=community_centre) Â· IMLS Public Libraries Survey",
+        "Courthouse":      "OpenStreetMap (amenity=courthouse) Â· US Courts PACER (uscourts.gov)",
+        "Social Services": "OpenStreetMap (amenity=social_facility) Â· HUD Location Affordability Index",
+        "Government":      "OpenStreetMap (building=government) Â· Census TIGER/Line (census.gov)",
+        "Library":         "OpenStreetMap (amenity=library) Â· IMLS Public Libraries Survey (imls.gov)",
+        "Power Station":   "OpenStreetMap (power=station) Â· US Energy Information Administration (eia.gov)",
+        "Water Treatment": "OpenStreetMap (man_made=water_treatment) Â· EPA Enviromapper Â· US Water Infrastructure Database",
     }
     _fac_color_map = {
         "Police": "#00D2FF", "Fire": "#ef4444", "EMS": "#f97316",
@@ -1805,7 +1805,7 @@ def generate_community_impact_dashboard_html(
     _fac_cards_html = ""
     if facility_counts:
         for _ft, _fcnt in sorted(facility_counts.items(), key=lambda x: -x[1]):
-            _fi = _fac_icon_map.get(_ft, "🏢")
+            _fi = _fac_icon_map.get(_ft, "ðŸ¢")
             _fc = _fac_color_map.get(_ft, "#888")
             _fs = _fac_src_map.get(_ft, "OpenStreetMap contributors (ODbL)")
             _fac_cards_html += (
@@ -1816,7 +1816,7 @@ def generate_community_impact_dashboard_html(
                 f'<div style="font-size:10px;font-weight:700;color:var(--ink-light);text-transform:uppercase;'
                 f'letter-spacing:0.6px;margin-top:2px;">{_ft}</div>'
                 f'<div style="font-size:9px;color:var(--ink-light);margin-top:4px;font-style:italic;" '
-                f'title="Source: {_fs}">ⓘ {_fs[:38]}{"…" if len(_fs)>38 else ""}</div>'
+                f'title="Source: {_fs}">â“˜ {_fs[:38]}{"â€¦" if len(_fs)>38 else ""}</div>'
                 f'</div>'
             )
     if not _fac_cards_html:
@@ -1828,7 +1828,7 @@ def generate_community_impact_dashboard_html(
     no_facial_recog  = True
     warrant_transit  = True  # camera forward-facing in transit
 
-    # ── Theme CSS variables ──────────────────────────────────────────────────
+    # â”€â”€ Theme CSS variables â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if theme == 'dark':
         _css_vars = """
     --bg-page:      #000000;
@@ -1880,7 +1880,7 @@ def generate_community_impact_dashboard_html(
         _body_bg = '#f8f7f4'
         _body_color = '#1a1a2e'
 
-    # Build HTML ─────────────────────────────────────────────────────────────
+    # Build HTML â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1903,7 +1903,7 @@ def generate_community_impact_dashboard_html(
     padding: 28px 24px 40px;
   }}
 
-  /* ── Page header ── */
+  /* â”€â”€ Page header â”€â”€ */
   .dash-header {{
     display: flex;
     align-items: flex-start;
@@ -1935,7 +1935,7 @@ def generate_community_impact_dashboard_html(
   }}
   .dash-meta strong {{ color: var(--ink); font-weight: 600; }}
 
-  /* ── Section label ── */
+  /* â”€â”€ Section label â”€â”€ */
   .section-label {{
     font-size: 10px;
     font-weight: 700;
@@ -1947,7 +1947,7 @@ def generate_community_impact_dashboard_html(
     border-bottom: 1px solid var(--rule);
   }}
 
-  /* ── Grid layouts ── */
+  /* â”€â”€ Grid layouts â”€â”€ */
   .grid-3 {{ display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; margin-bottom: 20px; }}
   .grid-2 {{ display: grid; grid-template-columns: repeat(2,1fr); gap: 14px; margin-bottom: 20px; }}
   .grid-4 {{ display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 20px; }}
@@ -1956,7 +1956,7 @@ def generate_community_impact_dashboard_html(
     .grid-2 {{ grid-template-columns:1fr; }}
   }}
 
-  /* ── Stat card ── */
+  /* â”€â”€ Stat card â”€â”€ */
   .stat-card {{
     background: var(--bg-card);
     border: 1px solid var(--rule);
@@ -2003,7 +2003,7 @@ def generate_community_impact_dashboard_html(
     margin-top: 6px;
   }}
 
-  /* ── Progress bar ── */
+  /* â”€â”€ Progress bar â”€â”€ */
   .prog-row {{ margin-bottom: 10px; }}
   .prog-meta {{ display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }}
   .prog-label {{ font-size: 12px; color: var(--ink-mid); font-weight: 500; }}
@@ -2021,10 +2021,10 @@ def generate_community_impact_dashboard_html(
   }}
   @keyframes growBar {{ from {{ width:0 }} }}
 
-  /* ── Animated counter ── */
+  /* â”€â”€ Animated counter â”€â”€ */
   .counter {{ display: inline-block; }}
 
-  /* ── Response time comparison ── */
+  /* â”€â”€ Response time comparison â”€â”€ */
   .rt-compare {{
     background: var(--bg-card);
     border: 1px solid var(--rule);
@@ -2064,7 +2064,7 @@ def generate_community_impact_dashboard_html(
     margin-top: 14px;
   }}
 
-  /* ── 4th Amendment panel ── */
+  /* â”€â”€ 4th Amendment panel â”€â”€ */
   .amend-panel {{
     background: var(--bg-card);
     border: 1px solid var(--rule);
@@ -2107,7 +2107,7 @@ def generate_community_impact_dashboard_html(
     line-height: 1.5;
   }}
 
-  /* ── Outcomes counters ── */
+  /* â”€â”€ Outcomes counters â”€â”€ */
   .outcome-card {{
     background: var(--bg-card);
     border: 1px solid var(--rule);
@@ -2129,7 +2129,7 @@ def generate_community_impact_dashboard_html(
   .outcome-label {{ font-size: 11px; color: var(--ink-light); font-weight: 500; margin-top: 5px; text-transform: uppercase; letter-spacing: 0.5px; }}
   .outcome-note {{ font-size: 10px; color: var(--ink-light); margin-top: 4px; font-style: italic; }}
 
-  /* ── ROI meter ── */
+  /* â”€â”€ ROI meter â”€â”€ */
   .roi-panel {{
     background: var(--bg-card);
     border: 1px solid var(--rule);
@@ -2155,7 +2155,7 @@ def generate_community_impact_dashboard_html(
   .roi-line-label {{ color: var(--ink-mid); }}
   .roi-line-val {{ font-family: 'DM Mono', monospace; font-weight: 500; color: var(--ink); }}
 
-  /* ── Call type bars ── */
+  /* â”€â”€ Call type bars â”€â”€ */
   .ct-panel {{
     background: var(--bg-card);
     border: 1px solid var(--rule);
@@ -2165,10 +2165,10 @@ def generate_community_impact_dashboard_html(
     margin-bottom: 20px;
   }}
 
-  /* ── Uptime donut placeholder ── */
+  /* â”€â”€ Uptime donut placeholder â”€â”€ */
   canvas {{ display: block; }}
 
-  /* ── Disclaimer footer ── */
+  /* â”€â”€ Disclaimer footer â”€â”€ */
   .dash-footer {{
     margin-top: 24px;
     padding-top: 14px;
@@ -2179,7 +2179,7 @@ def generate_community_impact_dashboard_html(
   }}
   .dash-footer strong {{ color: var(--ink-mid); }}
 
-  /* ── Pulse dot ── */
+  /* â”€â”€ Pulse dot â”€â”€ */
   @keyframes pulse {{
     0%,100% {{ opacity: 1; transform: scale(1); }}
     50% {{ opacity: 0.5; transform: scale(1.4); }}
@@ -2194,7 +2194,7 @@ def generate_community_impact_dashboard_html(
     vertical-align: middle;
   }}
 
-  /* ── Tooltip badges ── */
+  /* â”€â”€ Tooltip badges â”€â”€ */
   .tip-cid {{
     display: inline-flex;
     align-items: center;
@@ -2241,40 +2241,40 @@ def generate_community_impact_dashboard_html(
 <body>
 <div class="dash-wrap">
 
-<!-- ══════════════════════════════════════════════════════════════════
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
      HEADER
-══════════════════════════════════════════════════════════════════ -->
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
 <div class="dash-header">
   <div>
     <div class="dash-title">Community Impact Dashboard</div>
-    <div class="dash-subtitle">{city}, {state} &nbsp;·&nbsp; DFR Program Transparency &amp; Public Accountability Report</div>
+    <div class="dash-subtitle">{city}, {state} &nbsp;Â·&nbsp; DFR Program Transparency &amp; Public Accountability Report</div>
   </div>
   <div class="dash-meta">
     <strong>{city} Police Department</strong><br>
     Population served: {population:,}<br>
-    Fleet: {actual_k_responder} Responder · {actual_k_guardian} Guardian<br>
+    Fleet: {actual_k_responder} Responder Â· {actual_k_guardian} Guardian<br>
     <span class="live-dot"></span>Simulation data
   </div>
 </div>
 
 
-<!-- ══════════════════════════════════════════════════════════════════
-     SECTION 1 — FLIGHT HOURS & UPTIME
-══════════════════════════════════════════════════════════════════ -->
-<div class="section-label">01 &nbsp;·&nbsp; Flight Hours &amp; Uptime <span class="tip-cid" data-tip="Total daily airtime, annual flight hours, and dispatch frequency for the deployed drone fleet. Based on Guardian and Responder duty cycles.">?</span></div>
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+     SECTION 1 â€” FLIGHT HOURS & UPTIME
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<div class="section-label">01 &nbsp;Â·&nbsp; Flight Hours &amp; Uptime <span class="tip-cid" data-tip="Total daily airtime, annual flight hours, and dispatch frequency for the deployed drone fleet. Based on Guardian and Responder duty cycles.">?</span></div>
 <div class="grid-3">
 
   <div class="stat-card">
     <div class="accent-bar" style="background:var(--accent-blue);"></div>
     <div class="card-label">Daily Airtime (Fleet) <span class="tip-cid" data-tip="Total hours all drones are airborne per day. Guardians run a 60-min flight / 3-min swap cycle (~22.9 hrs/day). Responders run a 30-min flight / 30-min recharge cycle (12.0 hrs/day).">?</span></div>
     <div class="card-value"><span class="counter" data-target="{total_daily_flight_hrs:.1f}">{total_daily_flight_hrs:.1f}</span> hrs</div>
-    <div class="card-sub">{g_count} Guardian × {GUARDIAN_FLIGHT_HOURS_PER_DAY:.1f}h &nbsp;+&nbsp; {r_count} Responder × {CONFIG["RESPONDER_PATROL_HOURS"]:.1f}h</div>
+    <div class="card-sub">{g_count} Guardian Ã— {GUARDIAN_FLIGHT_HOURS_PER_DAY:.1f}h &nbsp;+&nbsp; {r_count} Responder Ã— {CONFIG["RESPONDER_PATROL_HOURS"]:.1f}h</div>
     <span class="card-badge" style="background:var(--accent-blue-lt);color:var(--accent-blue);">Modeled duty cycle</span>
   </div>
 
   <div class="stat-card">
     <div class="accent-bar" style="background:var(--accent-blue);"></div>
-    <div class="card-label">Annual Flight Hours <span class="tip-cid" data-tip="Daily fleet airtime × 365 days. Represents the total drone capacity available across the full year for incident response.">?</span></div>
+    <div class="card-label">Annual Flight Hours <span class="tip-cid" data-tip="Daily fleet airtime Ã— 365 days. Represents the total drone capacity available across the full year for incident response.">?</span></div>
     <div class="card-value"><span class="counter" data-target="{annual_flight_hrs:,.0f}">{annual_flight_hrs:,.0f}</span></div>
     <div class="card-sub">Across full fleet, 365 days</div>
     <span class="card-badge" style="background:var(--accent-blue-lt);color:var(--accent-blue);">Fleet total</span>
@@ -2282,9 +2282,9 @@ def generate_community_impact_dashboard_html(
 
   <div class="stat-card">
     <div class="accent-bar" style="background:var(--accent-blue);"></div>
-    <div class="card-label">DFR Flights / Day <span class="tip-cid" data-tip="Drone-First-Response dispatches per day. Calculated as: calls in coverage zone × DFR dispatch rate. The DFR rate is the fraction of 911 calls where a drone launches before a patrol car.">?</span></div>
+    <div class="card-label">DFR Flights / Day <span class="tip-cid" data-tip="Drone-First-Response dispatches per day. Calculated as: calls in coverage zone Ã— DFR dispatch rate. The DFR rate is the fraction of 911 calls where a drone launches before a patrol car.">?</span></div>
     <div class="card-value"><span class="counter" data-target="{daily_flights:.1f}">{daily_flights:.1f}</span></div>
-    <div class="card-sub">At {int(dfr_dispatch_rate*100)}% dispatch rate · {int(calls_covered_perc)}% call coverage</div>
+    <div class="card-sub">At {int(dfr_dispatch_rate*100)}% dispatch rate Â· {int(calls_covered_perc)}% call coverage</div>
     <span class="card-badge" style="background:var(--accent-blue-lt);color:var(--accent-blue);">{annual_flights:,.0f}/yr projected</span>
   </div>
 
@@ -2293,36 +2293,36 @@ def generate_community_impact_dashboard_html(
 <!-- Uptime progress bars -->
 <div class="stat-card" style="margin-bottom:20px;">
   <div class="accent-bar" style="background:var(--accent-slate);"></div>
-  <div class="card-label" style="margin-bottom:14px;">Guardian Fleet — Daily Uptime Breakdown <span class="tip-cid" data-tip="Shows how each Guardian drone splits its 24 hours between active flying and auto-recharging. The rapid 3-min charge cycle enables near-continuous availability.">?</span></div>
+  <div class="card-label" style="margin-bottom:14px;">Guardian Fleet â€” Daily Uptime Breakdown <span class="tip-cid" data-tip="Shows how each Guardian drone splits its 24 hours between active flying and auto-recharging. The rapid 3-min charge cycle enables near-continuous availability.">?</span></div>
   <div class="prog-row">
     <div class="prog-meta"><span class="prog-label">Airborne (flight) <span class="tip-cid" data-tip="Hours per day each Guardian is actively flying. The 60-min flight / 3-min charge cycle yields ~22.9 hrs of airtime per Guardian per day.">?</span></span><span class="prog-val">{GUARDIAN_FLIGHT_HOURS_PER_DAY:.1f} hrs / 24 hrs</span></div>
     <div class="prog-track"><div class="prog-fill" style="width:{GUARDIAN_FLIGHT_HOURS_PER_DAY/24*100:.1f}%;background:var(--accent-blue);"></div></div>
   </div>
   <div class="prog-row">
-    <div class="prog-meta"><span class="prog-label">Charging / Docked <span class="tip-cid" data-tip="Time spent in the automated recharging dock between sorties. The 3-minute recharge gap between 60-min flights is the only downtime — drone is available for re-dispatch within seconds of landing.">?</span></span><span class="prog-val">{24-GUARDIAN_FLIGHT_HOURS_PER_DAY:.1f} hrs / 24 hrs</span></div>
+    <div class="prog-meta"><span class="prog-label">Charging / Docked <span class="tip-cid" data-tip="Time spent in the automated recharging dock between sorties. The 3-minute recharge gap between 60-min flights is the only downtime â€” drone is available for re-dispatch within seconds of landing.">?</span></span><span class="prog-val">{24-GUARDIAN_FLIGHT_HOURS_PER_DAY:.1f} hrs / 24 hrs</span></div>
     <div class="prog-track"><div class="prog-fill" style="width:{(24-GUARDIAN_FLIGHT_HOURS_PER_DAY)/24*100:.1f}%;background:var(--rule);"></div></div>
   </div>
-  <div class="card-sub" style="margin-top:6px;">Guardian duty cycle: {CONFIG['GUARDIAN_FLIGHT_MIN']} min flight → {CONFIG['GUARDIAN_CHARGE_MIN']} min battery swap → repeat</div>
+  <div class="card-sub" style="margin-top:6px;">Guardian duty cycle: {CONFIG['GUARDIAN_FLIGHT_MIN']} min flight â†’ {CONFIG['GUARDIAN_CHARGE_MIN']} min battery swap â†’ repeat</div>
 </div>
 
 
-<!-- ══════════════════════════════════════════════════════════════════
-     SECTION 2 — RESPONSE TIME VS GROUND UNITS
-══════════════════════════════════════════════════════════════════ -->
-<div class="section-label">02 &nbsp;·&nbsp; Response Time vs. Ground Units <span class="tip-cid" data-tip="Compares estimated drone arrival time to typical ground unit response for incidents within the coverage zone. Drone speed, direct flight path, and instant launch give a systematic time advantage.">?</span></div>
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+     SECTION 2 â€” RESPONSE TIME VS GROUND UNITS
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<div class="section-label">02 &nbsp;Â·&nbsp; Response Time vs. Ground Units <span class="tip-cid" data-tip="Compares estimated drone arrival time to typical ground unit response for incidents within the coverage zone. Drone speed, direct flight path, and instant launch give a systematic time advantage.">?</span></div>
 <div class="rt-compare">
-  <div class="card-label" style="margin-bottom:0;">Estimated Average Response to In-Range Incidents <span class="tip-cid" data-tip="Average distance from each station to incidents in its zone ÷ drone airspeed = flight time. Ground unit uses the same average distance but at road speed with a 1.4× road-tortuosity factor. Both are model averages.">?</span></div>
+  <div class="card-label" style="margin-bottom:0;">Estimated Average Response to In-Range Incidents <span class="tip-cid" data-tip="Average distance from each station to incidents in its zone Ã· drone airspeed = flight time. Ground unit uses the same average distance but at road speed with a 1.4Ã— road-tortuosity factor. Both are model averages.">?</span></div>
   <div class="rt-bars">
     {_resp_bar_html}
     {_guard_bar_html}
     {_ground_bar_html}
     <div class="rt-bar-wrap" style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:28px;">
-      <div style="font-family:'DM Mono',monospace;font-size:32px;font-weight:500;color:var(--accent-green);">−{saved_min:.1f}m</div>
+      <div style="font-family:'DM Mono',monospace;font-size:32px;font-weight:500;color:var(--accent-green);">âˆ’{saved_min:.1f}m</div>
       <div style="font-size:11px;color:var(--ink-light);text-align:center;margin-top:4px;">avg time saved<br>per call</div>
     </div>
   </div>
   <div>
-    <span class="rt-wins-badge">✓ Drone arrives first in an estimated <strong>{drone_wins_pct}%</strong> of in-range calls</span>
+    <span class="rt-wins-badge">âœ“ Drone arrives first in an estimated <strong>{drone_wins_pct}%</strong> of in-range calls</span>
     &nbsp;
     <span style="font-size:11px;color:var(--ink-light);">Based on geographic coverage ({calls_covered_perc:.1f}% call coverage) and speed advantage</span>
   </div>
@@ -2338,7 +2338,7 @@ def generate_community_impact_dashboard_html(
   </div>
   <div class="stat-card">
     <div class="accent-bar" style="background:var(--accent-gold);"></div>
-    <div class="card-label">Geographic Coverage <span class="tip-cid" data-tip="Percentage of the total jurisdiction area that falls within at least one drone's operational radius. Reflects spatial reach — a high percentage means most of the city has drone access, not just the dense call-volume areas.">?</span></div>
+    <div class="card-label">Geographic Coverage <span class="tip-cid" data-tip="Percentage of the total jurisdiction area that falls within at least one drone's operational radius. Reflects spatial reach â€” a high percentage means most of the city has drone access, not just the dense call-volume areas.">?</span></div>
     <div class="card-value" style="color:var(--accent-gold);">{area_covered_perc:.1f}%</div>
     <div class="card-sub">of jurisdiction area within drone range</div>
   </div>
@@ -2351,13 +2351,13 @@ def generate_community_impact_dashboard_html(
 </div>
 
 
-<!-- ══════════════════════════════════════════════════════════════════
-     SECTION 3 — 4TH AMENDMENT SAFEGUARDS
-══════════════════════════════════════════════════════════════════ -->
-<div class="section-label">03 &nbsp;·&nbsp; Fourth Amendment &amp; Civil Liberties Safeguards <span class="tip-cid" data-tip="Plain-language summary of constitutional and policy guardrails governing every flight. These policies align the program with the 4th Amendment's protections against unreasonable search and the Baltimore Circuit ruling on mass surveillance.">?</span></div>
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+     SECTION 3 â€” 4TH AMENDMENT SAFEGUARDS
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<div class="section-label">03 &nbsp;Â·&nbsp; Fourth Amendment &amp; Civil Liberties Safeguards <span class="tip-cid" data-tip="Plain-language summary of constitutional and policy guardrails governing every flight. These policies align the program with the 4th Amendment's protections against unreasonable search and the Baltimore Circuit ruling on mass surveillance.">?</span></div>
 <div class="amend-panel">
   <div class="amend-title">
-    <span>🔒</span>
+    <span>ðŸ”’</span>
     Your Rights Are Built Into This Program
   </div>
   <p style="font-size:12.5px;color:var(--ink-mid);line-height:1.6;">
@@ -2367,44 +2367,44 @@ def generate_community_impact_dashboard_html(
   </p>
   <div class="amend-grid">
     <div class="amend-item">
-      <div class="amend-icon">🎯</div>
+      <div class="amend-icon">ðŸŽ¯</div>
       <div>
         <div class="amend-item-title">Reactive Dispatch Only <span class="tip-cid" data-tip="Drones only launch in response to active 911 calls or officer requests. No loitering, no speculative patrol, no geofenced monitoring of specific addresses.">?</span></div>
-        <div class="amend-item-desc">Drones launch in response to 911 calls and officer requests — never for proactive surveillance or random patrol.</div>
+        <div class="amend-item-desc">Drones launch in response to 911 calls and officer requests â€” never for proactive surveillance or random patrol.</div>
       </div>
     </div>
     <div class="amend-item">
-      <div class="amend-icon">📷</div>
+      <div class="amend-icon">ðŸ“·</div>
       <div>
-        <div class="amend-item-title">In-Transit Camera Policy <span class="tip-cid" data-tip="Camera gimbal is locked forward-facing during flight to the scene. Recording and active observation only begin once the drone is confirmed on-station at the incident location — preventing incidental surveillance of bystanders en route.">?</span></div>
+        <div class="amend-item-title">In-Transit Camera Policy <span class="tip-cid" data-tip="Camera gimbal is locked forward-facing during flight to the scene. Recording and active observation only begin once the drone is confirmed on-station at the incident location â€” preventing incidental surveillance of bystanders en route.">?</span></div>
         <div class="amend-item-desc">Cameras remain forward-facing during transit and only orient toward a scene upon confirmed arrival at the incident location.</div>
       </div>
     </div>
     <div class="amend-item">
-      <div class="amend-icon">🗑️</div>
+      <div class="amend-icon">ðŸ—‘ï¸</div>
       <div>
         <div class="amend-item-title">{retention_days}-Day Data Retention <span class="tip-cid" data-tip="All footage is automatically purged after {retention_days} days unless flagged for an active investigation. This prevents the accumulation of persistent video libraries that courts have found to constitute mass surveillance.">?</span></div>
         <div class="amend-item-desc">Footage is retained for a maximum of {retention_days} days absent evidentiary hold. No indefinite video libraries are maintained.</div>
       </div>
     </div>
     <div class="amend-item">
-      <div class="amend-icon">🚫</div>
+      <div class="amend-icon">ðŸš«</div>
       <div>
         <div class="amend-item-title">No Facial Recognition <span class="tip-cid" data-tip="Drone video is not processed through facial recognition AI. Officers review footage manually. This avoids the bias, error rates, and warrant issues associated with automated biometric identification from aerial imagery.">?</span></div>
         <div class="amend-item-desc">This program does not integrate facial recognition technology with drone footage. Identification is performed by responding officers, not AI.</div>
       </div>
     </div>
     <div class="amend-item">
-      <div class="amend-icon">⚖️</div>
+      <div class="amend-icon">âš–ï¸</div>
       <div>
         <div class="amend-item-title">No 1st Amendment Targeting <span class="tip-cid" data-tip="Drones are prohibited from being dispatched to protests, rallies, or free-speech gatherings. Dispatch logs are auditable and would show any violation of this policy as a policy breach reviewable by the oversight board.">?</span></div>
         <div class="amend-item-desc">Drones will not be dispatched to monitor, document, or surveil lawful protest, assembly, or free-speech activities.</div>
       </div>
     </div>
     <div class="amend-item">
-      <div class="amend-icon">📋</div>
+      <div class="amend-icon">ðŸ“‹</div>
       <div>
-        <div class="amend-item-title">Public Flight Logs <span class="tip-cid" data-tip="Every sortie is logged: call type, GPS location, duration, and pilot/operator. Records are available to any resident under applicable public records law — providing a transparency trail that deters misuse.">?</span></div>
+        <div class="amend-item-title">Public Flight Logs <span class="tip-cid" data-tip="Every sortie is logged: call type, GPS location, duration, and pilot/operator. Records are available to any resident under applicable public records law â€” providing a transparency trail that deters misuse.">?</span></div>
         <div class="amend-item-desc">Every sortie is logged with call type, location, duration, and purpose. Logs are published and available to any resident on request.</div>
       </div>
     </div>
@@ -2417,65 +2417,65 @@ def generate_community_impact_dashboard_html(
 </div>
 
 
-<!-- ══════════════════════════════════════════════════════════════════
-     SECTION 4 — LIVES SAVED / OUTCOMES
-══════════════════════════════════════════════════════════════════ -->
-<div class="section-label">04 &nbsp;·&nbsp; Estimated Annual Community Outcomes <span class="tip-cid" data-tip="Model-based projections of public-safety outcomes derived from national DFR program benchmarks applied to this deployment's projected annual flight count. Not guarantees — actual results depend on staffing, call types, and policy.">?</span></div>
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+     SECTION 4 â€” LIVES SAVED / OUTCOMES
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<div class="section-label">04 &nbsp;Â·&nbsp; Estimated Annual Community Outcomes <span class="tip-cid" data-tip="Model-based projections of public-safety outcomes derived from national DFR program benchmarks applied to this deployment's projected annual flight count. Not guarantees â€” actual results depend on staffing, call types, and policy.">?</span></div>
 <div class="grid-4" style="margin-bottom:4px;">
   <div class="outcome-card" style="animation-delay:0.0s;">
-    <span class="outcome-icon">🚔</span>
+    <span class="outcome-icon">ðŸš”</span>
     <div class="outcome-val"><span class="counter" data-target="{arrests_est}">{arrests_est:,}</span></div>
-    <div class="outcome-label">Arrest Assists <span class="tip-cid" data-tip="Estimated arrests aided by live aerial reconnaissance — suspect tracking, real-time officer guidance, perimeter confirmation. Modeled at ~4.3% of annual DFR flights per national benchmark data.">?</span></div>
+    <div class="outcome-label">Arrest Assists <span class="tip-cid" data-tip="Estimated arrests aided by live aerial reconnaissance â€” suspect tracking, real-time officer guidance, perimeter confirmation. Modeled at ~4.3% of annual DFR flights per national benchmark data.">?</span></div>
     <div class="outcome-note">Aerial intel aiding officer apprehension</div>
   </div>
   <div class="outcome-card" style="animation-delay:0.1s;">
-    <span class="outcome-icon">🆘</span>
+    <span class="outcome-icon">ðŸ†˜</span>
     <div class="outcome-val"><span class="counter" data-target="{rescues_est}">{rescues_est:,}</span></div>
     <div class="outcome-label">Active Rescues <span class="tip-cid" data-tip="Estimated searches or medical emergencies where drone overhead view or thermal imaging directly enabled a successful rescue. Modeled at ~2.1% of annual DFR flights.">?</span></div>
     <div class="outcome-note">Missing persons, medical, extrication</div>
   </div>
   <div class="outcome-card" style="animation-delay:0.2s;">
-    <span class="outcome-icon">🕊️</span>
+    <span class="outcome-icon">ðŸ•Šï¸</span>
     <div class="outcome-val"><span class="counter" data-target="{deescalation_est}">{deescalation_est:,}</span></div>
     <div class="outcome-label">De-escalations <span class="tip-cid" data-tip="Estimated incidents where real-time aerial awareness allowed officers to approach with better situational intel, reducing the likelihood of a use-of-force incident. Modeled at ~11% of annual DFR flights.">?</span></div>
     <div class="outcome-note">Drone intel prevented use-of-force</div>
   </div>
   <div class="outcome-card" style="animation-delay:0.3s;">
-    <span class="outcome-icon">🔍</span>
+    <span class="outcome-icon">ðŸ”</span>
     <div class="outcome-val"><span class="counter" data-target="{missing_est}">{missing_est:,}</span></div>
     <div class="outcome-label">Missing Person Locates <span class="tip-cid" data-tip="Estimated successful locate events using thermal imaging or wide-area overhead search. Thermal signatures allow drones to find people in the dark or in obscured terrain. Modeled at ~1.7% of annual DFR flights.">?</span></div>
     <div class="outcome-note">Thermal / overhead search assist</div>
   </div>
 </div>
 <p style="font-size:10.5px;color:var(--ink-light);margin-bottom:20px;font-style:italic;">
-  ⚠️ Outcomes are model estimates derived from national DFR program benchmarks (arrest-assist rate ~4.3%, rescue rate ~2.1%, de-escalation rate ~11%) applied to projected annual DFR flights of {total_annual_dfr:,}.
+  âš ï¸ Outcomes are model estimates derived from national DFR program benchmarks (arrest-assist rate ~4.3%, rescue rate ~2.1%, de-escalation rate ~11%) applied to projected annual DFR flights of {total_annual_dfr:,}.
   These are not guarantees of real-world results. Actual outcomes depend on staffing, deployment configuration, policy, and incident types.
 </p>
 
 
-<!-- ══════════════════════════════════════════════════════════════════
-     SECTION 5 — CALL TYPE BREAKDOWN
-══════════════════════════════════════════════════════════════════ -->
-<div class="section-label">05 &nbsp;·&nbsp; Call Type Distribution <span class="tip-cid" data-tip="Distribution of 911 call types from your uploaded CAD data, or national DFR benchmark estimates if no data is loaded. Shows the incident mix the program will most commonly respond to.">?</span></div>
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+     SECTION 5 â€” CALL TYPE BREAKDOWN
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<div class="section-label">05 &nbsp;Â·&nbsp; Call Type Distribution <span class="tip-cid" data-tip="Distribution of 911 call types from your uploaded CAD data, or national DFR benchmark estimates if no data is loaded. Shows the incident mix the program will most commonly respond to.">?</span></div>
 <div class="ct-panel">
   <div class="card-label" style="margin-bottom:14px;">Incident Categories in Coverage Zone <span class="tip-cid" data-tip="Each bar shows the count and share of incidents by type within the drone coverage zones. Bar width is proportional to the highest-volume category. Actual CAD data is used when uploaded; defaults to national DFR benchmarks otherwise.">?</span></div>
   <div id="callTypeBars"></div>
 </div>
 
 
-<!-- ══════════════════════════════════════════════════════════════════
-     SECTION 6 — EQUITY NOTE
-══════════════════════════════════════════════════════════════════ -->
-<div class="section-label">06 &nbsp;·&nbsp; Geographic Equity &amp; Deployment Distribution <span class="tip-cid" data-tip="Documents where drones are deployed and the policy commitments that prevent disproportionate targeting of specific communities. Station locations are determined solely by call-volume density, not demographic data.">?</span></div>
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+     SECTION 6 â€” EQUITY NOTE
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<div class="section-label">06 &nbsp;Â·&nbsp; Geographic Equity &amp; Deployment Distribution <span class="tip-cid" data-tip="Documents where drones are deployed and the policy commitments that prevent disproportionate targeting of specific communities. Station locations are determined solely by call-volume density, not demographic data.">?</span></div>
 <div class="amend-panel" style="border-left-color:var(--accent-gold);">
-  <div class="amend-title"><span>⚖️</span> Equitable Deployment Commitment</div>
+  <div class="amend-title"><span>âš–ï¸</span> Equitable Deployment Commitment</div>
   <p style="font-size:12.5px;color:var(--ink-mid);line-height:1.6;margin-bottom:12px;">
     Research has documented that aerial surveillance can be deployed disproportionately in communities of color even when controlling for income.
     The {city} DFR program explicitly tracks deployment patterns by district to ensure equitable coverage.
   </p>
   <div style="display:flex;gap:8px;flex-wrap:wrap;">
     <div style="flex:1;min-width:160px;background:var(--bg-inset);border-radius:6px;padding:8px 10px;">
-      <div style="font-size:10px;font-weight:700;color:var(--accent-gold);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">Deployed Stations <span class="tip-cid" data-tip="The drone stations currently active in this deployment plan. Responder (🚁) covers a 2-mile radius; Guardian (🦅) covers up to 8 miles. Station positions are optimized for maximum call coverage.">?</span></div>
+      <div style="font-size:10px;font-weight:700;color:var(--accent-gold);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">Deployed Stations <span class="tip-cid" data-tip="The drone stations currently active in this deployment plan. Responder (ðŸš) covers a 2-mile radius; Guardian (ðŸ¦…) covers up to 8 miles. Station positions are optimized for maximum call coverage.">?</span></div>
       <div id="stationList" style="font-size:10.5px;color:var(--ink-mid);line-height:1.6;"></div>
     </div>
     <div style="flex:2;min-width:180px;background:var(--bg-inset);border-radius:6px;padding:8px 10px;">
@@ -2491,28 +2491,28 @@ def generate_community_impact_dashboard_html(
 </div>
 
 
-<!-- ══════════════════════════════════════════════════════════════════
-     SECTION 7 — TAXPAYER ROI
-══════════════════════════════════════════════════════════════════ -->
-<div class="section-label">07 &nbsp;·&nbsp; Taxpayer Return on Investment <span class="tip-cid" data-tip="Compares the one-time fleet hardware cost to the annual operational savings from drone-handled calls. ROI reflects savings from reduced patrol-car dispatches only — does not include specialty response, apprehension impact, or injury prevention value.">?</span></div>
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+     SECTION 7 â€” TAXPAYER ROI
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
+<div class="section-label">07 &nbsp;Â·&nbsp; Taxpayer Return on Investment <span class="tip-cid" data-tip="Compares the one-time fleet hardware cost to the annual operational savings from drone-handled calls. ROI reflects savings from reduced patrol-car dispatches only â€” does not include specialty response, apprehension impact, or injury prevention value.">?</span></div>
 <div class="roi-panel">
   <div class="roi-row">
     <div class="roi-big">
-      <div class="roi-big-val">{roi_multiple:.1f}×</div>
-      <div class="roi-big-label">Annual ROI multiple <span class="tip-cid" data-tip="Annual operational savings ÷ total fleet hardware cost. A 2.5× multiple means the program saves $2.50 in recurring operational costs for every $1 of one-time capital investment.">?</span></div>
+      <div class="roi-big-val">{roi_multiple:.1f}Ã—</div>
+      <div class="roi-big-label">Annual ROI multiple <span class="tip-cid" data-tip="Annual operational savings Ã· total fleet hardware cost. A 2.5Ã— multiple means the program saves $2.50 in recurring operational costs for every $1 of one-time capital investment.">?</span></div>
       <div style="margin-top:10px;font-size:11px;color:var(--ink-light);">For every $1 invested in fleet CapEx, the program generates <strong>${roi_multiple:.2f}</strong> in annual operational savings.</div>
     </div>
     <div class="roi-details">
       <div class="roi-line">
-        <span class="roi-line-label">Total Fleet CapEx <span class="tip-cid" data-tip="One-time hardware acquisition cost — Responder ($80K each) + Guardian ($160K each). Does not include subscription, maintenance, insurance, or training costs.">?</span></span>
+        <span class="roi-line-label">Total Fleet CapEx <span class="tip-cid" data-tip="One-time hardware acquisition cost â€” Responder ($80K each) + Guardian ($160K each). Does not include subscription, maintenance, insurance, or training costs.">?</span></span>
         <span class="roi-line-val">${fleet_capex:,.0f}</span>
       </div>
       <div class="roi-line">
-        <span class="roi-line-label">Annual Operational Savings <span class="tip-cid" data-tip="Savings from calls resolved without a patrol car dispatch. Formula: (daily drone-only resolved calls) × ($82 officer cost − $6 drone cost) × 365 days.">?</span></span>
+        <span class="roi-line-label">Annual Operational Savings <span class="tip-cid" data-tip="Savings from calls resolved without a patrol car dispatch. Formula: (daily drone-only resolved calls) Ã— ($82 officer cost âˆ’ $6 drone cost) Ã— 365 days.">?</span></span>
         <span class="roi-line-val" style="color:var(--accent-green);">${annual_savings:,.0f}</span>
       </div>
       <div class="roi-line">
-        <span class="roi-line-label">Break-Even Timeline <span class="tip-cid" data-tip="Months until cumulative operational savings fully offset the initial fleet hardware investment. Calculated as fleet CapEx ÷ monthly savings.">?</span></span>
+        <span class="roi-line-label">Break-Even Timeline <span class="tip-cid" data-tip="Months until cumulative operational savings fully offset the initial fleet hardware investment. Calculated as fleet CapEx Ã· monthly savings.">?</span></span>
         <span class="roi-line-val">{break_even_text}</span>
       </div>
       <div class="roi-line">
@@ -2520,27 +2520,27 @@ def generate_community_impact_dashboard_html(
         <span class="roi-line-val">${cost_per_call_drone} vs ${cost_per_call_officer} (patrol)</span>
       </div>
       <div class="roi-line">
-        <span class="roi-line-label">Annual Calls Resolved Without Patrol Car <span class="tip-cid" data-tip="Calls where drone assessment was sufficient — no officer dispatch needed. Formula: DFR flights/day × deflection rate (% of drone-handled calls that don't escalate) × 365 days.">?</span></span>
+        <span class="roi-line-label">Annual Calls Resolved Without Patrol Car <span class="tip-cid" data-tip="Calls where drone assessment was sufficient â€” no officer dispatch needed. Formula: DFR flights/day Ã— deflection rate (% of drone-handled calls that don't escalate) Ã— 365 days.">?</span></span>
         <span class="roi-line-val">{total_resolved_annually:,}</span>
       </div>
       <div class="roi-line">
-        <span class="roi-line-label">Savings Per Resolved Call <span class="tip-cid" data-tip="Net cost delta for each call resolved by drone without a patrol car: $82 (officer dispatch) − $6 (drone dispatch) = $76 saved per resolved call.">?</span></span>
+        <span class="roi-line-label">Savings Per Resolved Call <span class="tip-cid" data-tip="Net cost delta for each call resolved by drone without a patrol car: $82 (officer dispatch) âˆ’ $6 (drone dispatch) = $76 saved per resolved call.">?</span></span>
         <span class="roi-line-val" style="color:var(--accent-green);">${cost_saved_per_resolved}</span>
       </div>
       <div class="roi-line" style="border-top:1px solid rgba(239,68,68,0.25);margin-top:8px;padding-top:8px;">
-        <span class="roi-line-label" style="color:#ef4444;font-weight:600;">🔥 Est. Annual Fire DFR Responses <span class="tip-cid" data-tip="Fire and rescue calls as a share of total DFR deployments. National average: 15% of DFR flights are fire/rescue-related (NFPA 2022 Fire Loss Report). Formula: total annual DFR × 15%.">?</span></span>
+        <span class="roi-line-label" style="color:#ef4444;font-weight:600;">ðŸ”¥ Est. Annual Fire DFR Responses <span class="tip-cid" data-tip="Fire and rescue calls as a share of total DFR deployments. National average: 15% of DFR flights are fire/rescue-related (NFPA 2022 Fire Loss Report). Formula: total annual DFR Ã— 15%.">?</span></span>
         <span class="roi-line-val">{_annual_fire_dfr:,}</span>
       </div>
       <div class="roi-line">
-        <span class="roi-line-label" style="color:#ef4444;">🔥 False Alarm Avoidance Savings <span class="tip-cid" data-tip="Drone arrives first and identifies non-fire events before an engine rolls. False alarm rate: 23% of fire calls (NFPA). Detection rate: 68% of false alarms identified before dispatch (IAFC DFR pilots). Engine response cost: $895/run (NFPA 2023). Formula: fire DFR responses × 23% × 68% × $895.">?</span></span>
+        <span class="roi-line-label" style="color:#ef4444;">ðŸ”¥ False Alarm Avoidance Savings <span class="tip-cid" data-tip="Drone arrives first and identifies non-fire events before an engine rolls. False alarm rate: 23% of fire calls (NFPA). Detection rate: 68% of false alarms identified before dispatch (IAFC DFR pilots). Engine response cost: $895/run (NFPA 2023). Formula: fire DFR responses Ã— 23% Ã— 68% Ã— $895.">?</span></span>
         <span class="roi-line-val" style="color:#ef4444;">${_false_alarm_savings:,.0f}/yr</span>
       </div>
       <div class="roi-line">
-        <span class="roi-line-label" style="color:#ef4444;">🔥 Pre-Arrival Recon Value <span class="tip-cid" data-tip="Drone streams live video to incoming crew before arrival, enabling faster tactic decisions and reducing LODD risk. Value: $185/incident (IAAI DFR White Paper 2023). Formula: annual fire DFR responses × $185.">?</span></span>
+        <span class="roi-line-label" style="color:#ef4444;">ðŸ”¥ Pre-Arrival Recon Value <span class="tip-cid" data-tip="Drone streams live video to incoming crew before arrival, enabling faster tactic decisions and reducing LODD risk. Value: $185/incident (IAAI DFR White Paper 2023). Formula: annual fire DFR responses Ã— $185.">?</span></span>
         <span class="roi-line-val" style="color:#ef4444;">${_fire_recon_value:,.0f}/yr</span>
       </div>
       <div class="roi-line" style="border-bottom:none;">
-        <span class="roi-line-label" style="font-weight:700;color:#ef4444;">🔥 Total Fire Dept Impact <span class="tip-cid" data-tip="Combined fire department value: false alarm avoidance + pre-arrival scene recon. Does not include hazmat standby, search assist, or equipment-protection value — all additive.">?</span></span>
+        <span class="roi-line-label" style="font-weight:700;color:#ef4444;">ðŸ”¥ Total Fire Dept Impact <span class="tip-cid" data-tip="Combined fire department value: false alarm avoidance + pre-arrival scene recon. Does not include hazmat standby, search assist, or equipment-protection value â€” all additive.">?</span></span>
         <span class="roi-line-val" style="font-weight:700;color:#ef4444;">${_total_fire_value:,.0f}/yr</span>
       </div>
     </div>
@@ -2548,21 +2548,21 @@ def generate_community_impact_dashboard_html(
 </div>
 
 
-<!-- ══════════════════════════════════════════════════════════════════
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
      FOOTER
-══════════════════════════════════════════════════════════════════ -->
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
 <div class="dash-footer">
   <strong>Simulation Disclaimer:</strong> All figures are model estimates based on user-configured deployment parameters, national DFR benchmark rates, and uploaded CAD data.
-  Response times, ROI, and outcomes are projections — not guarantees. Actual program results depend on staffing, policy, FAA authorization, and operational execution.
-  This dashboard is intended for planning and community transparency purposes only. &nbsp;·&nbsp; Generated by BRINC COS Drone Optimizer.
+  Response times, ROI, and outcomes are projections â€” not guarantees. Actual program results depend on staffing, policy, FAA authorization, and operational execution.
+  This dashboard is intended for planning and community transparency purposes only. &nbsp;Â·&nbsp; Generated by BRINC COS Drone Optimizer.
 </div>
 
 
-<!-- ══════════════════════════════════════════════════════════════════
+<!-- â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
      SCRIPTS
-══════════════════════════════════════════════════════════════════ -->
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• -->
 <script>
-// ── Animated counters ──────────────────────────────────────────────────────
+// â”€â”€ Animated counters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function animateCounter(el) {{
   const target = parseFloat(el.dataset.target.replace(/,/g,''));
   const isFloat = el.dataset.target.includes('.');
@@ -2592,7 +2592,7 @@ const obs = new IntersectionObserver(entries => {{
 }}, {{threshold: 0.3}});
 document.querySelectorAll('.counter').forEach(el => obs.observe(el));
 
-// ── Call type horizontal bars ──────────────────────────────────────────────
+// â”€â”€ Call type horizontal bars â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const ctData = {ct_items_js};
 const ctColors = [
   '#1a56db','#0d9e6e','#b45309','#be123c',
@@ -2614,20 +2614,20 @@ ctData.forEach((item, i) => {{
   ctContainer.appendChild(row);
 }});
 
-// ── Station list ───────────────────────────────────────────────────────────
+// â”€â”€ Station list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const stations = {drone_names_js};
 const sl = document.getElementById('stationList');
 if (stations.length === 0) {{
   sl.innerHTML = '<em style="color:#94a3b8;">No drones deployed yet</em>';
 }} else {{
   stations.forEach(s => {{
-    const icon = s.type === 'GUARDIAN' ? '🦅' : '🚁';
+    const icon = s.type === 'GUARDIAN' ? 'ðŸ¦…' : 'ðŸš';
     const color = s.type === 'GUARDIAN' ? '#b45309' : '#1a56db';
-    sl.innerHTML += `<div>${{icon}} <span style="color:${{color}};font-weight:600;">${{s.type.charAt(0)+s.type.slice(1).toLowerCase()}}</span> — ${{s.name}}</div>`;
+    sl.innerHTML += `<div>${{icon}} <span style="color:${{color}};font-weight:600;">${{s.type.charAt(0)+s.type.slice(1).toLowerCase()}}</span> â€” ${{s.name}}</div>`;
   }});
 }}
 
-// ── Auto-resize iframe to actual content height ────────────────────────────
+// â”€â”€ Auto-resize iframe to actual content height â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 (function() {{
   function reportHeight() {{
     const h = Math.max(
