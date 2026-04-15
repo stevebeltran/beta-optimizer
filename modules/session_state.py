@@ -18,7 +18,7 @@ DEFAULTS = {
     "k_guard": 0,
     "r_resp": 2.0,
     "r_guard": 8.0,
-    "dfr_rate": 12,
+    "dfr_rate": 20,
     "deflect_rate": 25,
     "total_original_calls": 0,
     "total_modeled_calls": 0,

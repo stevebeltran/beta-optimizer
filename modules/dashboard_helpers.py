@@ -1218,7 +1218,7 @@ def prepare_runtime_context(
         st.caption(f'Derived from the full uploaded CAD total ({full_total_calls:,} incidents), not the optimization sample.')
         st.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>DFR Dispatch Rate (%)</div>", unsafe_allow_html=True)
         st.markdown("<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>What % of in-range calls will the drone be sent to?</div>", unsafe_allow_html=True)
-        dfr_dispatch_rate = st.slider('DFR Dispatch Rate', 1, 100, session_state.get('dfr_rate', 12), label_visibility='collapsed') / 100.0
+        dfr_dispatch_rate = st.slider('DFR Dispatch Rate', 1, 100, session_state.get('dfr_rate', 20), label_visibility='collapsed') / 100.0
         st.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>Calls Resolved Without Officer Dispatch (%)</div>", unsafe_allow_html=True)
         st.markdown("<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>Of drone-attended calls, what % close without a patrol car?</div>", unsafe_allow_html=True)
         deflection_rate = st.slider('Resolution Rate', 0, 100, session_state.get('deflect_rate', 25), label_visibility='collapsed') / 100.0

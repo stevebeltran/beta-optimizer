@@ -669,7 +669,7 @@ def _build_cad_charts_html(df_calls):
 
         # â”€â”€ Apprehension metric calculations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         import streamlit as _st
-        dfr_rate        = float(_st.session_state.get('dfr_rate', 12)) / 100.0
+        dfr_rate        = float(_st.session_state.get('dfr_rate', 20)) / 100.0
         pursuit_rate    = 0.18
         pursuit_calls   = round(total_calls * pursuit_rate)
         dfr_pursuit     = round(pursuit_calls * dfr_rate)
@@ -824,7 +824,7 @@ def _build_apprehension_table(df_calls, text_main, text_muted, card_bg, card_bor
 
     # â”€â”€ Pull session values â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     total_calls      = int(st.session_state.get('total_original_calls', len(df_calls)) or len(df_calls))
-    dfr_rate         = float(st.session_state.get('dfr_rate', 12)) / 100.0   # fraction dispatched by drone
+    dfr_rate         = float(st.session_state.get('dfr_rate', 20)) / 100.0   # fraction dispatched by drone
     calls_per_year   = _get_annualized_calls(total_calls)
 
     # Pursuit-eligible calls: incidents where a suspect is potentially fleeing
