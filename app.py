@@ -4324,19 +4324,12 @@ body{{background:transparent;overflow:hidden}}
                 _handled_calls_yr  = _handled_calls_day * 365.0
                 _deflected_calls_day = _handled_calls_day * deflection_rate
                 _deflected_calls_yr  = _handled_calls_yr * deflection_rate
-                _exclusive_dispatchable_calls_day = min(
-                    (_exclusive_weighted_zone_calls / 365.0) * _effective_dfr,
-                    _dispatchable_calls_day,
-                )
-                _concurrent_dispatchable_calls_day = min(
-                    (_concurrent_weighted_zone_calls / 365.0) * _effective_dfr,
-                    _dispatchable_calls_day,
-                )
-                _dispatchable_split_total = max(_weighted_dispatchable_calls_day, 0.0)
-                if _dispatchable_split_total > 0:
-                    _exclusive_share = min(1.0, max(0.0, _exclusive_dispatchable_calls_day / _dispatchable_split_total))
+                # Exclusive share derived from zone call counts (stable under any
+                # capacity cap — both numerator and denominator scale identically).
+                if _weighted_zone_calls > 0:
+                    _exclusive_share = min(1.0, max(0.0, _exclusive_weighted_zone_calls / _weighted_zone_calls))
                 else:
-                    _exclusive_share = 0.0
+                    _exclusive_share = 1.0
                 _concurrent_share = max(0.0, 1.0 - _exclusive_share)
                 _excl_flights      = _handled_calls_day * _exclusive_share
                 _concurrent_daily  = _handled_calls_day * _concurrent_share
