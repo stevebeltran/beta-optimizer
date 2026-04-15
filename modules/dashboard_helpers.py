@@ -1014,6 +1014,37 @@ def manage_custom_stations(
         if locality_hint:
             st.caption(f'Suggestions are biased to {locality_hint}.')
 
+        _geo_trace = session_state.get('_last_geocode_trace') or {}
+        _geo_providers = _geo_trace.get('providers') or []
+        if addr_query:
+            _provider_summary = []
+            for _provider_name in ['Google', 'Mapbox', 'Census', 'OSM']:
+                _rows = [r for r in _geo_providers if r.get('provider') == _provider_name]
+                if not _rows:
+                    continue
+                _used = any(bool(r.get('used')) for r in _rows)
+                _total = sum(int(r.get('match_count') or 0) for r in _rows if r.get('used'))
+                _status = next((str(r.get('status')) for r in _rows if not r.get('used')), 'ok')
+                if _used:
+                    _provider_summary.append(f"{_provider_name}: queried, {_total} match(es)")
+                else:
+                    _provider_summary.append(f"{_provider_name}: {_status}")
+            if _provider_summary:
+                st.caption("Providers: " + " | ".join(_provider_summary))
+            with st.expander('Geocoder Diagnostics', expanded=False):
+                _queries = _geo_trace.get('queries') or []
+                if _queries:
+                    st.write("Queries tried:")
+                    for _q in _queries:
+                        st.code(_q)
+                if _geo_providers:
+                    st.write("Provider results:")
+                    for _row in _geo_providers:
+                        if _row.get('used'):
+                            st.write(f"{_row.get('provider')}: {_row.get('status')} | {_row.get('match_count')} match(es) | {_row.get('query')}")
+                        else:
+                            st.write(f"{_row.get('provider')}: {_row.get('status')}")
+
         if addr_option_rows:
             addr_pick = st.selectbox(
                 'Suggested Match',

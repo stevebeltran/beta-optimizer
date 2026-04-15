@@ -178,7 +178,8 @@ def _notify_email(city, state, file_type, k_resp, k_guard, coverage, name, email
         if not gmail_address or not app_password:
             return
         emoji = {"HTML": "📄", "KML": "🌏", "BRINC": "💾", "MAP_BUILD": "🗺️"}.get(file_type, "📥")
-        subject = f"{emoji} BRINC {file_type.replace('_',' ').title()} — {city}, {state}"
+        label = {"HTML": "Executive Summary", "KML": "Google Earth Briefing", "BRINC": "BRINC File", "MAP_BUILD": "Map Build"}.get(file_type, file_type.replace('_', ' ').title())
+        subject = f"{emoji} BRINC {label} — {city}, {state}"
         details_html = _build_details_html(details)
         d = details or {}
         pop  = d.get('population', 0)
@@ -187,11 +188,11 @@ def _notify_email(city, state, file_type, k_resp, k_guard, coverage, name, email
         <div style="max-width:560px;margin:0 auto;border:1px solid #ddd;border-radius:8px;overflow:hidden;">
             <div style="background:#000;padding:16px 20px;border-bottom:3px solid #00D2FF;">
                 <span style="color:#00D2FF;font-size:18px;font-weight:900;letter-spacing:2px;">BRINC</span>
-                <span style="color:#888;font-size:12px;margin-left:8px;">{file_type.replace('_',' ').title()} Notification</span>
+                <span style="color:#888;font-size:12px;margin-left:8px;">{label} Notification</span>
             </div>
             <div style="padding:20px;">
                 <table style="width:100%;border-collapse:collapse;font-size:14px;">
-                    <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:8px 4px;color:#888;width:40%;">Event</td><td style="padding:8px 4px;font-weight:bold;">{emoji} {file_type.replace('_',' ').title()}</td></tr>
+                    <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:8px 4px;color:#888;width:40%;">Event</td><td style="padding:8px 4px;font-weight:bold;">{emoji} {label}</td></tr>
                     <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:8px 4px;color:#888;">Jurisdiction</td><td style="padding:8px 4px;font-weight:bold;">{city}, {state}</td></tr>
                     <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:8px 4px;color:#888;">Population</td><td style="padding:8px 4px;">{pop:,}</td></tr>
                     <tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:8px 4px;color:#888;">Fleet</td><td style="padding:8px 4px;">{k_resp} Responder · {k_guard} Guardian</td></tr>
