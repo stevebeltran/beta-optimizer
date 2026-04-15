@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import sys
 # Set CWD to the project root so every relative asset path (parquets, shapefiles,
 # logos, etc.) resolves correctly regardless of how the process was launched.
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -100,7 +101,18 @@ from modules.geospatial import (
     _count_points_within_boundary, find_jurisdictions_by_coordinates
 )
 from modules import faa_rf, optimization, html_reports
-from modules.session_state import init_session_state
+try:
+    from modules.session_state import init_session_state
+except KeyError:
+    import importlib.util as _importlib_util
+    _session_state_path = Path(__file__).resolve().parent / 'modules' / 'session_state.py'
+    _session_state_spec = _importlib_util.spec_from_file_location('modules.session_state', _session_state_path)
+    if _session_state_spec is None or _session_state_spec.loader is None:
+        raise
+    _session_state_mod = _importlib_util.module_from_spec(_session_state_spec)
+    sys.modules['modules.session_state'] = _session_state_mod
+    _session_state_spec.loader.exec_module(_session_state_mod)
+    init_session_state = _session_state_mod.init_session_state
 from modules.dashboard_helpers import log_map_build_event_once, resolve_master_boundary, render_sidebar_jurisdiction_selector, render_data_filters, render_display_options, render_deployment_strategy, prepare_station_candidates, manage_custom_stations, prepare_runtime_context, optimize_fleet_selection
 from modules.onboarding import (
     detect_brinc_file, load_brinc_save_data, restore_brinc_session,
