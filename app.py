@@ -1,4 +1,4 @@
-# Copyright (c) Steven Beltran. Created by Steven Beltran in partnership with BRINC Drones.
+﻿# Copyright (c) Steven Beltran. Created by Steven Beltran in partnership with BRINC Drones.
 import streamlit as st
 import pandas as pd
 import os
@@ -122,8 +122,21 @@ from modules.onboarding import (
     build_demo_boundaries, build_demo_calls, resolve_demo_stations,
 )
 
-PUBLIC_REPORTS_DIR = Path("public_reports")
-PUBLIC_REPORTS_DIR.mkdir(exist_ok=True)
+APP_DIR = Path(__file__).resolve().parent
+
+
+def _resolve_public_reports_dir():
+    for _candidate in (APP_DIR / "public_reports", Path(tempfile.gettempdir()) / "frankenstein_public_reports"):
+        try:
+            _candidate.mkdir(parents=True, exist_ok=True)
+            if _candidate.is_dir():
+                return _candidate
+        except OSError:
+            continue
+    raise OSError("Unable to initialize a writable public reports directory.")
+
+
+PUBLIC_REPORTS_DIR = _resolve_public_reports_dir()
 
 
 def _get_query_params_dict():
@@ -8233,5 +8246,6 @@ body{{background:transparent;overflow:hidden}}
 
 
 main()
+
 
 
