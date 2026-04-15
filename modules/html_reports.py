@@ -1108,8 +1108,9 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
         d_be        = d["be_text"]
         d_lat       = d["lat"]
         d_lon       = d["lon"]
-        d_address   = get_address_from_latlon(d_lat, d_lon)
-        gmaps_url   = f"https://www.google.com/maps/search/?api=1&query={d_lat},{d_lon}"
+        d_address   = get_address_from_latlon(d_lat, d_lon)
+        gmaps_url   = f"https://www.google.com/maps/search/?api=1&query={d_lat},{d_lon}"
+        coord_label = f"{d_lat:.5f}, {d_lon:.5f}"
 
         # Pick duty-cycle values for this drone type
         is_guardian = (d_type == "GUARDIAN")
@@ -1384,7 +1385,7 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
     <span style="font-size:0.58rem;color:#666;text-transform:uppercase;white-space:nowrap;flex-shrink:0;">{d_type} · #{d_step}</span><span style="font-size:0.56rem;color:{status_color};background:{status_bg};border:1px solid {status_border};border-radius:999px;padding:2px 7px;font-weight:700;white-space:nowrap;">{status_text}</span>
   </div>
   <div style="font-size:0.62rem;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-    <a href="{gmaps_url}" target="_blank" style="color:{accent_color};text-decoration:none;opacity:0.85;">📍 {d_address} ↗</a>
+    <a href="{gmaps_url}" target="_blank" style="color:{accent_color};text-decoration:none;font-weight:500;opacity:0.85;">{coord_label} ↗</a>
   </div>
   {_sim_fin_hero}
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:6px;">
@@ -1433,7 +1434,7 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
       <span style="font-size:0.58rem; color:#666; text-transform:uppercase; letter-spacing:0.3px; white-space:nowrap; flex-shrink:0;">{d_type} · #{d_step}</span><span style="font-size:0.56rem;color:{status_color};background:{status_bg};border:1px solid {status_border};border-radius:999px;padding:2px 7px;font-weight:700;white-space:nowrap;">{status_text}</span>
     </div>
     <div style="font-size:0.65rem; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-      <a href="{gmaps_url}" target="_blank" style="color:{accent_color}; text-decoration:none; font-weight:500; opacity:0.85;">📍 {d_address} ↗</a>
+      <a href="{gmaps_url}" target="_blank" style="color:{accent_color}; text-decoration:none; font-weight:500; opacity:0.85;">{coord_label} ↗</a>
     </div>
   </div>
   {_full_fin_annual_cap}
