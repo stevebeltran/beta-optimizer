@@ -1215,6 +1215,16 @@ def search_address_candidates(address_str, limit=6):
             'source': source,
         })
 
+    def _google_maps_api_key():
+        try:
+            for _key_name in ("GOOGLE_MAPS_API_KEY", "GOOGLE_GEOCODING_API_KEY", "GMAPS_API_KEY"):
+                _key_val = str(st.secrets.get(_key_name, "") or "").strip()
+                if _key_val:
+                    return _key_val
+        except Exception:
+            return ""
+        return ""
+
     try:
         _params = urllib.parse.urlencode({
             'address': address_str,
@@ -1236,6 +1246,25 @@ def search_address_candidates(address_str, limit=6):
             )
     except Exception:
         pass
+
+
+    _google_api_key = _google_maps_api_key()
+    if _google_api_key:
+        try:
+            _params = urllib.parse.urlencode({
+                'address': address_str,
+                'key': _google_api_key,
+            })
+            _url = f"https://maps.googleapis.com/maps/api/geocode/json?{_params}"
+            _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
+            with urllib.request.urlopen(_req, timeout=8) as _resp:
+                _data = json.loads(_resp.read().decode('utf-8'))
+            for _match in _data.get('results', [])[:limit]:
+                _geometry = _match.get('geometry', {}).get('location', {})
+                _label = _match.get('formatted_address', address_str)
+                _add_candidate(_label, _geometry.get('lat'), _geometry.get('lng'), 'Google', raw_match=_label)
+        except Exception:
+            pass
 
     try:
         _params = urllib.parse.urlencode({
@@ -6342,11 +6371,34 @@ body{{background:transparent;overflow:hidden}}
                 except Exception:
                     _boundary_geojson_export = None
 
+            _custom_export_df = st.session_state.get('custom_stations', pd.DataFrame())
+            _stations_export_df = st.session_state.get('df_stations')
+            if _stations_export_df is not None and hasattr(_stations_export_df, 'copy'):
+                _stations_export_df = _stations_export_df.copy()
+                if _custom_export_df is not None and hasattr(_custom_export_df, 'empty') and not _custom_export_df.empty:
+                    for _col in ('address', 'input_address', 'geocode_source', 'custom', 'lock_role'):
+                        if _col not in _stations_export_df.columns:
+                            _stations_export_df[_col] = None
+                    _custom_lookup = _custom_export_df.copy()
+                    _custom_lookup['_merge_name'] = _custom_lookup.get('name', pd.Series(index=_custom_lookup.index, dtype=object)).astype(str).str.strip()
+                    _custom_lookup['_merge_type'] = _custom_lookup.get('type', pd.Series(index=_custom_lookup.index, dtype=object)).astype(str).str.strip()
+                    _custom_lookup = _custom_lookup.drop_duplicates(subset=['_merge_name', '_merge_type'], keep='last')
+                    _custom_lookup = _custom_lookup.set_index(['_merge_name', '_merge_type'])
+                    for _idx, _row in _stations_export_df.iterrows():
+                        _key = (str(_row.get('name', '')).strip(), str(_row.get('type', '')).strip())
+                        if _key in _custom_lookup.index:
+                            _src = _custom_lookup.loc[_key]
+                            if hasattr(_src, 'iloc'):
+                                _src = _src.iloc[-1]
+                            for _col in ('address', 'input_address', 'geocode_source', 'custom', 'lock_role'):
+                                if _col in _src.index:
+                                    _stations_export_df.at[_idx, _col] = _src.get(_col)
+
             export_dict = {
                 "city": prop_city, "state": prop_state,
                 "_disclaimer": (
-                    "SIMULATION TOOL: All figures in this file are model estimates based on user-provided inputs. "
-                    "Real-world results will vary. This is not a legal recommendation, binding proposal, contract, "
+                    "SIMULATION TOOL: All figures in this file are model estimates based on user-provided inputs. ",
+                    "Real-world results will vary. This is not a legal recommendation, binding proposal, contract, ",
                     "or guarantee of any product, service, or financial outcome."
                 ),
                 # Fleet counts and ranges
@@ -6374,7 +6426,7 @@ body{{background:transparent;overflow:hidden}}
                     st.session_state.get('df_calls_full') if st.session_state.get('df_calls_full') is not None
                     else st.session_state.get('df_calls')
                 ),
-                "stations_data": html_reports._safe_df_to_records(st.session_state.get('df_stations')),
+                "stations_data": html_reports._safe_df_to_records(_stations_export_df),
                 "faa_geojson": faa_geojson,
                 # Boundary / shapefile
                 "boundary_geojson": _boundary_geojson_export,
@@ -7968,4 +8020,5 @@ body{{background:transparent;overflow:hidden}}
 
 
 main()
+
 

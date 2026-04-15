@@ -941,7 +941,7 @@ def manage_custom_stations(
                 prefixed_label = f'[{pp_type}] {label}'
                 pp_lock_role = 'Guardian' if 'Guardian' in pp_role else 'Responder'
                 nearest_addr = get_address_from_latlon(pending_pin['lat'], pending_pin['lon'])
-                new_pin_row = pd.DataFrame([{'name': label, 'lat': pending_pin['lat'], 'lon': pending_pin['lon'], 'type': pp_type, 'lock_role': pp_lock_role, 'address': nearest_addr, 'custom': True}])
+                new_pin_row = pd.DataFrame([{'name': label, 'lat': pending_pin['lat'], 'lon': pending_pin['lon'], 'type': pp_type, 'lock_role': pp_lock_role, 'address': nearest_addr, 'input_address': nearest_addr, 'geocode_source': 'reverse_geocode', 'custom': True}])
                 custom_stations = session_state.get('custom_stations', pd.DataFrame())
                 session_state['custom_stations'] = pd.concat([custom_stations, new_pin_row], ignore_index=True) if not custom_stations.empty else new_pin_row
                 increment_fleet_count(pp_lock_role)
@@ -1003,7 +1003,7 @@ def manage_custom_stations(
                         matched_addr = match.get('matched_address', addr_to_geocode)
                         label = make_unique_station_label(custom_label.strip() or matched_addr, custom_type, geo_lat, geo_lon)
                         prefixed_label = f'[{custom_type}] {label}'
-                        new_row = pd.DataFrame([{'name': label, 'lat': geo_lat, 'lon': geo_lon, 'type': custom_type, 'lock_role': 'Guardian' if custom_role == 'Lock as Guardian' else 'Responder', 'address': matched_addr, 'custom': True}])
+                        new_row = pd.DataFrame([{'name': label, 'lat': geo_lat, 'lon': geo_lon, 'type': custom_type, 'lock_role': 'Guardian' if custom_role == 'Lock as Guardian' else 'Responder', 'address': matched_addr, 'input_address': addr_to_geocode, 'geocode_source': match.get('source', 'lookup'), 'custom': True}])
                         custom_stations = session_state.get('custom_stations', pd.DataFrame())
                         session_state['custom_stations'] = pd.concat([custom_stations, new_row], ignore_index=True) if not custom_stations.empty else new_row
                         custom_lock_role = 'Guardian' if custom_role == 'Lock as Guardian' else 'Responder'

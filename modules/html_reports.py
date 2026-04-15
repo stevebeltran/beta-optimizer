@@ -1135,7 +1135,7 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
         d_calls_in_range_yr = float(d.get("calls_in_range_yr", d_zone_calls) or 0)
         d_dispatchable_calls_yr = float(d.get("dispatchable_calls_yr", 0) or 0)
         d_weighted_dispatchable_calls_yr = float(d.get("weighted_dispatchable_calls_yr", d_dispatchable_calls_yr) or 0)
-        d_calls_handle_yr = float(d.get("calls_handle_yr", 0) or 0)
+        d_calls_handle_yr = float(d.get("handled_calls_yr", d.get("calls_handle_yr", 0)) or 0)
         d_calls_unanswered_yr = float(d.get("calls_unanswered_yr", 0) or 0)
         d_assigned_calls_day = float(d.get('assigned_calls_day', 0) or 0)
         d_assigned_flights_day = float(d.get('assigned_flights_day', d_flights) or 0)
@@ -2651,6 +2651,7 @@ if (stations.length === 0) {{
 </body>
 </html>"""
     return html
+
 
 
 
