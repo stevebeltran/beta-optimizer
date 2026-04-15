@@ -4347,10 +4347,10 @@ body{{background:transparent;overflow:hidden}}
                 _concurrent_daily  = _handled_calls_day * _concurrent_share
                 _excl_deflected    = _deflected_calls_day * _exclusive_share
                 _concurrent_deflected_day = _deflected_calls_day * _concurrent_share
-                _base_annual       = (_excl_flights * 365.0) * _cost_delta
+                _base_annual       = (_excl_deflected * 365.0) * _cost_delta
                 _base_monthly      = _base_annual / 12.0
-                _concurrent_month  = (_concurrent_daily * 365.0 * _cost_delta) / 12.0
-                _concurrent_annual = _concurrent_daily * 365.0 * _cost_delta
+                _concurrent_month  = (_concurrent_deflected_day * 365.0 * _cost_delta) / 12.0
+                _concurrent_annual = _concurrent_deflected_day * 365.0 * _cost_delta
                 _best_monthly      = _base_monthly + _concurrent_month
                 _best_annual       = _base_annual + _concurrent_annual
 
