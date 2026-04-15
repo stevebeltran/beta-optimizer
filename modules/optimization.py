@@ -37,8 +37,20 @@ def precompute_spatial_data(df_calls, df_calls_full, df_stations_all, _city_m, e
         default=1.0
     ) or 1.0
     calls_array = None
+    calls_lat_arr = None
+    calls_lon_arr = None
     if total_calls > 0:
         calls_array = np.array(list(zip(calls_in_city.geometry.x, calls_in_city.geometry.y)))
+        calls_lat_arr = calls_in_city['lat'].values
+        calls_lon_arr = calls_in_city['lon'].values
+
+    def _haversine_mi(slat, slon, lats, lons):
+        R = 3958.8
+        phi1 = np.radians(slat)
+        dphi = np.radians(lats - slat)
+        dlam = np.radians(lons - slon)
+        a = np.sin(dphi / 2) ** 2 + np.cos(phi1) * np.cos(np.radians(lats)) * np.sin(dlam / 2) ** 2
+        return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
     for idx_pos, (_, row) in enumerate(df_stations_all.iterrows()):
         s_pt_m = gpd.GeoSeries([Point(row['lon'], row['lat'])], crs="EPSG:4326").to_crs(epsg=int(epsg_code)).iloc[0]
@@ -54,9 +66,16 @@ def precompute_spatial_data(df_calls, df_calls_full, df_stations_all, _city_m, e
             dist_matrix_g[idx_pos, :] = dists_mi
             avg_dist_r = dists_mi[mask_r].mean() if mask_r.any() else resp_radius_mi * (2 / 3)
             avg_dist_g = dists_mi[mask_g].mean() if mask_g.any() else guard_radius_mi * (2 / 3)
+            # Haversine-based raw counts for accurate per-unit display (UTM Euclidean
+            # overshoots at large radii and can saturate to the full city total).
+            hav_dists = _haversine_mi(row['lat'], row['lon'], calls_lat_arr, calls_lon_arr)
+            raw_calls_r = int(np.sum(hav_dists <= resp_radius_mi))
+            raw_calls_g = int(np.sum(hav_dists <= guard_radius_mi))
         else:
             avg_dist_r = resp_radius_mi * (2 / 3)
             avg_dist_g = guard_radius_mi * (2 / 3)
+            raw_calls_r = 0
+            raw_calls_g = 0
 
         full_buf_2m = s_pt_m.buffer(radius_resp_m)
         try:
@@ -75,6 +94,8 @@ def precompute_spatial_data(df_calls, df_calls_full, df_stations_all, _city_m, e
             'avg_dist_r': avg_dist_r,
             'avg_dist_g': avg_dist_g,
             'centrality': 1.0 - (dist_c / max_dist),
+            'raw_calls_r': raw_calls_r,
+            'raw_calls_g': raw_calls_g,
         })
 
     return calls_in_city, display_calls, resp_matrix, guard_matrix, dist_matrix_r, dist_matrix_g, station_metadata, total_calls

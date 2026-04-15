@@ -4087,13 +4087,13 @@ body{{background:transparent;overflow:hidden}}
                 # ── RAW ZONE COVERAGE: how many calls fall in this drone's zone ───
                 # Used for per-unit economics. Independent of iteration order so
                 # Responders are never penalised for a Guardian claiming the same calls.
-                # Use distance matrix directly so stations with different positions
-                # produce different raw counts (cov_array is city-clipped and can
-                # saturate to total_calls when the radius engulfs the whole city).
+                # Use haversine-based counts from station_metadata so stations at
+                # different positions produce different raw counts. UTM Euclidean
+                # overshoots at large radii and saturates to the full city total.
                 if d_type == 'RESPONDER':
-                    _raw_zone_calls = int(np.sum(dist_matrix_r[idx] <= resp_radius_mi))
+                    _raw_zone_calls = station_metadata[idx]['raw_calls_r']
                 else:
-                    _raw_zone_calls = int(np.sum(dist_matrix_g[idx] <= guard_radius_mi))
+                    _raw_zone_calls = station_metadata[idx]['raw_calls_g']
                 _raw_zone_perc  = _raw_zone_calls / total_calls
 
                 # Shared zone: calls covered by at least one OTHER active drone
