@@ -5,7 +5,7 @@ Global configuration, constants, and theme variables for BRINC Drone-First Respo
 import random
 
 # --- BUILD & VERSION STRINGS ---
-GUARDIAN_FLIGHT_HOURS_PER_DAY = 23.5
+DAILY_OPERATION_MINUTES = 24 * 60
 
 SIMULATOR_DISCLAIMER_SHORT = (
     "Simulation output only. Coverage, station placement, response time, and ROI figures are model estimates based on uploaded data and configuration settings. "
@@ -26,14 +26,15 @@ CONFIG = {
     # (15% aerial ladder avoidance at $4,500/deploy + $90 overhaul crew time saved)
     "FIRE_DEFAULT_APPLICABLE_RATE": 0.05,
     "FIRE_SAVINGS_PER_CALL": 450,
-    "DEFAULT_TRAFFIC_SPEED": 35.0, "RESPONDER_SPEED": 42.0, "GUARDIAN_SPEED": 60.0,
+    "DEFAULT_TRAFFIC_SPEED": 35.0, "RESPONDER_SPEED": 45.0, "GUARDIAN_SPEED": 60.0,
     # Guardian duty cycle: 60 min flight + 3 min charge = 63 min cycle
     # Daily airtime = (24*60) / 63 * 60 = 1371.4 min = 22.86 hrs
     "GUARDIAN_FLIGHT_MIN":  60,   # flight minutes per cycle
     "GUARDIAN_CHARGE_MIN":   3,   # charge minutes per cycle
-    # Responder duty cycle: 30-min max flight per sortie, 11.6hr shift
+    # Responder duty cycle: 30 min flight + 30 min recharge = 60 min cycle
     "RESPONDER_FLIGHT_MIN":   30,    # max flight minutes per sortie
-    "RESPONDER_PATROL_HOURS": 11.6,
+    "RESPONDER_CHARGE_MIN":   30,    # recharge minutes per cycle
+    "RESPONDER_PATROL_HOURS": 12.0,
     # Officer / drone cost model
     "OFFICER_HOURLY_WAGE": 37.0,     # baseline hourly wage for overtime estimates
     # Outcome rates (modeled estimates; adjust per-agency as needed)
@@ -46,11 +47,51 @@ CONFIG = {
     "DRONE_WINS_FLOOR":         60,
 }
 
-# Derived: compute Guardian daily airtime from duty cycle
+# Derived: compute daily airtime from duty cycle
 CONFIG["GUARDIAN_DAILY_FLIGHT_MIN"] = (
-    (24 * 60) / (CONFIG["GUARDIAN_FLIGHT_MIN"] + CONFIG["GUARDIAN_CHARGE_MIN"])
+    DAILY_OPERATION_MINUTES / (CONFIG["GUARDIAN_FLIGHT_MIN"] + CONFIG["GUARDIAN_CHARGE_MIN"])
 ) * CONFIG["GUARDIAN_FLIGHT_MIN"]
 CONFIG["GUARDIAN_PATROL_HOURS"] = CONFIG["GUARDIAN_DAILY_FLIGHT_MIN"] / 60
+CONFIG["RESPONDER_DAILY_FLIGHT_MIN"] = (
+    DAILY_OPERATION_MINUTES / (CONFIG["RESPONDER_FLIGHT_MIN"] + CONFIG["RESPONDER_CHARGE_MIN"])
+) * CONFIG["RESPONDER_FLIGHT_MIN"]
+CONFIG["RESPONDER_PATROL_HOURS"] = CONFIG["RESPONDER_DAILY_FLIGHT_MIN"] / 60
+GUARDIAN_FLIGHT_HOURS_PER_DAY = CONFIG["GUARDIAN_PATROL_HOURS"]
+
+
+def calculate_max_flights_per_day(
+    mission_minutes: float,
+    *,
+    flight_minutes: float,
+    downtime_minutes: float,
+    operation_minutes: float = DAILY_OPERATION_MINUTES,
+) -> float:
+    """Return max flights/day for a repeated mission profile under a duty cycle."""
+    mission_minutes = float(mission_minutes or 0.0)
+    flight_minutes = float(flight_minutes or 0.0)
+    downtime_minutes = max(0.0, float(downtime_minutes or 0.0))
+    operation_minutes = max(0.0, float(operation_minutes or 0.0))
+    if mission_minutes <= 0.0 or flight_minutes <= 0.0 or operation_minutes <= 0.0:
+        return 0.0
+    if mission_minutes > flight_minutes + 1e-9:
+        return 0.0
+
+    elapsed = 0.0
+    flights = 0
+    remaining_flight = flight_minutes
+    while True:
+        if mission_minutes <= remaining_flight + 1e-9:
+            if elapsed + mission_minutes > operation_minutes + 1e-9:
+                break
+            elapsed += mission_minutes
+            flights += 1
+            remaining_flight -= mission_minutes
+        else:
+            if elapsed + downtime_minutes > operation_minutes + 1e-9:
+                break
+            elapsed += downtime_minutes
+            remaining_flight = flight_minutes
+    return float(flights)
 
 # --- GEOGRAPHIC LOOKUPS ---
 STATE_FIPS = {
