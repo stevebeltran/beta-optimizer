@@ -12,6 +12,7 @@ import pandas as pd
 from shapely.geometry import box
 from shapely.ops import unary_union
 
+from modules.config import calculate_max_flights_per_day
 from modules.versioning import __version__ as _app_version
 
 
@@ -1276,9 +1277,7 @@ def optimize_fleet_selection(
                 covered_dist = dist_matrix_g[np.ix_(selected_guard_idx, covered_calls)]
                 nearest_guard_pos = np.argmin(covered_dist, axis=0)
 
-                sorties_per_day = (24 * 60) / (config["GUARDIAN_FLIGHT_MIN"] + config["GUARDIAN_CHARGE_MIN"])
                 min_scene_min = 10.0
-                guard_budget = config["GUARDIAN_DAILY_FLIGHT_MIN"]
                 guard_speed = max(float(config["GUARDIAN_SPEED"]), 1.0)
 
                 for local_pos, guard_idx in enumerate(selected_guard_idx):
@@ -1287,13 +1286,14 @@ def optimize_fleet_selection(
                         continue
                     avg_dist = float(station_metadata[guard_idx].get('avg_dist_g', 0) or 0)
                     avg_time_min = (avg_dist / guard_speed) * 60.0
-                    response_cost = (2.0 * avg_time_min) + min_scene_min
+                    response_cost = avg_time_min + min_scene_min
                     if response_cost <= 0:
                         continue
-                    airtime_cap = guard_budget / response_cost
-                    per_sortie = max(1, math.floor(config["GUARDIAN_FLIGHT_MIN"] / response_cost))
-                    duty_cap = sorties_per_day * per_sortie
-                    max_flights_cap = min(airtime_cap, duty_cap)
+                    max_flights_cap = calculate_max_flights_per_day(
+                        response_cost,
+                        flight_minutes=config["GUARDIAN_FLIGHT_MIN"],
+                        downtime_minutes=config["GUARDIAN_CHARGE_MIN"],
+                    )
                     serviceable_calls = int(math.floor(max_flights_cap / demand_per_call + 1e-9))
                     if serviceable_calls <= 0:
                         continue
