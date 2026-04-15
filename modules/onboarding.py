@@ -135,6 +135,40 @@ def restore_brinc_session(session_state, save_data):
     session_state['map_build_logged'] = False
     session_state['csvs_ready'] = True
 
+    # ── Extended session state ────────────────────────────────────────────────
+    # Jurisdiction metrics (only restore if explicitly saved; calls-derived
+    # total_original_calls is already set above from len(calls_df))
+    if 'estimated_pop' in save_data:
+        session_state['estimated_pop'] = int(save_data['estimated_pop'] or 0)
+    if 'total_original_calls' in save_data and 'calls_data' not in save_data:
+        # Only override if calls_data isn't present (otherwise set from len above)
+        session_state['total_original_calls'] = int(save_data['total_original_calls'] or 0)
+    if 'total_modeled_calls' in save_data and 'calls_data' not in save_data:
+        session_state['total_modeled_calls'] = int(save_data['total_modeled_calls'] or 0)
+    if save_data.get('inferred_daily_calls_override') is not None:
+        session_state['inferred_daily_calls_override'] = save_data['inferred_daily_calls_override']
+    if save_data.get('active_dept_name'):
+        session_state['active_dept_name'] = save_data['active_dept_name']
+    if save_data.get('file_meta'):
+        session_state['file_meta'] = dict(save_data['file_meta'])
+
+    # Display options — restore widget keys so toggles/sliders pick up saved state
+    _bool_display_keys = [
+        'show_satellite_b', 'show_boundaries_b', 'show_faa_b', 'show_no_fly_b',
+        'show_obstacles_b', 'show_coverage_b', 'show_cell_towers_b', 'show_heatmap_b',
+        'show_dots_b', 'simulate_traffic_b', 'show_health_b', 'show_financials_b',
+        'simple_cards_b',
+    ]
+    for _k in _bool_display_keys:
+        if _k in save_data:
+            session_state[_k] = bool(save_data[_k])
+
+    # Document customization
+    for _k in ('doc_custom_intro', 'doc_talking_pt_1', 'doc_talking_pt_2',
+                'doc_talking_pt_3', 'doc_custom_closing', 'doc_ae_phone'):
+        if _k in save_data:
+            session_state[_k] = str(save_data[_k] or '')
+
 
 def split_uploaded_files(uploaded_files, is_boundary_sidecar, looks_like_stations):
     file_list = list(uploaded_files)
