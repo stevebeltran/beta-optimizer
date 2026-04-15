@@ -36,8 +36,44 @@ from modules.config import (
     card_text, card_title, budget_box_bg, budget_box_border, budget_box_shadow,
     map_style, map_boundary_color, map_incident_color, legend_bg, legend_text,
     get_hero_message, get_faa_message, get_airfield_message,
-    get_jurisdiction_message, get_spatial_message, calculate_max_flights_per_day
+    get_jurisdiction_message, get_spatial_message
 )
+try:
+    from modules.config import calculate_max_flights_per_day
+except ImportError:
+    def calculate_max_flights_per_day(
+        mission_minutes: float,
+        *,
+        flight_minutes: float,
+        downtime_minutes: float,
+        operation_minutes: float = 24 * 60,
+    ) -> float:
+        mission_minutes = float(mission_minutes or 0.0)
+        flight_minutes = float(flight_minutes or 0.0)
+        downtime_minutes = max(0.0, float(downtime_minutes or 0.0))
+        operation_minutes = max(0.0, float(operation_minutes or 0.0))
+        if mission_minutes <= 0.0 or flight_minutes <= 0.0 or operation_minutes <= 0.0:
+            return 0.0
+        if mission_minutes > flight_minutes + 1e-9:
+            return 0.0
+
+        elapsed = 0.0
+        flights = 0
+        remaining_flight = flight_minutes
+        while True:
+            if mission_minutes <= remaining_flight + 1e-9:
+                if elapsed + mission_minutes > operation_minutes + 1e-9:
+                    break
+                elapsed += mission_minutes
+                flights += 1
+                remaining_flight -= mission_minutes
+            else:
+                if elapsed + downtime_minutes > operation_minutes + 1e-9:
+                    break
+                elapsed += downtime_minutes
+                remaining_flight = flight_minutes
+        return float(flights)
+
 import modules.versioning as _versioning_mod
 # No importlib.reload needed here — Streamlit restarts the process on every
 # app.py save, so versioning._compute_build_info() already runs fresh each time.
