@@ -12,7 +12,7 @@ import pandas as pd
 from shapely.geometry import box
 from shapely.ops import unary_union
 
-from modules.config import calculate_max_flights_per_day
+from modules.config import calculate_max_flights_per_day, US_STATES_ABBR
 from modules.versioning import __version__ as _app_version
 
 
@@ -969,18 +969,73 @@ def manage_custom_stations(
         custom_type = st.selectbox('Station Type', type_opts, index=type_idx, key='custom_station_type', help='Category used to label the station and keep it grouped correctly in the model.')
 
         addr_query = custom_addr.strip()
-        addr_matches = search_address_candidates(addr_query, limit=6) if len(addr_query) >= 4 else []
-        addr_options = [f"{m['matched_address']} [{m['source']}]" for m in addr_matches]
-        if addr_options:
-            addr_pick = st.selectbox('Suggested Match', options=addr_options, index=0, key='custom_station_match', help='Suggestions refresh from Census and OpenStreetMap as you type.')
-            selected_match = addr_matches[addr_options.index(addr_pick)]
+        preferred_city = session_state.get('active_city', '')
+        preferred_state = session_state.get('active_state', '')
+        locality_hint = ", ".join([v for v in [preferred_city, preferred_state] if v])
+        addr_matches = search_address_candidates(
+            addr_query,
+            limit=6,
+            preferred_city=preferred_city,
+            preferred_state=preferred_state,
+        ) if len(addr_query) >= 4 else []
+
+        def _match_in_preferred_state(match):
+            if not preferred_state:
+                return True
+            text = str(match.get('matched_address', '') or '').upper()
+            _abbr_to_full = {v: k for k, v in US_STATES_ABBR.items()}
+            _full_state = _abbr_to_full.get(preferred_state.upper(), '').upper()
+            return (
+                f", {preferred_state}" in text
+                or text.endswith(f" {preferred_state}")
+                or (_full_state and _full_state in text)
+            )
+
+        def _match_in_preferred_city(match):
+            if not preferred_city:
+                return True
+            return preferred_city.lower() in str(match.get('matched_address', '') or '').lower()
+
+        addr_option_rows = []
+        for idx, match in enumerate(addr_matches, start=1):
+            badges = []
+            if _match_in_preferred_city(match):
+                badges.append('city')
+            if _match_in_preferred_state(match):
+                badges.append('state')
+            if idx == 1:
+                badges.append('best')
+            badge_text = f" | {', '.join(badges)}" if badges else ''
+            addr_option_rows.append({
+                'label': f"{idx}. {match['matched_address']} [{match['source']}{badge_text}]",
+                'match': match,
+            })
+
+        if locality_hint:
+            st.caption(f'Suggestions are biased to {locality_hint}.')
+
+        if addr_option_rows:
+            addr_pick = st.selectbox(
+                'Suggested Match',
+                options=[row['label'] for row in addr_option_rows],
+                index=0,
+                key='custom_station_match',
+                help='Suggestions refresh as you type and are ranked toward the active city and state.',
+            )
+            selected_match = next(row['match'] for row in addr_option_rows if row['label'] == addr_pick)
             st.caption(f"Using: {selected_match['matched_address']} | {selected_match['lat']:.5f}, {selected_match['lon']:.5f}")
+            if preferred_state and not _match_in_preferred_state(selected_match):
+                st.warning(f"This suggestion is outside {preferred_state}. Confirm the address before adding it.")
+            elif preferred_city and not _match_in_preferred_city(selected_match):
+                st.info(f"No exact {preferred_city} city match found. Showing the closest in-state options first.")
         elif len(addr_query) >= 4:
             selected_match = None
-            st.caption('No suggestions yet — you can still try the add button for fallback matching.')
+            if locality_hint:
+                st.caption(f'No suggestions found yet in {locality_hint}. You can still try the add button for a fallback lookup.')
+            else:
+                st.caption('No suggestions found yet. You can still try the add button for a fallback lookup.')
         else:
             selected_match = None
-
         role_opts = ['Lock as Guardian', 'Lock as Responder']
         role_idx = role_opts.index(session_state['cs_role_buf']) if session_state['cs_role_buf'] in role_opts else 0
         custom_role = st.radio('Assign To Fleet', role_opts, index=role_idx, horizontal=True, key='custom_station_role', help='Choose which fleet this custom station will be locked into after it is added.')
@@ -995,7 +1050,12 @@ def manage_custom_stations(
                 try:
                     match = selected_match
                     if not match:
-                        fallback_matches = search_address_candidates(addr_to_geocode, limit=1)
+                        fallback_matches = search_address_candidates(
+                            addr_to_geocode,
+                            limit=1,
+                            preferred_city=preferred_city,
+                            preferred_state=preferred_state,
+                        )
                         match = fallback_matches[0] if fallback_matches else None
                     if match:
                         geo_lat = float(match['lat'])

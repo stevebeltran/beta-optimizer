@@ -1188,14 +1188,84 @@ def get_address_from_latlon(lat, lon):
     return f"{lat:.5f}, {lon:.5f}"
 
 @st.cache_data(show_spinner=False)
-def search_address_candidates(address_str, limit=6):
+def search_address_candidates(address_str, limit=6, preferred_city="", preferred_state=""):
     address_str = str(address_str or '').strip()
     if not address_str:
         return []
 
     limit = max(1, min(int(limit or 6), 10))
+    preferred_city = str(preferred_city or '').strip()
+    preferred_state = str(preferred_state or '').strip().upper()
+    # Full state name for providers (OSM) that return "Nebraska" instead of "NE"
+    _abbr_to_full = {v: k for k, v in US_STATES_ABBR.items()}
+    preferred_state_full = _abbr_to_full.get(preferred_state, '').lower()
     candidates = []
     seen = set()
+
+    def _lookup_secret(*names):
+        try:
+            for _key_name in names:
+                _key_val = str(st.secrets.get(_key_name, "") or "").strip()
+                if _key_val:
+                    return _key_val
+        except Exception:
+            return ""
+        return ""
+
+    def _normalize_text(value):
+        return str(value or "").strip().lower()
+
+    def _query_variants():
+        _variants = [address_str]
+        _has_city = preferred_city and preferred_city.lower() in address_str.lower()
+        _has_state = preferred_state and preferred_state.lower() in address_str.lower()
+        if preferred_city and preferred_state and (not _has_city or not _has_state):
+            _variants.append(f"{address_str}, {preferred_city}, {preferred_state}")
+        if preferred_state and not _has_state:
+            _variants.append(f"{address_str}, {preferred_state}")
+        ordered = []
+        seen_variants = set()
+        for _variant in _variants:
+            _clean = str(_variant or '').strip()
+            if _clean and _clean.lower() not in seen_variants:
+                seen_variants.add(_clean.lower())
+                ordered.append(_clean)
+        return ordered
+
+    def _candidate_score(candidate):
+        _label = _normalize_text(candidate.get('matched_address') or candidate.get('label'))
+        _source = str(candidate.get('source', ''))
+        _score = {
+            'Google': 500,
+            'Mapbox': 425,
+            'Census': 350,
+            'OSM': 250,
+        }.get(_source, 0)
+
+        if preferred_state:
+            _state_token = f", {preferred_state.lower()}"
+            _full_token = f", {preferred_state_full}" if preferred_state_full else None
+            _in_label = (
+                _state_token in _label
+                or _label.endswith(f" {preferred_state.lower()}")
+                or (_full_token and _full_token in _label)
+            )
+            if _in_label:
+                _score += 220
+            else:
+                _score -= 180
+        if preferred_city:
+            if preferred_city.lower() in _label:
+                _score += 150
+            else:
+                _score -= 80
+
+        _typed = _normalize_text(address_str)
+        if _typed and _typed in _label:
+            _score += 80
+        elif _typed:
+            _score += max(0, 30 - min(len(_typed), 30))
+        return _score
 
     def _add_candidate(label, lat, lon, source, raw_match=''):
         try:
@@ -1213,82 +1283,119 @@ def search_address_candidates(address_str, limit=6):
             'lat': lat_f,
             'lon': lon_f,
             'source': source,
+            '_score': 0,
         })
 
     def _google_maps_api_key():
-        try:
-            for _key_name in ("GOOGLE_MAPS_API_KEY", "GOOGLE_GEOCODING_API_KEY", "GMAPS_API_KEY"):
-                _key_val = str(st.secrets.get(_key_name, "") or "").strip()
-                if _key_val:
-                    return _key_val
-        except Exception:
-            return ""
-        return ""
+        return _lookup_secret("GOOGLE_MAPS_API_KEY", "GOOGLE_GEOCODING_API_KEY", "GMAPS_API_KEY")
 
-    try:
-        _params = urllib.parse.urlencode({
-            'address': address_str,
-            'benchmark': '2020',
-            'format': 'json'
-        })
-        _url = f"https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?{_params}"
-        _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
-        with urllib.request.urlopen(_req, timeout=8) as _resp:
-            _data = json.loads(_resp.read().decode('utf-8'))
-        for _match in _data.get('result', {}).get('addressMatches', [])[:limit]:
-            _coords = _match.get('coordinates', {})
-            _add_candidate(
-                _match.get('matchedAddress', address_str),
-                _coords.get('y'),
-                _coords.get('x'),
-                'Census',
-                raw_match=_match.get('matchedAddress', address_str),
-            )
-    except Exception:
-        pass
+    def _mapbox_api_key():
+        return _lookup_secret("MAPBOX_ACCESS_TOKEN", "MAPBOX_API_KEY")
 
-
-    _google_api_key = _google_maps_api_key()
-    if _google_api_key:
+    for _query in _query_variants():
         try:
             _params = urllib.parse.urlencode({
-                'address': address_str,
-                'key': _google_api_key,
+                'address': _query,
+                'benchmark': '2020',
+                'format': 'json'
             })
-            _url = f"https://maps.googleapis.com/maps/api/geocode/json?{_params}"
+            _url = f"https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?{_params}"
             _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
             with urllib.request.urlopen(_req, timeout=8) as _resp:
                 _data = json.loads(_resp.read().decode('utf-8'))
-            for _match in _data.get('results', [])[:limit]:
-                _geometry = _match.get('geometry', {}).get('location', {})
-                _label = _match.get('formatted_address', address_str)
-                _add_candidate(_label, _geometry.get('lat'), _geometry.get('lng'), 'Google', raw_match=_label)
+            for _match in _data.get('result', {}).get('addressMatches', [])[:limit]:
+                _coords = _match.get('coordinates', {})
+                _add_candidate(
+                    _match.get('matchedAddress', _query),
+                    _coords.get('y'),
+                    _coords.get('x'),
+                    'Census',
+                    raw_match=_match.get('matchedAddress', _query),
+                )
         except Exception:
             pass
 
-    try:
-        _params = urllib.parse.urlencode({
-            'format': 'jsonv2',
-            'q': address_str,
-            'limit': str(limit),
-            'countrycodes': 'us',
-            'addressdetails': '1',
-        })
-        _url = f"https://nominatim.openstreetmap.org/search?{_params}"
-        _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
-        with urllib.request.urlopen(_req, timeout=8) as _resp:
-            _data = json.loads(_resp.read().decode('utf-8'))
-        for _match in _data[:limit]:
-            _label = _match.get('display_name', address_str)
-            _add_candidate(_label, _match.get('lat'), _match.get('lon'), 'OSM', raw_match=_label)
-    except Exception:
-        pass
+    _google_api_key = _google_maps_api_key()
+    if _google_api_key:
+        for _query in _query_variants():
+            try:
+                _params = urllib.parse.urlencode({
+                    'address': _query,
+                    'key': _google_api_key,
+                    'components': f'country:US|administrative_area:{preferred_state}' if preferred_state else 'country:US',
+                })
+                _url = f"https://maps.googleapis.com/maps/api/geocode/json?{_params}"
+                _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
+                with urllib.request.urlopen(_req, timeout=8) as _resp:
+                    _data = json.loads(_resp.read().decode('utf-8'))
+                for _match in _data.get('results', [])[:limit]:
+                    _geometry = _match.get('geometry', {}).get('location', {})
+                    _label = _match.get('formatted_address', _query)
+                    _add_candidate(_label, _geometry.get('lat'), _geometry.get('lng'), 'Google', raw_match=_label)
+            except Exception:
+                pass
 
-    return candidates[:limit]
+    _mapbox_key = _mapbox_api_key()
+    if _mapbox_key:
+        for _query in _query_variants():
+            try:
+                _params = urllib.parse.urlencode({
+                    'q': _query,
+                    'access_token': _mapbox_key,
+                    'country': 'US',
+                    'limit': str(limit),
+                    'autocomplete': 'true',
+                    'types': 'address,street',
+                })
+                _url = f"https://api.mapbox.com/search/geocode/v6/forward?{_params}"
+                _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
+                with urllib.request.urlopen(_req, timeout=8) as _resp:
+                    _data = json.loads(_resp.read().decode('utf-8'))
+                for _match in _data.get('features', [])[:limit]:
+                    _coords = (_match.get('geometry') or {}).get('coordinates') or [None, None]
+                    _props = _match.get('properties') or {}
+                    _label = (
+                        _props.get('full_address')
+                        or _match.get('place_name')
+                        or _match.get('name')
+                        or _query
+                    )
+                    _add_candidate(_label, _coords[1], _coords[0], 'Mapbox', raw_match=_label)
+            except Exception:
+                pass
+
+    for _query in _query_variants():
+        try:
+            _params = urllib.parse.urlencode({
+                'format': 'jsonv2',
+                'q': _query,
+                'limit': str(limit),
+                'countrycodes': 'us',
+                'addressdetails': '1',
+            })
+            _url = f"https://nominatim.openstreetmap.org/search?{_params}"
+            _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
+            with urllib.request.urlopen(_req, timeout=8) as _resp:
+                _data = json.loads(_resp.read().decode('utf-8'))
+            for _match in _data[:limit]:
+                _label = _match.get('display_name', _query)
+                _add_candidate(_label, _match.get('lat'), _match.get('lon'), 'OSM', raw_match=_label)
+        except Exception:
+            pass
+
+    for _candidate in candidates:
+        _candidate['_score'] = _candidate_score(_candidate)
+    candidates.sort(key=lambda _item: (-_item.get('_score', 0), _item.get('matched_address', '')))
+    return [{k: v for k, v in _candidate.items() if k != '_score'} for _candidate in candidates[:limit]]
 
 @st.cache_data(show_spinner=False)
 def forward_geocode(address_str):
-    _matches = search_address_candidates(address_str, limit=1)
+    _matches = search_address_candidates(
+        address_str,
+        limit=1,
+        preferred_city=st.session_state.get('active_city', ''),
+        preferred_state=st.session_state.get('active_state', ''),
+    )
     if _matches:
         return float(_matches[0]['lat']), float(_matches[0]['lon'])
     return None, None
@@ -3957,7 +4064,13 @@ body{{background:transparent;overflow:hidden}}
                         _metric_cov_g |= _mask
                         _station_city_masks[('GUARDIAN', _idx)] = _mask
                         _station_city_call_counts[('GUARDIAN', _idx)] = int(_mask.sum())
-                for _fleet_type, _fleet_order in (
+        if _metric_cov_r.shape[0] != _metric_total_calls:
+            _metric_cov_r = np.zeros(_metric_total_calls, dtype=bool)
+        if _metric_cov_g.shape[0] != _metric_total_calls:
+            _metric_cov_g = np.zeros(_metric_total_calls, dtype=bool)
+        cov_r = _metric_cov_r
+        cov_g = _metric_cov_g
+        for _fleet_type, _fleet_order in (
                     ('GUARDIAN', [idx for idx, d_type in ordered_deployments_raw if d_type == 'GUARDIAN']),
                     ('RESPONDER', [idx for idx, d_type in ordered_deployments_raw if d_type == 'RESPONDER']),
                 ):
@@ -4102,7 +4215,9 @@ body{{background:transparent;overflow:hidden}}
                 shared_mask   = d['cov_array'] & (_cover_counts > 1)
                 _shared_calls = int(np.sum(shared_mask))
                 _excl_calls   = _raw_zone_calls - _shared_calls  # calls ONLY this drone covers
+                _exclusive_weighted_zone_calls = float(np.sum(d['cov_array'] & (_cover_counts == 1)))
                 _weighted_zone_calls = float(np.sum(d['cov_array'] / np.maximum(_cover_counts, 1)))
+                _concurrent_weighted_zone_calls = max(0.0, _weighted_zone_calls - _exclusive_weighted_zone_calls)
                 _weighted_zone_perc  = (_weighted_zone_calls / total_calls) if total_calls > 0 else 0.0
 
                 # ── UTILIZATION: based on overlap-adjusted station load ───────────
@@ -4157,9 +4272,14 @@ body{{background:transparent;overflow:hidden}}
                     _effective_dfr = dfr_dispatch_rate
 
                 # On-scene minutes available per flight given current demand.
-                # This uses the same travel-cost assumption as the capacity model,
-                # so Guardians no longer overstate spare time by ignoring the return leg.
-                _on_scene_min = (_budget_min / max(_zone_flights, 0.001)) - _travel_cost if _zone_flights > 0 else 99.0
+                # Capped at single-flight endurance minus travel — you cannot stay
+                # on scene longer than the battery allows regardless of how few calls there are.
+                _flight_endurance = CONFIG["GUARDIAN_FLIGHT_MIN"] if _is_guard else CONFIG["RESPONDER_FLIGHT_MIN"]
+                _max_on_scene = max(0.0, _flight_endurance - _travel_cost)
+                _on_scene_min = min(
+                    (_budget_min / max(_zone_flights, 0.001)) - _travel_cost if _zone_flights > 0 else _max_on_scene,
+                    _max_on_scene,
+                )
 
                 _raw_calls_in_range_day = _raw_zone_calls / 365.0
                 _dispatchable_calls_day = _raw_calls_in_range_day * _effective_dfr
@@ -4204,15 +4324,30 @@ body{{background:transparent;overflow:hidden}}
                 _handled_calls_yr  = _handled_calls_day * 365.0
                 _deflected_calls_day = _handled_calls_day * deflection_rate
                 _deflected_calls_yr  = _handled_calls_yr * deflection_rate
-                _base_annual       = _handled_calls_yr * _cost_delta
+                _exclusive_dispatchable_calls_day = min(
+                    (_exclusive_weighted_zone_calls / 365.0) * _effective_dfr,
+                    _dispatchable_calls_day,
+                )
+                _concurrent_dispatchable_calls_day = min(
+                    (_concurrent_weighted_zone_calls / 365.0) * _effective_dfr,
+                    _dispatchable_calls_day,
+                )
+                _dispatchable_split_total = max(_weighted_dispatchable_calls_day, 0.0)
+                if _dispatchable_split_total > 0:
+                    _exclusive_share = min(1.0, max(0.0, _exclusive_dispatchable_calls_day / _dispatchable_split_total))
+                else:
+                    _exclusive_share = 0.0
+                _concurrent_share = max(0.0, 1.0 - _exclusive_share)
+                _excl_flights      = _handled_calls_day * _exclusive_share
+                _concurrent_daily  = _handled_calls_day * _concurrent_share
+                _excl_deflected    = _deflected_calls_day * _exclusive_share
+                _concurrent_deflected_day = _deflected_calls_day * _concurrent_share
+                _base_annual       = (_excl_flights * 365.0) * _cost_delta
                 _base_monthly      = _base_annual / 12.0
-                _concurrent_daily  = 0.0
-                _concurrent_month  = 0.0
-                _concurrent_annual = 0.0
-                _best_monthly      = _base_monthly
-                _best_annual       = _base_annual
-                _excl_flights      = _handled_calls_day
-                _excl_deflected    = _deflected_calls_day
+                _concurrent_month  = (_concurrent_daily * 365.0 * _cost_delta) / 12.0
+                _concurrent_annual = _concurrent_daily * 365.0 * _cost_delta
+                _best_monthly      = _base_monthly + _concurrent_month
+                _best_annual       = _base_annual + _concurrent_annual
 
                 # ── STORE — use best_case as primary display value ─────────────────
                 _assigned_daily_calls   = _weighted_zone_perc * calls_per_day if total_calls > 0 else 0.0
@@ -4236,7 +4371,7 @@ body{{background:transparent;overflow:hidden}}
                 d['marginal_deflected']  = _excl_deflected
                 d['handled_calls_day']   = _handled_calls_day
                 d['handled_calls_yr']    = _handled_calls_yr
-                d['shared_flights']      = 0.0
+                d['shared_flights']      = _concurrent_daily
                 d['zone_flights']        = _zone_flights
                 d['zone_calls_annual']   = _weighted_zone_calls * 365.0 / 365.0
                 d['raw_zone_calls_annual'] = _raw_zone_calls
@@ -6283,6 +6418,34 @@ body{{background:transparent;overflow:hidden}}
             "brinc_user": st.session_state.get('brinc_user', ''),
             "pricing_tier": st.session_state.get('pricing_tier', 'Safe Guard'),
             "app_version": __version__,
+            # ── Extended session state ────────────────────────────────────
+            "estimated_pop":               int(st.session_state.get('estimated_pop', 0) or 0),
+            "total_original_calls":        int(st.session_state.get('total_original_calls', 0) or 0),
+            "total_modeled_calls":         int(st.session_state.get('total_modeled_calls', 0) or 0),
+            "inferred_daily_calls_override": st.session_state.get('inferred_daily_calls_override'),
+            "data_source":                 st.session_state.get('data_source', 'unknown'),
+            "active_dept_name":            st.session_state.get('active_dept_name', ''),
+            "file_meta":                   {k: v for k, v in (st.session_state.get('file_meta') or {}).items()
+                                            if isinstance(v, (str, int, float, bool, type(None)))},
+            "show_satellite_b":            st.session_state.get('show_satellite_b', False),
+            "show_boundaries_b":           st.session_state.get('show_boundaries_b', True),
+            "show_faa_b":                  st.session_state.get('show_faa_b', False),
+            "show_no_fly_b":               st.session_state.get('show_no_fly_b', False),
+            "show_obstacles_b":            st.session_state.get('show_obstacles_b', False),
+            "show_coverage_b":             st.session_state.get('show_coverage_b', False),
+            "show_cell_towers_b":          st.session_state.get('show_cell_towers_b', False),
+            "show_heatmap_b":              st.session_state.get('show_heatmap_b', False),
+            "show_dots_b":                 st.session_state.get('show_dots_b', True),
+            "simulate_traffic_b":          st.session_state.get('simulate_traffic_b', False),
+            "show_health_b":               st.session_state.get('show_health_b', False),
+            "show_financials_b":           st.session_state.get('show_financials_b', True),
+            "simple_cards_b":              st.session_state.get('simple_cards_b', False),
+            "doc_custom_intro":            st.session_state.get('doc_custom_intro', ''),
+            "doc_talking_pt_1":            st.session_state.get('doc_talking_pt_1', ''),
+            "doc_talking_pt_2":            st.session_state.get('doc_talking_pt_2', ''),
+            "doc_talking_pt_3":            st.session_state.get('doc_talking_pt_3', ''),
+            "doc_custom_closing":          st.session_state.get('doc_custom_closing', ''),
+            "doc_ae_phone":                st.session_state.get('doc_ae_phone', ''),
         }
 
         if fleet_capex > 0:
@@ -6451,6 +6614,37 @@ body{{background:transparent;overflow:hidden}}
                 # Pricing tier selection
                 "pricing_tier": st.session_state.get('pricing_tier', 'Safe Guard'),
                 "app_version": __version__,
+                # ── Extended session state ────────────────────────────────────
+                # Jurisdiction metrics
+                "estimated_pop":               int(st.session_state.get('estimated_pop', 0) or 0),
+                "total_original_calls":        int(st.session_state.get('total_original_calls', 0) or 0),
+                "total_modeled_calls":         int(st.session_state.get('total_modeled_calls', 0) or 0),
+                "inferred_daily_calls_override": st.session_state.get('inferred_daily_calls_override'),
+                "data_source":                 st.session_state.get('data_source', 'unknown'),
+                "active_dept_name":            st.session_state.get('active_dept_name', ''),
+                "file_meta":                   {k: v for k, v in (st.session_state.get('file_meta') or {}).items()
+                                                if isinstance(v, (str, int, float, bool, type(None)))},
+                # Display options (widget keys)
+                "show_satellite_b":            st.session_state.get('show_satellite_b', False),
+                "show_boundaries_b":           st.session_state.get('show_boundaries_b', True),
+                "show_faa_b":                  st.session_state.get('show_faa_b', False),
+                "show_no_fly_b":               st.session_state.get('show_no_fly_b', False),
+                "show_obstacles_b":            st.session_state.get('show_obstacles_b', False),
+                "show_coverage_b":             st.session_state.get('show_coverage_b', False),
+                "show_cell_towers_b":          st.session_state.get('show_cell_towers_b', False),
+                "show_heatmap_b":              st.session_state.get('show_heatmap_b', False),
+                "show_dots_b":                 st.session_state.get('show_dots_b', True),
+                "simulate_traffic_b":          st.session_state.get('simulate_traffic_b', False),
+                "show_health_b":               st.session_state.get('show_health_b', False),
+                "show_financials_b":           st.session_state.get('show_financials_b', True),
+                "simple_cards_b":              st.session_state.get('simple_cards_b', False),
+                # Document customization
+                "doc_custom_intro":            st.session_state.get('doc_custom_intro', ''),
+                "doc_talking_pt_1":            st.session_state.get('doc_talking_pt_1', ''),
+                "doc_talking_pt_2":            st.session_state.get('doc_talking_pt_2', ''),
+                "doc_talking_pt_3":            st.session_state.get('doc_talking_pt_3', ''),
+                "doc_custom_closing":          st.session_state.get('doc_custom_closing', ''),
+                "doc_ae_phone":                st.session_state.get('doc_ae_phone', ''),
             }
 
             export_html = None
