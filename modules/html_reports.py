@@ -1380,12 +1380,12 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
             )
             cards_html.append(f'''
 <div class="unit-card" style="background:{card_bg};border:1px solid {"#dc3545" if d_capacity_limited else card_border};border-top:3px solid {d_color};border-radius:8px;padding:10px 12px;box-sizing:border-box;">
-  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:4px;margin-bottom:2px;">
-    <span style="font-weight:700;font-size:0.78rem;color:{card_title};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">{"🔒 " if d.get("pinned") else ""}{d["name"]}</span>
-    <span style="font-size:0.58rem;color:#666;text-transform:uppercase;white-space:nowrap;flex-shrink:0;">{d_type} · #{d_step}</span><span style="font-size:0.56rem;color:{status_color};background:{status_bg};border:1px solid {status_border};border-radius:999px;padding:2px 7px;font-weight:700;white-space:nowrap;">{status_text}</span>
+  <div style="display:flex; align-items:baseline; gap:5px; overflow:hidden;">
+    <span style="font-weight:700; font-size:0.78rem; color:{card_title}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0;">{"🔒 " if d.get("pinned") else ""}{d["name"]}</span>
+    <span style="font-size:0.58rem; color:#666; text-transform:uppercase; letter-spacing:0.3px; white-space:nowrap; flex-shrink:0;">{d_type} · #{d_step}</span><span style="font-size:0.56rem;color:{status_color};background:{status_bg};border:1px solid {status_border};border-radius:999px;padding:2px 7px;font-weight:700;white-space:nowrap;">{status_text}</span>
   </div>
-  <div style="font-size:0.62rem;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-    <a href="{gmaps_url}" target="_blank" style="color:{accent_color};text-decoration:none;font-weight:500;opacity:0.85;">{coord_label} ↗</a>
+  <div style="font-size:0.65rem; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+    <a href="{gmaps_url}" target="_blank" style="color:{accent_color}; text-decoration:none; font-weight:500; opacity:0.85;">{coord_label} ↗</a>
   </div>
   {_sim_fin_hero}
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:6px;">
