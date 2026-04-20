@@ -1911,6 +1911,52 @@ def _lookup_population_for_boundary(state_abbr, city_name, boundary_kind='place'
     return fetch_census_population(state_fips, lookup_name, is_county=(boundary_kind == 'county'))
 
 
+def _refresh_reference_population(session_state, selected_names=None):
+    state_abbr = str(session_state.get('active_state', '') or '').strip().upper()
+    boundary_kind = str(session_state.get('boundary_kind', 'place') or 'place').strip().lower()
+    if session_state.get('use_county_boundary'):
+        boundary_kind = 'county'
+
+    targets = []
+    for name in (selected_names or []):
+        clean_name = str(name or '').strip()
+        if clean_name and clean_name not in targets:
+            targets.append(clean_name)
+
+    if not targets:
+        fallback_name = session_state.get('active_city') or session_state.get('active_state') or ''
+        fallback_name = str(fallback_name or '').strip()
+        if fallback_name:
+            targets.append(fallback_name)
+
+    total_population = 0
+    all_targets_resolved = bool(targets)
+
+    if boundary_kind == 'state':
+        resolved = _lookup_population_for_boundary(state_abbr, state_abbr, boundary_kind='state')
+        total_population = int(resolved or 0)
+        all_targets_resolved = bool(resolved)
+    elif state_abbr and targets:
+        for target_name in targets:
+            resolved = _lookup_population_for_boundary(
+                state_abbr,
+                target_name,
+                boundary_kind=boundary_kind,
+            )
+            if resolved:
+                total_population += int(resolved)
+            else:
+                all_targets_resolved = False
+    else:
+        all_targets_resolved = False
+
+    session_state['estimated_pop'] = int(total_population or 0)
+    session_state['_pop_resolved'] = bool(total_population) and all_targets_resolved
+    session_state['population_reference_kind'] = boundary_kind
+    session_state['population_reference_targets'] = targets
+    return int(total_population or 0)
+
+
 @st.cache_data
 def fetch_census_population(state_fips, place_name, is_county=False):
     if is_county:
@@ -3531,19 +3577,7 @@ def main():
                             )
 
                         try:
-                            st.session_state['estimated_pop'] = 0
-                            st.session_state['_pop_resolved'] = False
-                            _resolved_boundary_kind = str(st.session_state.get('boundary_kind', 'place') or 'place').strip().lower()
-                            _resolved_city = str(st.session_state.get('active_city', '') or '').strip()
-                            _resolved_state = str(st.session_state.get('active_state', '') or '').strip().upper()
-                            _resolved_pop = _lookup_population_for_boundary(
-                                _resolved_state,
-                                _resolved_city,
-                                boundary_kind=_resolved_boundary_kind,
-                            )
-                            if _resolved_pop:
-                                st.session_state['estimated_pop'] = _resolved_pop
-                                st.session_state['_pop_resolved'] = True
+                            _refresh_reference_population(st.session_state)
                         except Exception:
                             pass
 
@@ -4095,6 +4129,11 @@ def main():
                                 _select_best_boundary_for_calls,
                                 save_boundary_gdf,
                             )
+
+                        try:
+                            _refresh_reference_population(st.session_state)
+                        except Exception:
+                            pass
 
                         st.session_state['data_source'] = 'cad_upload'
                         st.session_state['demo_mode_used'] = False
@@ -4721,6 +4760,8 @@ body{{background:transparent;overflow:hidden}}
             city_boundary_geom if 'city_boundary_geom' in locals() else None,
             epsg_code if 'epsg_code' in locals() else None,
         )
+
+        _refresh_reference_population(st.session_state, selected_names)
 
 
         df_stations_all, df_calls, df_calls_full = render_data_filters(
