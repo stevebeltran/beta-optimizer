@@ -650,11 +650,11 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False):
 
                 _samp = df_ana[_col].dropna().head(20)
 
-                _trial = pd.to_datetime(_samp, errors='coerce')
+                _trial = pd.to_datetime(_samp, format='mixed', errors='coerce')
 
                 if _trial.notna().sum() >= 10 and _trial.dt.year.between(2000, 2035).mean() > 0.8:
 
-                    dt_obj = pd.to_datetime(df_ana[_col], errors='coerce')
+                    dt_obj = pd.to_datetime(df_ana[_col], format='mixed', errors='coerce')
 
                     break
 

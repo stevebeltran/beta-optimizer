@@ -11,8 +11,11 @@ import io
 import json
 import datetime
 import math
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
+import pyproj
 from modules.config import STATE_FIPS, US_STATES_ABBR, KNOWN_POPULATIONS
 
 def _extract_file_meta(raw_df, res_df, filename=""):
@@ -34,7 +37,7 @@ def _extract_file_meta(raw_df, res_df, filename=""):
 
         # ── Date range ───────────────────────────────────────────────────────
         if 'date' in res_df.columns:
-            _dates = pd.to_datetime(res_df['date'], errors='coerce').dropna()
+            _dates = pd.to_datetime(res_df['date'], format='mixed', errors='coerce').dropna()
             if not _dates.empty:
                 meta['file_date_range_start'] = _dates.min().strftime('%Y-%m-%d')
                 meta['file_date_range_end']   = _dates.max().strftime('%Y-%m-%d')
@@ -91,7 +94,7 @@ def _extract_file_meta(raw_df, res_df, filename=""):
     except Exception:
         pass
     return meta
-def aggressive_parse_calls(uploaded_files):
+def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
     all_calls_list = []
     CV = {
         'date': ['received date','incident date','call date','call creation date','calldatetime','call datetime','calltime','timestamp','date','datetime','date time','dispatch date','time received','incdate','date_rept','date_occu','createdtime','created_time','receivedtime','received_time','eventtime','event_time','incidenttime','incident_time','reportedtime','reported_time','entrytime','entry_time','time_central','time_stamp','created'],
@@ -104,6 +107,18 @@ def aggressive_parse_calls(uploaded_files):
                 'map_x','point_x','gps_lon','gps_long','gps_longitude','xlon','coord_x','easting',
                 'x_wgs','lon_wgs','incident_lon','inc_lon','event_lon','x_coordinate','address_x','xlocation']
     }
+
+    def _coord_column_matches(col_name, patterns):
+        norm = str(col_name).strip().lower()
+        normalized = norm.replace('-', ' ').replace('_', ' ')
+        compact = re.sub(r'[^a-z0-9]+', '', norm)
+        for pattern in patterns:
+            p_norm = str(pattern).strip().lower()
+            p_normalized = p_norm.replace('-', ' ').replace('_', ' ')
+            p_compact = re.sub(r'[^a-z0-9]+', '', p_norm)
+            if p_norm in norm or p_normalized in normalized or (p_compact and p_compact in compact):
+                return True
+        return False
 
 
     def _looks_like_headerless_geocoder_export(df):
@@ -153,9 +168,9 @@ def aggressive_parse_calls(uploaded_files):
                 lat_lon_rate = (a_num.between(-90, 90) & b_num.between(-180, 180)).mean()
                 return max(lon_lat_rate, lat_lon_rate)
 
-            date_rate = pd.to_datetime(sample.iloc[:, 0], errors='coerce').notna().mean()
+            date_rate = pd.to_datetime(sample.iloc[:, 0], format='mixed', errors='coerce').notna().mean()
             time_rate = pd.to_datetime(sample.iloc[:, 1], format='%H:%M:%S', errors='coerce').notna().mean() if len(sample.columns) > 1 else 0.0
-            datetime_rate = pd.to_datetime((sample.iloc[:, 0].astype(str).str.strip() + ' ' + sample.iloc[:, 1].astype(str).str.strip()), errors='coerce').notna().mean() if len(sample.columns) > 1 else 0.0
+            datetime_rate = pd.to_datetime((sample.iloc[:, 0].astype(str).str.strip() + ' ' + sample.iloc[:, 1].astype(str).str.strip()), format='mixed', errors='coerce').notna().mean() if len(sample.columns) > 1 else 0.0
             textish_rate = sample.iloc[:, 2].astype(str).str.strip().ne('').mean() if len(sample.columns) > 2 else 0.0
             coord_score = 0.0
             max_scan = min(len(sample.columns) - 1, 7)
@@ -293,7 +308,7 @@ def aggressive_parse_calls(uploaded_files):
         if m: return int(m.group(1))
         return 3
 
-    for cfile in uploaded_files:
+    for file_idx, cfile in enumerate(uploaded_files):
         try:
             fname = cfile.name.lower()
             excel_exts = ('.xlsx', '.xls', '.xlsb', '.xlsm')
@@ -435,17 +450,22 @@ def aggressive_parse_calls(uploaded_files):
                     except Exception:
                         pass
 
+            source_ids = pd.Series(
+                [f"{file_idx}:{cfile.name}:{row_idx}" for row_idx in range(len(raw_df))],
+                index=raw_df.index
+            )
+
             res = pd.DataFrame()
             exact_coord_names = {
-                'lat': ['latitude', 'lat', 'gps_lat', 'gps_latitude'],
-                'lon': ['longitude', 'lon', 'long', 'gps_lon', 'gps_longitude']
+                'lat': ['latitude', 'lat', 'gps_lat', 'gps_latitude', 'y'],
+                'lon': ['longitude', 'lon', 'long', 'gps_lon', 'gps_longitude', 'x']
             }
             for field in ['lat', 'lon']:
                 found_exact = [c for c in raw_df.columns if c.strip().lower() in exact_coord_names[field]]
                 # Exclude bare 'lonlat' from the loose scan — it's a combined field,
                 # not a plain numeric column, and will produce all-NaN via pd.to_numeric.
                 found_loose = [c for c in raw_df.columns
-                               if c != 'lonlat' and any(s in c for s in CV[field])]
+                               if c != 'lonlat' and _coord_column_matches(c, CV[field])]
                 found = found_exact or found_loose
                 if found:
                     res[field] = pd.to_numeric(raw_df[found[0]], errors='coerce')
@@ -478,7 +498,7 @@ def aggressive_parse_calls(uploaded_files):
                         lat_candidates.append((c, series))
                         lon_candidates.append((c, series))
                         continue
-                    if -90 <= mn and mx <= 90 and mn < -1:
+                    if -90 <= mn and mx <= 90:
                         lat_candidates.append((c, series))
                     if -180 <= mn and mx <= 180 and (mn < -90 or mx > 90):
                         lon_candidates.append((c, series))
@@ -538,7 +558,7 @@ def aggressive_parse_calls(uploaded_files):
                     if _col in (t_found or []):
                         continue
                     try:
-                        _test = pd.to_datetime(raw_df[_col].dropna().head(50), errors='coerce')
+                        _test = pd.to_datetime(raw_df[_col].dropna().head(50), format='mixed', errors='coerce')
                         _valid = _test.dropna()
                         if len(_valid) >= 10 and _valid.dt.year.between(2000, 2035).mean() > 0.8:
                             d_found = [_col]
@@ -555,7 +575,7 @@ def aggressive_parse_calls(uploaded_files):
                 def _col_to_datestr(series):
                     """Convert a column that may contain datetime objects → 'YYYY-MM-DD' strings."""
                     try:
-                        _p = pd.to_datetime(series, errors='coerce')
+                        _p = pd.to_datetime(series, format='mixed', errors='coerce')
                         if _p.notna().mean() > 0.6:
                             return _p.dt.strftime('%Y-%m-%d').where(_p.notna(), '')
                     except Exception:
@@ -609,79 +629,90 @@ def aggressive_parse_calls(uploaded_files):
                             continue
                 if dt_series is None:
                     # Final fallback: let pandas infer (slow but handles edge cases)
-                    dt_series = pd.to_datetime(_raw_dt_str, errors='coerce')
+                    dt_series = pd.to_datetime(_raw_dt_str, format='mixed', errors='coerce')
 
                 res['date'] = dt_series.dt.strftime('%Y-%m-%d')
                 res['time'] = dt_series.dt.strftime('%H:%M:%S')
 
             # --- COORDINATE CLEANUP: sentinel values & sign errors ---
             if not res.empty and 'lat' in res.columns and 'lon' in res.columns:
-                # Drop obvious sentinel/null-coordinate rows before any further processing
-                # lat=0 and lon=0 are common CAD null sentinels (no valid location on the equator/prime meridian)
-                # lon=-179.99999 is another common sentinel used by some CAD vendors
-                _sentinel_mask = (
-                    (res['lat'] == 0) | (res['lon'] == 0) |
-                    (res['lat'].abs() < 0.001) | (res['lon'].abs() < 0.001) |
-                    (res['lon'] < -179.9)
-                )
-                if _sentinel_mask.any():
-                    res = res[~_sentinel_mask].copy()
+                _coord_scale_max = max(res['lat'].abs().max(), res['lon'].abs().max())
+                if _coord_scale_max <= 1000:
+                    # Drop obvious sentinel/null-coordinate rows before any further processing.
+                    # Keep this limited to decimal-scale coordinates so integer microdegrees
+                    # and projected coordinates are not discarded before conversion.
+                    _sentinel_mask = (
+                        (res['lat'] == 0) | (res['lon'] == 0) |
+                        (res['lat'].abs() < 0.001) | (res['lon'].abs() < 0.001) |
+                        (res['lon'] < -179.9)
+                    )
+                    if _sentinel_mask.any():
+                        res = res[~_sentinel_mask].copy()
 
-                # Fix wrong-sign longitudes: some CAD exports omit the minus sign for
-                # western-hemisphere longitudes (e.g. 81.31 instead of -81.31).
-                # Detect by checking if the majority of lons are negative (correct for US)
-                # while a small minority are positive with the same absolute magnitude.
-                if not res.empty and 'lon' in res.columns:
-                    _neg_count = (res['lon'] < 0).sum()
-                    _pos_count = (res['lon'] > 0).sum()
-                    _total = len(res)
-                    # If >90% are negative but some are positive AND the median negative lon
-                    # matches -(positive lon range), flip the positive ones
-                    if _neg_count > 0 and _pos_count > 0 and (_neg_count / _total) > 0.90:
-                        _median_neg = res.loc[res['lon'] < 0, 'lon'].median()
-                        _pos_vals = res.loc[res['lon'] > 0, 'lon']
-                        # Check if flipping would land near the median negative cluster
-                        _would_match = ((-_pos_vals).between(_median_neg - 2, _median_neg + 2)).mean()
-                        if _would_match > 0.5:
-                            res.loc[res['lon'] > 0, 'lon'] = -res.loc[res['lon'] > 0, 'lon']
+                    # Fix wrong-sign longitudes: some CAD exports omit the minus sign for
+                    # western-hemisphere longitudes (e.g. 81.31 instead of -81.31).
+                    if not res.empty and 'lon' in res.columns:
+                        _neg_count = (res['lon'] < 0).sum()
+                        _pos_count = (res['lon'] > 0).sum()
+                        _total = len(res)
+                        if _neg_count > 0 and _pos_count > 0 and (_neg_count / _total) > 0.90:
+                            _median_neg = res.loc[res['lon'] < 0, 'lon'].median()
+                            _pos_vals = res.loc[res['lon'] > 0, 'lon']
+                            _would_match = ((-_pos_vals).between(_median_neg - 2, _median_neg + 2)).mean()
+                            if _would_match > 0.5:
+                                res.loc[res['lon'] > 0, 'lon'] = -res.loc[res['lon'] > 0, 'lon']
 
-            # --- COORDINATE CONVERSION (STATE PLANE / LARGE-INTEGER DETECTOR) ---
+            # --- COORDINATE CONVERSION (MICRODEGREES / STATE PLANE / LARGE-INTEGER DETECTOR) ---
             if not res.empty and 'lat' in res.columns and 'lon' in res.columns:
                 res = res[(res['lat'] != 0) & (res['lon'] != 0)].dropna(subset=['lat', 'lon'])
                 if not res.empty:
                     max_val = max(res['lat'].abs().max(), res['lon'].abs().max())
                     if max_val > 1000:
                         converted = False
+                        # Common CAD export pattern: integer microdegrees
+                        # (-98281987, 30568167) -> (-98.281987, 30.568167).
+                        _lon_micro = res['lon'] / 1_000_000.0
+                        _lat_micro = res['lat'] / 1_000_000.0
+                        _micro_valid = (
+                            _lat_micro.between(18, 72) &
+                            _lon_micro.between(-170, -60)
+                        ).mean()
+                        if _micro_valid > 0.80:
+                            res['lon'] = _lon_micro
+                            res['lat'] = _lat_micro
+                            converted = True
+
                         # Strategy 1: Try common State Plane CRS at /100 and /1 scales
-                        candidate_crs = [
-                            "EPSG:2278",  # TX South Central (ftUS)
-                            "EPSG:2277",  # TX Central (ftUS)
-                            "EPSG:2276",  # TX North Central (ftUS)
-                            "EPSG:2279",  # TX South (ftUS)
-                            "EPSG:32140", # TX South Central (m)
-                        ]
-                        for scale in [100.0, 1.0]:
-                            for crs in candidate_crs:
-                                try:
-                                    transformer = pyproj.Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
-                                    test_lons, test_lats = transformer.transform(
-                                        res['lon'].values[:20] / scale,
-                                        res['lat'].values[:20] / scale
-                                    )
-                                    if (24 < float(test_lats.mean()) < 50 and
-                                            -130 < float(test_lons.mean()) < -60 and
-                                            float(test_lats.std()) < 5 and
-                                            float(test_lons.std()) < 5):
-                                        lons, lats = transformer.transform(
-                                            res['lon'].values / scale, res['lat'].values / scale
+                        if not converted:
+                            candidate_crs = [
+                                "EPSG:2278",  # TX South Central (ftUS)
+                                "EPSG:2277",  # TX Central (ftUS)
+                                "EPSG:2276",  # TX North Central (ftUS)
+                                "EPSG:2279",  # TX South (ftUS)
+                                "EPSG:32140", # TX South Central (m)
+                            ]
+                            for scale in [100.0, 1.0]:
+                                for crs in candidate_crs:
+                                    try:
+                                        transformer = pyproj.Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+                                        test_lons, test_lats = transformer.transform(
+                                            res['lon'].values[:20] / scale,
+                                            res['lat'].values[:20] / scale
                                         )
-                                        res['lon'], res['lat'] = lons, lats
-                                        converted = True
-                                        break
-                                except Exception:
-                                    continue
-                            if converted:
-                                break
+                                        if (24 < float(test_lats.mean()) < 50 and
+                                                -130 < float(test_lons.mean()) < -60 and
+                                                float(test_lats.std()) < 5 and
+                                                float(test_lons.std()) < 5):
+                                            lons, lats = transformer.transform(
+                                                res['lon'].values / scale, res['lat'].values / scale
+                                            )
+                                            res['lon'], res['lat'] = lons, lats
+                                            converted = True
+                                            break
+                                    except Exception:
+                                        continue
+                                if converted:
+                                    break
 
                         # Strategy 2: If CRS conversion failed, anchor to city column geocode
                         if not converted:
@@ -795,6 +826,9 @@ def aggressive_parse_calls(uploaded_files):
             if inferred_state:
                 res["_csv_state"] = inferred_state
 
+            res["_source_row_id"] = source_ids.reindex(res.index).values
+            res["_source_file"] = cfile.name
+
             # ── Capture file data matrix for Sheets/email logging ────────────
             try:
                 _meta = _extract_file_meta(raw_df, res, filename=cfile.name)
@@ -812,16 +846,23 @@ def aggressive_parse_calls(uploaded_files):
         except: continue
         
     if not all_calls_list: return pd.DataFrame()
-    # Only keep frames that actually have lat/lon columns — Excel sheets
-    # without coordinate data should not crash the concat
-    valid = [df for df in all_calls_list if 'lat' in df.columns and 'lon' in df.columns]
-    if not valid: return pd.DataFrame()
-    combined = pd.concat(valid, ignore_index=True)
-    # Safe dropna — columns guaranteed to exist now
-    combined = combined.dropna(subset=['lat', 'lon'])
-    combined['lat'] = pd.to_numeric(combined['lat'], errors='coerce')
-    combined['lon'] = pd.to_numeric(combined['lon'], errors='coerce')
-    combined = combined[(combined['lat'].between(-90, 90)) & (combined['lon'].between(-180, 180))]
+    if require_valid_coordinates:
+        # Only keep frames that actually have lat/lon columns — Excel sheets
+        # without coordinate data should not crash the concat
+        valid = [df for df in all_calls_list if 'lat' in df.columns and 'lon' in df.columns]
+        if not valid: return pd.DataFrame()
+        combined = pd.concat(valid, ignore_index=True)
+        # Safe dropna — columns guaranteed to exist now
+        combined = combined.dropna(subset=['lat', 'lon'])
+        combined['lat'] = pd.to_numeric(combined['lat'], errors='coerce')
+        combined['lon'] = pd.to_numeric(combined['lon'], errors='coerce')
+        combined = combined[(combined['lat'].between(-90, 90)) & (combined['lon'].between(-180, 180))]
+    else:
+        combined = pd.concat(all_calls_list, ignore_index=True)
+        if 'lat' in combined.columns:
+            combined['lat'] = pd.to_numeric(combined['lat'], errors='coerce')
+        if 'lon' in combined.columns:
+            combined['lon'] = pd.to_numeric(combined['lon'], errors='coerce')
     # IMPORTANT: keep the full parsed CAD dataset here.
     #
     # The optimizer is sampled later (after upload) for performance, but the

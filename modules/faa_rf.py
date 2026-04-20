@@ -9,6 +9,15 @@ from pathlib import Path
 import os, json, math, urllib.request
 from modules.config import FAA_CEILING_COLORS, FAA_DEFAULT_COLOR, STATION_COLORS
 
+
+def _normalize_display_text(value):
+    text = str(value)
+    try:
+        return text.encode("latin1").decode("utf-8")
+    except Exception:
+        return text
+
+
 def generate_mock_faa_grid(minx, miny, maxx, maxy):
     features = []
     x_steps = np.linspace(minx, maxx, 20)
@@ -199,6 +208,8 @@ def add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=True):
             text_hovers.append(f"{ceiling} ft â€” {zone_name}")
         except Exception:
             pass
+
+    text_hovers = [_normalize_display_text(text) for text in text_hovers]
 
     # Add text labels if any
     if text_lons:
@@ -695,6 +706,7 @@ def _rf_range_rings_3390(infra_height_m: float = 9.14,
         ("Good (SNR â‰¥ 10 dB)",      "#f59e0b", 10),
         ("Marginal (SNR â‰¥ 0 dB)",   "#ef4444",  0),
     ]
+    tiers = [(_normalize_display_text(label), color, snr_thresh) for label, color, snr_thresh in tiers]
     rings = []
     for label, color, snr_thresh in tiers:
         d_m = 10 ** ((link_budget - snr_thresh) / 20.0)

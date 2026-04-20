@@ -131,7 +131,20 @@ KNOWN_POPULATIONS = {
     "Colorado Springs": 483956, "Raleigh": 476587, "Miami": 449514, "Virginia Beach": 455369,
     "Oakland": 530763, "Minneapolis": 563332, "Tulsa": 547239, "Arlington": 398654,
     "New Orleans": 562503, "Wichita": 402263, "Cleveland": 900000, "Tampa": 449514,
-    "Orlando": 316081
+    "Orlando": 316081, "Fayetteville": 208501, "Shreveport": 175698, "Montgomery": 198218,
+    "Des Moines": 212031, "Modesto": 218464, "Baton Rouge": 225374, "Spokane": 228989,
+    "Tacoma": 219346, "Aurora": 386261, "Anaheim": 346824, "Bakersfield": 380874,
+    "Riverside": 319504, "Stockton": 322164, "Corpus Christi": 317863, "Lexington": 322570,
+    "Henderson": 320189, "Saint Paul": 307695, "Anchorage": 291538, "Plano": 285494,
+    "Lincoln": 289102, "Buffalo": 278349, "Fort Wayne": 270402, "Jersey City": 292449,
+    "Chula Vista": 274492, "Chandler": 261165, "Laredo": 255473, "Madison": 269840,
+    "Lubbock": 258862, "Gilbert": 267918, "Garland": 240280, "Glendale": 246709,
+    "Hialeah": 223109, "Reno": 264165, "Boise": 235984, "Richmond": 226610,
+    "Spokane Valley": 102976, "Fremont": 230504, "Irvine": 307670, "San Bernardino": 222101,
+    "Birmingham": 212237, "Rochester": 211328, "Chesapeake": 244835, "Norfolk": 238005,
+    "Scottsdale": 258069, "North Las Vegas": 262527, "Winston-Salem": 249545,
+    "Greensboro": 301085, "Durham": 283506, "St. Petersburg": 261256, "Laredo": 255473,
+    "Paradise": 193661, "Peoria": 190435, "Tempe": 192364
 }
 
 DEMO_CITIES = [

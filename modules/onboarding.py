@@ -15,6 +15,14 @@ import datetime
 import random
 
 
+def _normalize_display_text(value):
+    text = str(value)
+    try:
+        return text.encode("latin1").decode("utf-8")
+    except Exception:
+        return text
+
+
 _OPT_CACHE_KEYS = (
     '_opt_cache_key',
     '_opt_best_combo',
@@ -140,6 +148,7 @@ def restore_brinc_session(session_state, save_data):
     # total_original_calls is already set above from len(calls_df))
     if 'estimated_pop' in save_data:
         session_state['estimated_pop'] = int(save_data['estimated_pop'] or 0)
+    session_state['_pop_resolved'] = bool(save_data.get('_pop_resolved', False))
     if 'total_original_calls' in save_data and 'calls_data' not in save_data:
         # Only override if calls_data isn't present (otherwise set from len above)
         session_state['total_original_calls'] = int(save_data['total_original_calls'] or 0)
@@ -192,12 +201,17 @@ def split_uploaded_files(uploaded_files, is_boundary_sidecar, looks_like_station
         second_file.seek(0)
         second_size = len(second_file.read())
         second_file.seek(0)
-        if first_size >= second_size:
-            call_files = [first_file]
-            station_file = second_file
-        else:
-            call_files = [second_file]
-            station_file = first_file
+        larger = max(first_size, second_size)
+        smaller = min(first_size, second_size)
+        # Only reassign the smaller file as stations if it is at least 10x smaller —
+        # two similarly-sized files are almost certainly both CAD exports.
+        if smaller > 0 and larger / smaller >= 10:
+            if first_size >= second_size:
+                call_files = [first_file]
+                station_file = second_file
+            else:
+                call_files = [second_file]
+                station_file = first_file
 
     return call_files, station_file, boundary_files
 
@@ -596,11 +610,14 @@ def build_demo_boundaries(
     demo_cities,
     fetch_county_boundary_local,
     fetch_place_boundary_local,
+    fetch_tiger_state_shapefile,
     save_boundary_gdf,
     fetch_census_population,
+    fetch_census_state_population,
 ):
     all_gdfs = []
     total_estimated_pop = 0
+    all_populations_verified = True
     boundary_messages = []
     warnings = []
     rerun_demo_target = None
@@ -608,10 +625,16 @@ def build_demo_boundaries(
     for index, loc in enumerate(active_targets):
         city_name = loc['city'].strip()
         state_name = loc['state']
+        is_state = not city_name and state_name in state_fips
         is_county = city_name.lower().endswith(' county')
-        boundary_kind = 'county' if is_county else 'place'
+        boundary_kind = 'state' if is_state else ('county' if is_county else 'place')
 
-        if is_county:
+        if is_state:
+            success, temp_gdf = fetch_tiger_state_shapefile(state_fips[state_name], state_name, 'jurisdiction_data')
+            if success:
+                boundary_kind = 'state'
+                city_name = state_name
+        elif is_county:
             success, temp_gdf = fetch_county_boundary_local(state_name, city_name)
             if not success:
                 success, temp_gdf = fetch_county_boundary_local(state_name, city_name + ' County')
@@ -629,6 +652,7 @@ def build_demo_boundaries(
                     boundary_kind = 'county'
 
         is_county = boundary_kind == 'county'
+        is_state = boundary_kind == 'state'
         session_state['boundary_kind'] = boundary_kind
 
         if success and temp_gdf is not None:
@@ -638,23 +662,35 @@ def build_demo_boundaries(
 
         if success:
             all_gdfs.append(temp_gdf)
-            population = fetch_census_population(state_fips[state_name], city_name, is_county=is_county)
+            population = (
+                fetch_census_state_population(state_fips[state_name])
+                if is_state else
+                fetch_census_population(state_fips[state_name], city_name, is_county=is_county)
+            )
             if population:
                 total_estimated_pop += population
-                boundary_messages.append(f"✅ {city_name} population verified: {population:,}")
+                boundary_messages.append(f"✅ {city_name or state_name} population verified: {population:,}")
             else:
+                all_populations_verified = False
                 gdf_proj = temp_gdf.to_crs(epsg=3857)
                 area_sq_mi = gdf_proj.geometry.area.sum() / 2589988.11
-                estimated_pop = known_populations.get(city_name, int(area_sq_mi * 3500))
+                default_density = 35 if is_state else 3500
+                estimated_pop = known_populations.get(city_name or state_name, int(area_sq_mi * default_density))
                 total_estimated_pop += estimated_pop
-                boundary_messages.append(f"⚠️ {city_name} population estimated: {estimated_pop:,}")
+                boundary_messages.append(f"⚠️ {city_name or state_name} population estimated: {estimated_pop:,}")
         else:
-            warnings.append(f"⚠️ Could not find a boundary for {city_name}, {state_name}. Try another city.")
+            warnings.append(f"⚠️ Could not find a boundary for {city_name or state_name}, {state_name}. Try another city or state.")
             if session_state.get('_last_demo_city') == city_name:
                 candidates = [city for city in demo_cities if city[0] != city_name]
                 rerun_demo_target = random.choice(candidates)
 
-    return all_gdfs, total_estimated_pop, boundary_messages, warnings, rerun_demo_target
+    if not all_gdfs:
+        all_populations_verified = False
+
+    boundary_messages = [_normalize_display_text(msg) for msg in boundary_messages]
+    warnings = [_normalize_display_text(msg) for msg in warnings]
+
+    return all_gdfs, total_estimated_pop, boundary_messages, warnings, rerun_demo_target, all_populations_verified
 
 
 def build_demo_calls(city_poly, total_estimated_pop, generate_clustered_calls):

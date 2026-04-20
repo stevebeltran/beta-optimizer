@@ -96,6 +96,12 @@ from modules.notifications import (
 from modules.cad_parser import (
     aggressive_parse_calls, _extract_file_meta, _get_annualized_calls
 )
+from modules.census_batch import (
+    build_census_staging, make_census_batch_chunks, make_census_batch_zip,
+    make_sample_census_batch, parse_census_result_files, merge_census_results,
+    submit_census_batch_chunk, build_census_chunk_payload,
+    build_corrected_export,
+)
 from modules.geospatial import (
     _load_uploaded_boundary_overlay, _boundary_overlay_status,
     _count_points_within_boundary, find_jurisdictions_by_coordinates
@@ -125,6 +131,35 @@ from modules.onboarding import (
 APP_DIR = Path(__file__).resolve().parent
 
 
+def _uploaded_files_signature(files):
+    parts = []
+    for idx, uploaded_file in enumerate(files or []):
+        try:
+            size = len(uploaded_file.getvalue())
+        except Exception:
+            size = 0
+        parts.append(f"{idx}:{uploaded_file.name}:{size}")
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest() if parts else ""
+
+
+def _reset_census_state(session_state):
+    session_state['census_pending'] = False
+    session_state['census_source_signature'] = ''
+    session_state['census_stage_df'] = None
+    session_state['census_original_df'] = None
+    session_state['census_partial_calls_df'] = None
+    session_state['census_batch_zip_bytes'] = b""
+    session_state['census_batch_zip_name'] = ""
+    session_state['census_sample_bytes'] = b""
+    session_state['census_sample_name'] = ""
+    session_state['census_summary'] = {}
+    session_state['census_conversion_summary'] = {}
+    session_state['census_corrected_bytes'] = b""
+    session_state['census_corrected_name'] = ""
+    session_state['census_corrected_format'] = "csv"
+    session_state['census_download_notice'] = False
+
+
 def _resolve_public_reports_dir():
     for _candidate in (APP_DIR / "public_reports", Path(tempfile.gettempdir()) / "frankenstein_public_reports"):
         try:
@@ -148,6 +183,20 @@ def _get_query_params_dict():
 
 def _slugify(value):
     return re.sub(r'[^a-z0-9]+', '-', str(value or '').lower()).strip('-') or 'report'
+
+
+def _get_document_jurisdiction_name(session_state, selected_names=None, fallback="City"):
+    _active_name = str(session_state.get("active_city", fallback) or fallback).strip() or fallback
+    _boundary_kind = str(session_state.get("boundary_kind", "") or "").strip().lower()
+    _use_county_boundary = bool(session_state.get("use_county_boundary", False))
+    _selected = [str(name).strip() for name in (selected_names or []) if str(name).strip()]
+
+    if _use_county_boundary or _boundary_kind == "county":
+        if _selected:
+            return ", ".join(_selected)
+        return _active_name
+
+    return _active_name
 
 
 def _get_request_base_url():
@@ -1212,10 +1261,95 @@ def get_address_from_latlon(lat, lon):
     # Fallback to coordinates if an exact street address isn't found
     return f"{lat:.5f}, {lon:.5f}"
 
+def _lookup_streamlit_secret(*names):
+    _target_names = {str(_name or '').strip().upper() for _name in names if str(_name or '').strip()}
+    if not _target_names:
+        return ""
+
+    def _scan_secret_container(_container, _visited=None):
+        _visited = _visited or set()
+        _obj_id = id(_container)
+        if _obj_id in _visited:
+            return ""
+        _visited.add(_obj_id)
+
+        if hasattr(_container, 'items'):
+            try:
+                _items = list(_container.items())
+            except Exception:
+                _items = []
+
+            for _key, _value in _items:
+                if str(_key or '').strip().upper() in _target_names and not hasattr(_value, 'items'):
+                    _secret_value = str(_value or '').strip()
+                    if _secret_value:
+                        return _secret_value
+
+            for _, _value in _items:
+                if hasattr(_value, 'items'):
+                    _nested_value = _scan_secret_container(_value, _visited)
+                    if _nested_value:
+                        return _nested_value
+        return ""
+
+    try:
+        _secret_value = _scan_secret_container(st.secrets)
+        if _secret_value:
+            return _secret_value
+    except Exception:
+        pass
+
+    for _name in names:
+        _env_value = str(os.environ.get(str(_name or '').strip(), '') or '').strip()
+        if _env_value:
+            return _env_value
+    return ""
+
+
+def _get_google_maps_api_key():
+    return _lookup_streamlit_secret(
+        "GOOGLE_MAPS_API_KEY",
+        "GOOGLE_GEOCODING_API_KEY",
+        "GOOGLE_API_KEY",
+        "GMAPS_API_KEY",
+    )
+
+
+def _get_mapbox_api_key():
+    return _lookup_streamlit_secret(
+        "MAPBOX_ACCESS_TOKEN",
+        "MAPBOX_API_KEY",
+        "MAPBOX_TOKEN",
+    )
+
+
+def _get_geocoder_provider_signature():
+    _provider_values = {
+        'google': _get_google_maps_api_key(),
+        'mapbox': _get_mapbox_api_key(),
+    }
+    _signature_payload = "|".join(
+        f"{_provider}:{hashlib.sha256(str(_value or '').encode('utf-8')).hexdigest()}"
+        for _provider, _value in sorted(_provider_values.items())
+    )
+    return hashlib.sha256(_signature_payload.encode('utf-8')).hexdigest()
+
+
 @st.cache_data(show_spinner=False)
-def search_address_candidates(address_str, limit=6, preferred_city="", preferred_state=""):
+def _search_address_candidates_cached(address_str, limit=6, preferred_city="", preferred_state="", provider_signature=""):
     address_str = str(address_str or '').strip()
     if not address_str:
+        try:
+            st.session_state['_last_geocode_trace'] = {
+                'input': '',
+                'preferred_city': str(preferred_city or '').strip(),
+                'preferred_state': str(preferred_state or '').strip().upper(),
+                'queries': [],
+                'providers': [],
+                'candidate_count': 0,
+            }
+        except Exception:
+            pass
         return []
 
     limit = max(1, min(int(limit or 6), 10))
@@ -1227,27 +1361,94 @@ def search_address_candidates(address_str, limit=6, preferred_city="", preferred
     candidates = []
     seen = set()
 
-    def _lookup_secret(*names):
-        try:
-            for _key_name in names:
-                _key_val = str(st.secrets.get(_key_name, "") or "").strip()
-                if _key_val:
-                    return _key_val
-        except Exception:
-            return ""
-        return ""
-
     def _normalize_text(value):
         return str(value or "").strip().lower()
 
+    def _normalize_address_variants(raw_value):
+        raw_value = str(raw_value or '').strip()
+        if not raw_value:
+            return []
+        variants = [raw_value]
+        compact = re.sub(r'\s+', ' ', raw_value).strip()
+        if compact and compact.lower() != raw_value.lower():
+            variants.append(compact)
+
+        word_to_num = {
+            'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
+            'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10',
+        }
+        street_suffix_map = {
+            'street': 'st',
+            'avenue': 'ave',
+            'boulevard': 'blvd',
+            'road': 'rd',
+            'drive': 'dr',
+            'lane': 'ln',
+            'court': 'ct',
+            'place': 'pl',
+            'parkway': 'pkwy',
+            'circle': 'cir',
+            'terrace': 'ter',
+        }
+
+        def _transform_variant(text):
+            text = re.sub(r'\s+', ' ', str(text or '').strip())
+            if not text:
+                return []
+            out = [text]
+            parts = text.split(' ', 1)
+            if parts:
+                first = parts[0].lower().rstrip('.,')
+                if first in word_to_num and len(parts) > 1:
+                    out.append(f"{word_to_num[first]} {parts[1]}")
+            replaced = text
+            for suffix, abbr in street_suffix_map.items():
+                replaced = re.sub(rf'\b{suffix}\b', abbr, replaced, flags=re.IGNORECASE)
+            if replaced.lower() != text.lower():
+                out.append(replaced)
+            out2 = []
+            for candidate in out:
+                parts2 = candidate.split(' ', 1)
+                if parts2:
+                    first2 = parts2[0].lower().rstrip('.,')
+                    if first2 in word_to_num and len(parts2) > 1:
+                        candidate = f"{word_to_num[first2]} {parts2[1]}"
+                replaced2 = candidate
+                for suffix, abbr in street_suffix_map.items():
+                    replaced2 = re.sub(rf'\b{suffix}\b', abbr, replaced2, flags=re.IGNORECASE)
+                out2.append(candidate)
+                if replaced2.lower() != candidate.lower():
+                    out2.append(replaced2)
+            deduped = []
+            seen_local = set()
+            for candidate in out2:
+                cleaned = re.sub(r'\s+', ' ', str(candidate or '').strip())
+                key = cleaned.lower()
+                if cleaned and key not in seen_local:
+                    seen_local.add(key)
+                    deduped.append(cleaned)
+            return deduped
+
+        expanded = []
+        seen_expanded = set()
+        for variant in variants:
+            for candidate in _transform_variant(variant):
+                key = candidate.lower()
+                if candidate and key not in seen_expanded:
+                    seen_expanded.add(key)
+                    expanded.append(candidate)
+        return expanded
+
     def _query_variants():
-        _variants = [address_str]
-        _has_city = preferred_city and preferred_city.lower() in address_str.lower()
-        _has_state = preferred_state and preferred_state.lower() in address_str.lower()
-        if preferred_city and preferred_state and (not _has_city or not _has_state):
-            _variants.append(f"{address_str}, {preferred_city}, {preferred_state}")
-        if preferred_state and not _has_state:
-            _variants.append(f"{address_str}, {preferred_state}")
+        _variants = []
+        for _base_variant in _normalize_address_variants(address_str):
+            _variants.append(_base_variant)
+            _has_city = preferred_city and preferred_city.lower() in _base_variant.lower()
+            _has_state = preferred_state and preferred_state.lower() in _base_variant.lower()
+            if preferred_city and preferred_state and (not _has_city or not _has_state):
+                _variants.append(f"{_base_variant}, {preferred_city}, {preferred_state}")
+            if preferred_state and not _has_state:
+                _variants.append(f"{_base_variant}, {preferred_state}")
         ordered = []
         seen_variants = set()
         for _variant in _variants:
@@ -1311,13 +1512,10 @@ def search_address_candidates(address_str, limit=6, preferred_city="", preferred
             '_score': 0,
         })
 
-    def _google_maps_api_key():
-        return _lookup_secret("GOOGLE_MAPS_API_KEY", "GOOGLE_GEOCODING_API_KEY", "GMAPS_API_KEY")
+    _queries = _query_variants()
+    _provider_trace = []
 
-    def _mapbox_api_key():
-        return _lookup_secret("MAPBOX_ACCESS_TOKEN", "MAPBOX_API_KEY")
-
-    for _query in _query_variants():
+    for _query in _queries:
         try:
             _params = urllib.parse.urlencode({
                 'address': _query,
@@ -1328,7 +1526,9 @@ def search_address_candidates(address_str, limit=6, preferred_city="", preferred
             _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
             with urllib.request.urlopen(_req, timeout=8) as _resp:
                 _data = json.loads(_resp.read().decode('utf-8'))
-            for _match in _data.get('result', {}).get('addressMatches', [])[:limit]:
+            _matches = _data.get('result', {}).get('addressMatches', [])[:limit]
+            _provider_trace.append({'provider': 'Census', 'query': _query, 'used': True, 'match_count': len(_matches), 'status': 'ok'})
+            for _match in _matches:
                 _coords = _match.get('coordinates', {})
                 _add_candidate(
                     _match.get('matchedAddress', _query),
@@ -1338,11 +1538,11 @@ def search_address_candidates(address_str, limit=6, preferred_city="", preferred
                     raw_match=_match.get('matchedAddress', _query),
                 )
         except Exception:
-            pass
+            _provider_trace.append({'provider': 'Census', 'query': _query, 'used': True, 'match_count': 0, 'status': 'error'})
 
-    _google_api_key = _google_maps_api_key()
+    _google_api_key = _get_google_maps_api_key()
     if _google_api_key:
-        for _query in _query_variants():
+        for _query in _queries:
             try:
                 _params = urllib.parse.urlencode({
                     'address': _query,
@@ -1353,16 +1553,20 @@ def search_address_candidates(address_str, limit=6, preferred_city="", preferred
                 _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
                 with urllib.request.urlopen(_req, timeout=8) as _resp:
                     _data = json.loads(_resp.read().decode('utf-8'))
-                for _match in _data.get('results', [])[:limit]:
+                _matches = _data.get('results', [])[:limit]
+                _provider_trace.append({'provider': 'Google', 'query': _query, 'used': True, 'match_count': len(_matches), 'status': _data.get('status', 'ok')})
+                for _match in _matches:
                     _geometry = _match.get('geometry', {}).get('location', {})
                     _label = _match.get('formatted_address', _query)
                     _add_candidate(_label, _geometry.get('lat'), _geometry.get('lng'), 'Google', raw_match=_label)
             except Exception:
-                pass
+                _provider_trace.append({'provider': 'Google', 'query': _query, 'used': True, 'match_count': 0, 'status': 'error'})
+    else:
+        _provider_trace.append({'provider': 'Google', 'query': '', 'used': False, 'match_count': 0, 'status': 'missing_api_key'})
 
-    _mapbox_key = _mapbox_api_key()
+    _mapbox_key = _get_mapbox_api_key()
     if _mapbox_key:
-        for _query in _query_variants():
+        for _query in _queries:
             try:
                 _params = urllib.parse.urlencode({
                     'q': _query,
@@ -1376,7 +1580,9 @@ def search_address_candidates(address_str, limit=6, preferred_city="", preferred
                 _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
                 with urllib.request.urlopen(_req, timeout=8) as _resp:
                     _data = json.loads(_resp.read().decode('utf-8'))
-                for _match in _data.get('features', [])[:limit]:
+                _matches = _data.get('features', [])[:limit]
+                _provider_trace.append({'provider': 'Mapbox', 'query': _query, 'used': True, 'match_count': len(_matches), 'status': 'ok'})
+                for _match in _matches:
                     _coords = (_match.get('geometry') or {}).get('coordinates') or [None, None]
                     _props = _match.get('properties') or {}
                     _label = (
@@ -1387,9 +1593,11 @@ def search_address_candidates(address_str, limit=6, preferred_city="", preferred
                     )
                     _add_candidate(_label, _coords[1], _coords[0], 'Mapbox', raw_match=_label)
             except Exception:
-                pass
+                _provider_trace.append({'provider': 'Mapbox', 'query': _query, 'used': True, 'match_count': 0, 'status': 'error'})
+    else:
+        _provider_trace.append({'provider': 'Mapbox', 'query': '', 'used': False, 'match_count': 0, 'status': 'missing_api_key'})
 
-    for _query in _query_variants():
+    for _query in _queries:
         try:
             _params = urllib.parse.urlencode({
                 'format': 'jsonv2',
@@ -1402,16 +1610,40 @@ def search_address_candidates(address_str, limit=6, preferred_city="", preferred
             _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
             with urllib.request.urlopen(_req, timeout=8) as _resp:
                 _data = json.loads(_resp.read().decode('utf-8'))
-            for _match in _data[:limit]:
+            _matches = _data[:limit]
+            _provider_trace.append({'provider': 'OSM', 'query': _query, 'used': True, 'match_count': len(_matches), 'status': 'ok'})
+            for _match in _matches:
                 _label = _match.get('display_name', _query)
                 _add_candidate(_label, _match.get('lat'), _match.get('lon'), 'OSM', raw_match=_label)
         except Exception:
-            pass
+            _provider_trace.append({'provider': 'OSM', 'query': _query, 'used': True, 'match_count': 0, 'status': 'error'})
 
     for _candidate in candidates:
         _candidate['_score'] = _candidate_score(_candidate)
     candidates.sort(key=lambda _item: (-_item.get('_score', 0), _item.get('matched_address', '')))
+    try:
+        st.session_state['_last_geocode_trace'] = {
+            'input': address_str,
+            'preferred_city': preferred_city,
+            'preferred_state': preferred_state,
+            'queries': _queries,
+            'providers': _provider_trace,
+            'candidate_count': len(candidates),
+            'top_candidate': candidates[0]['matched_address'] if candidates else '',
+        }
+    except Exception:
+        pass
     return [{k: v for k, v in _candidate.items() if k != '_score'} for _candidate in candidates[:limit]]
+
+
+def search_address_candidates(address_str, limit=6, preferred_city="", preferred_state=""):
+    return _search_address_candidates_cached(
+        address_str,
+        limit=limit,
+        preferred_city=preferred_city,
+        preferred_state=preferred_state,
+        provider_signature=_get_geocoder_provider_signature(),
+    )
 
 @st.cache_data(show_spinner=False)
 def forward_geocode(address_str):
@@ -1626,6 +1858,59 @@ def reverse_geocode_state(lat, lon):
     except Exception:
         return None, None
 
+_PLACE_SUFFIXES = (
+    ' city', ' town', ' village', ' borough', ' township', ' cdp', ' municipality',
+    ' county', ' parish', ' census area', ' city and borough', ' borough county',
+    ' urban county', ' unified government', ' metro government',
+)
+
+
+def _normalize_population_lookup_name(value):
+    text = str(value or '').strip().lower()
+    text = text.replace('&', ' and ')
+    text = re.sub(r'[^\w\s-]', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    for suffix in _PLACE_SUFFIXES:
+        if text.endswith(suffix):
+            text = text[:-len(suffix)].strip()
+            break
+    return text
+
+
+def _population_lookup_aliases(value):
+    base = _normalize_population_lookup_name(value)
+    aliases = {base} if base else set()
+    if not base:
+        return aliases
+    aliases.add(base.replace('saint ', 'st '))
+    aliases.add(base.replace('st ', 'saint '))
+    aliases.add(base.replace('-', ' '))
+    aliases.add(base.replace('saint ', 'st ').replace('-', ' '))
+    aliases.add(base.replace('st ', 'saint ').replace('-', ' '))
+    return {alias.strip() for alias in aliases if alias.strip()}
+
+
+def _lookup_known_population(place_name):
+    direct = KNOWN_POPULATIONS.get(place_name)
+    if direct is not None:
+        return direct
+    aliases = _population_lookup_aliases(place_name)
+    for known_name, pop in KNOWN_POPULATIONS.items():
+        if _normalize_population_lookup_name(known_name) in aliases:
+            return pop
+    return None
+
+
+def _lookup_population_for_boundary(state_abbr, city_name, boundary_kind='place'):
+    state_fips = STATE_FIPS.get(str(state_abbr or '').strip().upper(), '')
+    if not state_fips:
+        return None
+    if boundary_kind == 'state':
+        return fetch_census_state_population(state_fips)
+    lookup_name = city_name or state_abbr
+    return fetch_census_population(state_fips, lookup_name, is_county=(boundary_kind == 'county'))
+
+
 @st.cache_data
 def fetch_census_population(state_fips, place_name, is_county=False):
     if is_county:
@@ -1634,35 +1919,47 @@ def fetch_census_population(state_fips, place_name, is_county=False):
         url = f"https://api.census.gov/data/2020/dec/pl?get=P1_001N,NAME&for=place:*&in=state:{state_fips}"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=15) as response:
             data = json.loads(response.read().decode('utf-8'))
-            search_name = str(place_name).lower().strip()
-            for suffix in [' city', ' town', ' village', ' borough', ' township', ' cdp', ' municipality']:
-                if search_name.endswith(suffix):
-                    search_name = search_name[:-len(suffix)].strip()
-                    break
-
+            search_aliases = _population_lookup_aliases(place_name)
             exact_match = None
             prefix_match = None
             for row in data[1:]:
-                place_full = str(row[1]).lower().split(',')[0].strip()
-                place_core = place_full
-                for suffix in [' city', ' town', ' village', ' borough', ' township', ' cdp', ' municipality', ' county']:
-                    if place_core.endswith(suffix):
-                        place_core = place_core[:-len(suffix)].strip()
-                        break
-                if place_core == search_name or place_full == search_name:
+                place_full = str(row[1]).split(',')[0].strip()
+                place_aliases = _population_lookup_aliases(place_full)
+                if search_aliases & place_aliases:
                     exact_match = int(row[0])
                     break
-                if is_county and (place_full.startswith(search_name + ' ') or place_core.startswith(search_name + ' ')):
-                    prefix_match = int(row[0])
+                for search_name in search_aliases:
+                    if any(
+                        alias.startswith(search_name + ' ')
+                        or alias.startswith(search_name + '-')
+                        for alias in place_aliases
+                    ):
+                        prefix_match = int(row[0])
+                        break
+                if prefix_match is not None:
+                    break
             if exact_match is not None:
                 return exact_match
             if prefix_match is not None:
                 return prefix_match
     except Exception:
         pass
-    return KNOWN_POPULATIONS.get(place_name)
+    return _lookup_known_population(place_name)
+
+@st.cache_data
+def fetch_census_state_population(state_fips):
+    url = f"https://api.census.gov/data/2020/dec/pl?get=P1_001N,NAME&for=state:{state_fips}"
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            if len(data) > 1 and len(data[1]) > 0:
+                return int(data[1][0])
+    except Exception:
+        pass
+    return None
 
 SHAPEFILE_DIR = "jurisdiction_data"
 if not os.path.exists(SHAPEFILE_DIR): os.makedirs(SHAPEFILE_DIR)
@@ -1703,6 +2000,58 @@ def load_saved_boundary(kind, name, state_abbr):
     except Exception as e:
         print(f"[BRINC] load_saved_boundary failed for {kind}/{name}/{state_abbr}: {e}")
     return None
+
+@st.cache_data
+def fetch_tiger_state_shapefile(state_fips, state_abbr, output_dir):
+    temp_dir = os.path.join(output_dir, "temp_tiger_states")
+    cached_shp = os.path.join(temp_dir, "tl_2023_us_state.shp")
+    gdf = None
+
+    if os.path.exists(cached_shp):
+        try:
+            gdf = gpd.read_file(cached_shp)
+        except Exception:
+            gdf = None
+
+    if gdf is None:
+        for year in ["2023", "2022"]:
+            url = f"https://www2.census.gov/geo/tiger/TIGER{year}/STATE/tl_{year}_us_state.zip"
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "BRINC_COS_Optimizer/1.0"})
+                with urllib.request.urlopen(req, timeout=45) as resp:
+                    zip_data = resp.read()
+                zip_file = zipfile.ZipFile(io.BytesIO(zip_data))
+                os.makedirs(temp_dir, exist_ok=True)
+                zip_file.extractall(temp_dir)
+                shp_files = glob.glob(os.path.join(temp_dir, "*.shp"))
+                if shp_files:
+                    gdf = gpd.read_file(shp_files[0])
+                    break
+            except Exception:
+                continue
+
+    if gdf is None:
+        return False, None
+
+    try:
+        state_gdf = gdf[gdf['STATEFP'].astype(str) == str(state_fips)].copy()
+        if state_gdf.empty:
+            return False, None
+        if 'STUSPS' in state_gdf.columns:
+            _abbr_rows = state_gdf[state_gdf['STUSPS'].astype(str).str.upper() == str(state_abbr).upper()].copy()
+            if not _abbr_rows.empty:
+                state_gdf = _abbr_rows
+        state_gdf = state_gdf.dissolve().reset_index(drop=True)
+        state_gdf['NAME'] = str(state_abbr).upper()
+        if state_gdf.crs is None:
+            state_gdf = state_gdf.set_crs(epsg=4269)
+        state_gdf = state_gdf.to_crs(epsg=4326)
+        save_path = os.path.join(output_dir, f"state_{state_abbr.upper()}_{state_fips}.shp")
+        state_gdf.to_file(save_path)
+        return True, state_gdf[['NAME', 'geometry']]
+    except Exception as e:
+        print(f"[BRINC] fetch_tiger_state_shapefile failed for {state_abbr}: {e}")
+        return False, None
 
 @st.cache_data
 def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
@@ -3028,9 +3377,10 @@ def main():
             st.markdown("""
             <div class="field-footnote">
                 <b style='color:#555;'>1 file</b> — any CAD export (CSV or Excel); stations auto-built from OSM<br>
-                <b style='color:#555;'>2+ files</b> - calls + optional stations + optional .shp/.shx/.dbf/.prj overlay files<br>
+                <b style='color:#555;'>Multiple CAD files</b> — drop several spreadsheets; they are combined automatically<br>
+                <b style='color:#555;'>CAD + stations</b> — include a file with "station" in the name to supply custom stations<br>
                 <b style='color:#39FF14;'>.brinc file</b> — instantly restore a saved deployment<br>
-                Max 25,000 calls · 100 stations
+                Max 25,000 calls (sampled) · 100 stations
             </div>
             """, unsafe_allow_html=True)
 
@@ -3041,10 +3391,183 @@ def main():
             def _is_boundary_sidecar(fname):
                 return Path(fname).suffix.lower() in {'.shp', '.shx', '.dbf', '.prj'}
 
-            if uploaded_files and len(uploaded_files) >= 1:
+            current_upload_signature = _uploaded_files_signature(uploaded_files)
+            if current_upload_signature and st.session_state.get('census_source_signature') and current_upload_signature != st.session_state.get('census_source_signature'):
+                _reset_census_state(st.session_state)
+
+            census_result_files = None
+            if st.session_state.get('census_pending'):
+                _census_summary = st.session_state.get('census_summary') or {}
+                _rows_ready = int(_census_summary.get('rows_ready', 0) or 0)
+                _rows_missing = int(_census_summary.get('rows_missing', 0) or 0)
+                st.warning(
+                    f"Census batch conversion is waiting for results. "
+                    f"{_rows_ready:,} rows are ready for Census formatting and {_rows_missing:,} rows still need address cleanup."
+                )
+                st.caption(
+                    "Download the prepared batch files, run them through the Census batch geocoder, "
+                    "then upload the returned result CSVs here. The prepared data is only kept for this browser session."
+                )
+                st.info(
+                    "What is happening now: the app identified that this upload does not contain recoverable coordinates and switched to the Census batch workflow. "
+                    "Preparing the batch files should usually take a few seconds to about 30 seconds. "
+                    "After that, total turnaround depends on how quickly the Census files are uploaded there and returned here."
+                )
+                if st.session_state.get('census_sample_bytes'):
+                    st.download_button(
+                        "⬇️ Download Census Sample Batch",
+                        data=st.session_state['census_sample_bytes'],
+                        file_name=st.session_state.get('census_sample_name') or "census_sample_batch.csv",
+                        mime="text/csv",
+                        key="download_census_sample_batch_btn",
+                        width="stretch",
+                    )
+                if st.session_state.get('census_batch_zip_bytes'):
+                    st.download_button(
+                        "⬇️ Download Census Batch ZIP",
+                        data=st.session_state['census_batch_zip_bytes'],
+                        file_name=st.session_state.get('census_batch_zip_name') or "census_batches.zip",
+                        mime="application/zip",
+                        key="download_census_batch_zip_btn",
+                        width="stretch",
+                    )
+                census_result_files = st.file_uploader(
+                    "Upload returned Census result CSVs",
+                    accept_multiple_files=True,
+                    type=['csv', 'txt'],
+                    key='census_result_files_uploader',
+                    help="Upload the CSV result files returned by the Census batch geocoder. The app will stitch them together and continue into the stations workflow.",
+                )
+
+                if census_result_files:
+                    with st.spinner("🛰 Stitching Census results back into the CAD file…"):
+                        result_df = parse_census_result_files(census_result_files)
+                        partial_calls_df = st.session_state.get('census_partial_calls_df')
+                        original_df = st.session_state.get('census_original_df')
+                        if partial_calls_df is None or original_df is None or result_df.empty:
+                            st.error("❌ Census result upload failed: missing prepared session data or no valid result rows were found.")
+                            st.stop()
+
+                        merged_full_df, merged_ready_df, merge_summary = merge_census_results(partial_calls_df, result_df)
+                        if merged_ready_df is None or merged_ready_df.empty:
+                            st.error("❌ Census result upload failed: no valid coordinates were recovered from the returned result files.")
+                            st.stop()
+
+                        corrected_export_df = build_corrected_export(original_df, result_df)
+                        corrected_csv = corrected_export_df.to_csv(index=False).encode('utf-8')
+                        st.session_state['census_corrected_bytes'] = corrected_csv
+                        st.session_state['census_corrected_name'] = "cad_calls_census_corrected.csv"
+                        st.session_state['census_conversion_summary'] = merge_summary
+                        st.session_state['census_download_notice'] = True
+
+                        df_c_full = merged_ready_df.reset_index(drop=True).copy()
+                        if len(df_c_full) > 25000:
+                            df_c = df_c_full.sample(25000, random_state=42).reset_index(drop=True)
+                            st.toast(f"⚠️ Optimization modeled with {len(df_c):,} representative calls out of {len(df_c_full):,} geocoded incidents.")
+                        else:
+                            df_c = df_c_full.copy()
+
+                        call_files_current, station_file_current, boundary_files_current = split_uploaded_files(
+                            uploaded_files or [],
+                            _is_boundary_sidecar,
+                            _looks_like_stations,
+                        )
+
+                        if station_file_current is not None:
+                            with st.spinner("🔍 Reading stations file…"):
+                                try:
+                                    df_s, osm_note = load_station_file(station_file_current)
+                                    st.session_state['stations_user_uploaded'] = True
+                                except Exception as e:
+                                    df_s, osm_note = None, f"Failed: {e}"
+                            if df_s is None or df_s.empty:
+                                st.error(f"❌ Stations file error: {osm_note}")
+                                st.stop()
+                        else:
+                            st.session_state['stations_user_uploaded'] = False
+                            with st.spinner("🌐 No stations file detected — querying OpenStreetMap for police, fire & schools…"):
+                                df_s, osm_note = generate_stations_from_calls(df_c)
+                            if df_s is None or df_s.empty:
+                                df_s = _make_random_stations(df_c, n=40)
+                                osm_note = "⚠️ Could not reach any map source — using estimated station positions from call data."
+                                st.warning(osm_note)
+                            else:
+                                st.toast(f"✅ {osm_note}")
+
+                        if len(df_s) > 100:
+                            df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
+
+                        with st.spinner("🛰 Census coordinates restored — resolving jurisdiction…"):
+                            detected_city, detected_state, detection_source = detect_location_from_calls(
+                                df_c,
+                                STATE_FIPS,
+                                US_STATES_ABBR,
+                                reverse_geocode_state,
+                            )
+                            if detected_city and detected_state:
+                                st.session_state['active_city'] = str(detected_city).title()
+                                st.session_state['active_state'] = detected_state
+                                st.session_state['target_cities'] = [{"city": detected_city, "state": detected_state}]
+                                st.session_state['location_detection_source'] = detection_source
+                            elif detected_state:
+                                st.session_state['active_state'] = detected_state
+                                st.session_state['location_detection_source'] = detection_source
+
+                        st.session_state['df_calls'] = df_c
+                        st.session_state['df_calls_full'] = df_c_full
+                        st.session_state['df_stations'] = df_s
+                        st.session_state['total_original_calls'] = int(merge_summary.get('rows_total', len(df_c_full)) or len(df_c_full))
+                        st.session_state['total_modeled_calls'] = len(df_c)
+
+                        with st.spinner(get_jurisdiction_message()):
+                            resolve_uploaded_boundaries(
+                                st.session_state,
+                                df_c,
+                                df_c_full,
+                                STATE_FIPS,
+                                find_jurisdictions_by_coordinates,
+                                _select_best_boundary_for_calls,
+                                save_boundary_gdf,
+                            )
+
+                        try:
+                            st.session_state['estimated_pop'] = 0
+                            st.session_state['_pop_resolved'] = False
+                            _resolved_boundary_kind = str(st.session_state.get('boundary_kind', 'place') or 'place').strip().lower()
+                            _resolved_city = str(st.session_state.get('active_city', '') or '').strip()
+                            _resolved_state = str(st.session_state.get('active_state', '') or '').strip().upper()
+                            _resolved_pop = _lookup_population_for_boundary(
+                                _resolved_state,
+                                _resolved_city,
+                                boundary_kind=_resolved_boundary_kind,
+                            )
+                            if _resolved_pop:
+                                st.session_state['estimated_pop'] = _resolved_pop
+                                st.session_state['_pop_resolved'] = True
+                        except Exception:
+                            pass
+
+                        st.session_state['data_source'] = 'cad_upload'
+                        st.session_state['demo_mode_used'] = False
+                        st.session_state['sim_mode_used'] = False
+                        st.session_state['map_build_logged'] = False
+                        st.session_state['csvs_ready'] = True
+                        st.toast("✅ Census batch conversion completed. The corrected calls file is ready for download in the sidebar.")
+                        _reset_census_state(st.session_state)
+                        st.session_state['census_corrected_bytes'] = corrected_csv
+                        st.session_state['census_corrected_name'] = "cad_calls_census_corrected.csv"
+                        st.session_state['census_conversion_summary'] = merge_summary
+                        st.session_state['census_download_notice'] = True
+                        st.rerun()
+
+            if uploaded_files and len(uploaded_files) >= 1 and not (
+                st.session_state.get('census_pending') and
+                current_upload_signature == st.session_state.get('census_source_signature') and
+                not census_result_files
+            ):
                 _upload_logo_b64 = get_themed_logo_base64("logo.png", theme="dark") or ""
                 _upload_gigs_b64 = get_transparent_product_base64("gigs.png") or ""
-                components.html(f"""<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>
+                _upload_overlay_html = """<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>
 <script>
 (function(){{
   var doc = parent.document;
@@ -3065,6 +3588,12 @@ def main():
     +'#brinc-flo .fl-stline{{font-size:10px;letter-spacing:2px;color:rgba(0,210,255,0.7);text-transform:uppercase;margin-top:7px}}'
     +'#brinc-flo .fl-made{{margin-top:12px;font-size:11px;font-weight:800;letter-spacing:2.6px;color:rgba(255,255,255,0.92);text-transform:uppercase}}'
     +'#brinc-flo .fl-copy{{margin-top:8px;font-size:11px;line-height:1.55;color:rgba(255,255,255,0.62)}}'
+    +'#brinc-flo .fl-prog-wrap{{margin:14px auto 0;max-width:520px}}'
+    +'#brinc-flo .fl-prog-meta{{display:flex;justify-content:space-between;gap:12px;font-size:10px;letter-spacing:1.6px;color:rgba(255,255,255,0.62);text-transform:uppercase}}'
+    +'#brinc-flo .fl-prog{{margin-top:6px;height:7px;border-radius:999px;background:rgba(255,255,255,0.08);overflow:hidden;border:1px solid rgba(255,255,255,0.08)}}'
+    +'#brinc-flo .fl-prog-bar{{height:100%;width:4%;background:linear-gradient(90deg,#00D2FF,#39FF14);box-shadow:0 0 18px rgba(0,210,255,0.35);transition:width .28s ease}}'
+    +'#brinc-flo .fl-log{{margin:14px auto 0;max-width:620px;min-height:86px;max-height:132px;overflow:auto;text-align:left;padding:12px 14px;border:1px solid rgba(255,255,255,0.08);border-radius:12px;background:rgba(255,255,255,0.03);font-size:11px;line-height:1.5;color:rgba(255,255,255,0.72);white-space:pre-wrap}}'
+    +'#brinc-flo .fl-log.error{{border-color:rgba(255,99,99,0.45);background:rgba(110,20,20,0.22);color:rgba(255,215,215,0.95)}}'
     +'#brinc-flo .fl-loader{{position:relative;width:280px;height:180px}}'
     +'#brinc-flo .fl-radar{{position:absolute;inset:18px;border:1px solid rgba(0,210,255,0.22);border-radius:50%}}'
     +'#brinc-flo .fl-radar::before,#brinc-flo .fl-radar::after{{content:"";position:absolute;border:1px solid rgba(0,210,255,0.18);border-radius:50%}}'
@@ -3093,10 +3622,12 @@ def main():
     + '<div class="fl-stline" id="fl-stl">INGESTING INCIDENT DATA<span class="fl-dots"></span></div>'
     + '<div class="fl-made">MADE IN THE USA</div>'
     + '<div class="fl-copy">Parsing calls, resolving boundaries, and preparing deployment analysis.</div>'
+    + '<div class="fl-prog-wrap"><div class="fl-prog-meta"><span id="fl-prog-label">Progress</span><span id="fl-prog-pct">0%</span></div><div class="fl-prog"><div class="fl-prog-bar" id="fl-prog-bar"></div></div></div>'
+    + '<div class="fl-log" id="fl-log">Waiting to start…</div>'
     + '</div>';
   doc.body.appendChild(wrap);
   var statusEl = wrap.querySelector('#fl-stl');
-  var msgs = ['INGESTING INCIDENT DATA','DETECTING COLUMN TYPES','RESOLVING JURISDICTION','BUILDING STATION GRID','PREPARING ANALYSIS'];
+  var msgs = ['INGESTING INCIDENT DATA','CHECKING FOR LAT/LON','DETECTING COLUMN TYPES','PREPARING CENSUS BATCH IF NEEDED','RESOLVING JURISDICTION','BUILDING STATION GRID','PREPARING ANALYSIS'];
   var mi = 0;
   if(parent._brincFloMsgs) parent.clearInterval(parent._brincFloMsgs);
   parent._brincFloMsgs = parent.setInterval(function(){{
@@ -3105,7 +3636,15 @@ def main():
   }}, 2400);
 }})();
 </script>
-</body></html>""", height=0, scrolling=False)
+</body></html>"""
+                _upload_overlay_html = (
+                    _upload_overlay_html
+                    .replace("{_upload_logo_b64}", _upload_logo_b64)
+                    .replace("{_upload_gigs_b64}", _upload_gigs_b64)
+                    .replace("{{", "{")
+                    .replace("}}", "}")
+                )
+                components.html(_upload_overlay_html, height=0, scrolling=False)
 
                 def _clear_upload_overlay():
                     components.html("""<!DOCTYPE html><html><head></head><body><script>
@@ -3126,6 +3665,56 @@ def main():
   }, 280);
 })();
 </script></body></html>""", height=0, scrolling=False)
+
+                def _set_upload_overlay_status(title="", status="", copy="", progress=None, logs=None, error=False):
+                    _title_js = json.dumps(str(title or ""))
+                    _status_js = json.dumps(str(status or ""))
+                    _copy_js = json.dumps(str(copy or ""))
+                    _progress_val = max(0, min(100, int(progress if progress is not None else 0)))
+                    _logs_js = json.dumps([str(x) for x in (logs or [])][-8:])
+                    _error_js = 'true' if error else 'false'
+                    _upload_overlay_status_html = """<!DOCTYPE html><html><head></head><body><script>
+(function(){{
+  var doc = parent.document;
+  var el = doc.getElementById('brinc-flo');
+  if(!el) return;
+  var titleEl = el.querySelector('.fl-city');
+  var statusEl = el.querySelector('#fl-stl');
+  var copyEl = el.querySelector('.fl-copy');
+  var progBar = el.querySelector('#fl-prog-bar');
+  var progPct = el.querySelector('#fl-prog-pct');
+  var logEl = el.querySelector('#fl-log');
+  if(titleEl && {_title_js}) titleEl.textContent = {_title_js};
+  if(statusEl && {_status_js}) statusEl.innerHTML = {_status_js} + '<span class="fl-dots"></span>';
+  if(copyEl && {_copy_js}) copyEl.textContent = {_copy_js};
+  if(progBar) progBar.style.width = '{_progress_val}%';
+  if(progPct) progPct.textContent = '{_progress_val}%';
+  if(logEl){{
+    var _lines = {_logs_js};
+    logEl.innerHTML = _lines && _lines.length ? _lines.join('<br>') : 'Waiting to start…';
+    if({_error_js}) logEl.classList.add('error'); else logEl.classList.remove('error');
+  }}
+  if(parent._brincFloMsgs){{ parent.clearInterval(parent._brincFloMsgs); parent._brincFloMsgs = null; }}
+}})();
+</script></body></html>"""
+                    _upload_overlay_status_html = (
+                        _upload_overlay_status_html
+                        .replace("{_title_js}", _title_js)
+                        .replace("{_status_js}", _status_js)
+                        .replace("{_copy_js}", _copy_js)
+                        .replace("{_progress_val}", str(_progress_val))
+                        .replace("{_logs_js}", _logs_js)
+                        .replace("{_error_js}", _error_js)
+                        .replace("{{", "{")
+                        .replace("}}", "}")
+                    )
+                    components.html(_upload_overlay_status_html, height=0, scrolling=False)
+
+                _upload_logs = []
+
+                def _push_upload_log(message):
+                    _upload_logs.append(str(message))
+                    return list(_upload_logs[-8:])
 
                 # --- 1. INTELLIGENTLY CHECK FOR .BRINC FILE ---
                 # Browsers sometimes append .json to .brinc files on download
@@ -3159,15 +3748,246 @@ def main():
                     st.session_state['boundary_overlay_file'] = ''
 
                     if call_files:
+                        census_auto_processed = False
+                        _push_upload_log("Starting coordinate inspection.")
+                        _set_upload_overlay_status(
+                            title="CAD UPLOAD",
+                            status="CHECKING FOR COORDINATES",
+                            copy="Inspecting headers and cell values for usable latitude and longitude fields. This usually takes a few seconds.",
+                            progress=8,
+                            logs=_upload_logs,
+                        )
                         with st.spinner("🔍 Detecting column types in CAD export…"):
                             df_c = aggressive_parse_calls(call_files)
 
                         if df_c is None or df_c.empty:
-                            _clear_upload_overlay()
-                            st.error("❌ Calls file error: Could not parse valid coordinates.")
-                            st.stop()
+                            _push_upload_log("No usable coordinates found. Switching to automated Census batch geocoding.")
+                            _set_upload_overlay_status(
+                                title="CENSUS REQUIRED",
+                                status="COORDINATES NOT FOUND",
+                                copy="No usable latitude/longitude values were found in the upload. Preparing automated Census batch geocoding now.",
+                                progress=18,
+                                logs=_upload_logs,
+                            )
+                            with st.spinner("🛰 No recoverable coordinates found — preparing Census batch conversion…"):
+                                _push_upload_log("Building partial call frame for merge-back.")
+                                _set_upload_overlay_status(
+                                    title="CENSUS REQUIRED",
+                                    status="BUILDING STAGING DATA",
+                                    copy="Preparing source rows and merge keys before Census submission.",
+                                    progress=24,
+                                    logs=_upload_logs,
+                                )
+                                df_c_partial = aggressive_parse_calls(call_files, require_valid_coordinates=False)
+                                _push_upload_log("Extracting street, city, state, and ZIP fields for Census formatting.")
+                                _set_upload_overlay_status(
+                                    title="CENSUS REQUIRED",
+                                    status="EXTRACTING ADDRESSES",
+                                    copy="Deriving Census-ready address fields from the uploaded CAD export.",
+                                    progress=32,
+                                    logs=_upload_logs,
+                                )
+                                census_stage_df, census_original_df, census_summary = build_census_staging(call_files)
+                                if (
+                                    df_c_partial is None or
+                                    df_c_partial.empty or
+                                    '_source_row_id' not in df_c_partial.columns
+                                ):
+                                    _push_upload_log(
+                                        "Structured CAD parsing was unavailable for merge-back. Falling back to staged source rows for the Census merge."
+                                    )
+                                    df_c_partial = census_original_df.copy()
+                                    if '_source_row_id' not in df_c_partial.columns:
+                                        df_c_partial['_source_row_id'] = [
+                                            f"fallback:{idx}" for idx in range(len(df_c_partial))
+                                        ]
+                                    if '_source_file' not in df_c_partial.columns:
+                                        df_c_partial['_source_file'] = call_files[0].name if call_files else ''
+                                    if 'priority' not in df_c_partial.columns:
+                                        df_c_partial['priority'] = 3
+                                    if 'agency' not in df_c_partial.columns:
+                                        df_c_partial['agency'] = 'police'
+                                    _set_upload_overlay_status(
+                                        title="CENSUS REQUIRED",
+                                        status="USING MERGE FALLBACK",
+                                        copy="The upload did not produce a structured CAD dataframe, so the app is preserving the staged source rows and merging coordinates back onto them directly.",
+                                        progress=34,
+                                        logs=_upload_logs,
+                                    )
+                                if census_stage_df is None or census_stage_df.empty or int(census_summary.get('rows_ready', 0) or 0) == 0:
+                                    _clear_upload_overlay()
+                                    st.error("❌ Calls file error: no valid coordinates were found and the app could not assemble enough address data for Census batch geocoding.")
+                                    st.stop()
 
-                        df_c_full = df_c.reset_index(drop=True).copy()
+                                for _file_diag in (census_summary.get('files') or [])[:4]:
+                                    _diag_bits = []
+                                    if _file_diag.get('street_cols'):
+                                        _diag_bits.append(f"street={','.join(_file_diag['street_cols'][:3])}")
+                                    if _file_diag.get('city_col'):
+                                        _diag_bits.append(f"city={_file_diag['city_col']}")
+                                    if _file_diag.get('state_col'):
+                                        _diag_bits.append(f"state={_file_diag['state_col']}")
+                                    if _file_diag.get('zip_col'):
+                                        _diag_bits.append(f"zip={_file_diag['zip_col']}")
+                                    _push_upload_log(
+                                        f"{_file_diag.get('file','file')}: {_file_diag.get('ready_rows',0):,}/{_file_diag.get('rows',0):,} rows ready"
+                                        + (f" ({'; '.join(_diag_bits)})" if _diag_bits else "")
+                                    )
+                                _set_upload_overlay_status(
+                                    title="CENSUS REQUIRED",
+                                    status="ADDRESS EXTRACTION COMPLETE",
+                                    copy="Address extraction finished. Preparing Census batches from the rows with complete street, city, state, and ZIP data.",
+                                    progress=38,
+                                    logs=_upload_logs,
+                                )
+
+                                census_chunks = make_census_batch_chunks(census_stage_df, chunk_size=5000)
+                                _push_upload_log(
+                                    f"Prepared {int(census_summary.get('rows_ready', 0) or 0):,} Census-ready rows across {len(census_chunks)} Census chunk(s)."
+                                )
+                                _set_upload_overlay_status(
+                                    title="CENSUS AUTOMATION",
+                                    status="SUBMITTING BATCHES",
+                                    copy="Sending chunked address batches directly to the Census geocoder and waiting for returned coordinates.",
+                                    progress=42,
+                                    logs=_upload_logs,
+                                )
+
+                                census_result_parts = []
+                                chunk_queue = list(census_chunks)
+                                completed_chunks = 0
+                                total_chunks = max(1, len(chunk_queue))
+                                while chunk_queue:
+                                    chunk = chunk_queue.pop(0)
+                                    chunk_idx = completed_chunks + 1
+                                    _push_upload_log(
+                                        f"Submitting chunk {chunk_idx}/{total_chunks} with {chunk['rows']:,} rows to Census."
+                                    )
+                                    _set_upload_overlay_status(
+                                        title="CENSUS AUTOMATION",
+                                        status=f"SUBMITTING CHUNK {chunk_idx} OF {total_chunks}",
+                                        copy="Waiting for the Census batch endpoint to return the geocoded CSV for this chunk.",
+                                        progress=42 + int(completed_chunks / max(1, total_chunks) * 34),
+                                        logs=_upload_logs,
+                                    )
+                                    try:
+                                        chunk_result_df, _chunk_resp = submit_census_batch_chunk(
+                                            chunk['csv_bytes'],
+                                            chunk['filename'],
+                                        )
+                                    except Exception as exc:
+                                        if chunk['rows'] > 1000 and chunk.get('frame') is not None:
+                                            _push_upload_log(
+                                                f"Chunk {chunk_idx}/{total_chunks} failed: {exc}. Splitting into smaller batches and retrying."
+                                            )
+                                            split_frame = chunk['frame']
+                                            mid = max(1, len(split_frame) // 2)
+                                            left = split_frame.iloc[:mid].copy().reset_index(drop=True)
+                                            right = split_frame.iloc[mid:].copy().reset_index(drop=True)
+                                            retry_chunks = [
+                                                build_census_chunk_payload(
+                                                    left,
+                                                    chunk_index=chunk['index'],
+                                                    filename=chunk['filename'].replace('.csv', '_a.csv'),
+                                                ),
+                                                build_census_chunk_payload(
+                                                    right,
+                                                    chunk_index=chunk['index'],
+                                                    filename=chunk['filename'].replace('.csv', '_b.csv'),
+                                                ),
+                                            ]
+                                            chunk_queue = retry_chunks + chunk_queue
+                                            total_chunks += 1
+                                            _set_upload_overlay_status(
+                                                title="CENSUS AUTOMATION",
+                                                status=f"RETRYING CHUNK {chunk_idx}",
+                                                copy="The Census endpoint rejected the larger batch. Splitting it into smaller chunks and retrying automatically.",
+                                                progress=42 + int(completed_chunks / max(1, total_chunks) * 34),
+                                                logs=_upload_logs,
+                                            )
+                                            continue
+
+                                        _push_upload_log(f"Chunk {chunk_idx}/{total_chunks} failed: {exc}")
+                                        _set_upload_overlay_status(
+                                            title="CENSUS ERROR",
+                                            status=f"CHUNK {chunk_idx} FAILED",
+                                            copy="The Census batch request failed. Review the error log below and share it with Steven if needed.",
+                                            progress=42 + int(completed_chunks / max(1, total_chunks) * 34),
+                                            logs=_upload_logs,
+                                            error=True,
+                                        )
+                                        st.error(f"❌ Automated Census geocoding failed on chunk {chunk_idx} of {total_chunks}: {exc}")
+                                        st.stop()
+
+                                    _matched_rows = int((chunk_result_df['lat'].notna() & chunk_result_df['lon'].notna()).sum())
+                                    _push_upload_log(
+                                        f"Chunk {chunk_idx}/{total_chunks} completed. Returned {_matched_rows:,} rows with coordinates."
+                                    )
+                                    completed_chunks += 1
+                                    _set_upload_overlay_status(
+                                        title="CENSUS AUTOMATION",
+                                        status=f"CHUNK {chunk_idx} COMPLETE",
+                                        copy="Chunk returned successfully. Parsing and appending results before the next submission.",
+                                        progress=42 + int(completed_chunks / max(1, total_chunks) * 34),
+                                        logs=_upload_logs,
+                                    )
+                                    census_result_parts.append(chunk_result_df)
+
+                                result_df = pd.concat(census_result_parts, ignore_index=True) if census_result_parts else pd.DataFrame()
+                                result_df = result_df.drop_duplicates(subset=['source_id'], keep='first') if not result_df.empty else result_df
+                                _push_upload_log("All Census chunks returned. Merging coordinates back into the source calls file.")
+                                _set_upload_overlay_status(
+                                    title="CENSUS AUTOMATION",
+                                    status="MERGING RESULTS",
+                                    copy="Combining all Census chunk responses and restoring coordinates into the original dataset.",
+                                    progress=80,
+                                    logs=_upload_logs,
+                                )
+
+                                merged_full_df, merged_ready_df, merge_summary = merge_census_results(df_c_partial, result_df)
+                                if merged_ready_df is None or merged_ready_df.empty:
+                                    _push_upload_log("Census returned no valid coordinates after chunk processing.")
+                                    _set_upload_overlay_status(
+                                        title="CENSUS ERROR",
+                                        status="NO VALID RESULTS",
+                                        copy="Census responded, but the returned data did not contain any usable coordinates.",
+                                        progress=84,
+                                        logs=_upload_logs,
+                                        error=True,
+                                    )
+                                    st.error("❌ Automated Census geocoding completed, but no valid coordinates were returned.")
+                                    st.stop()
+
+                                corrected_export_df = build_corrected_export(census_original_df, result_df)
+                                corrected_csv = corrected_export_df.to_csv(index=False).encode('utf-8')
+                                st.session_state['census_corrected_bytes'] = corrected_csv
+                                st.session_state['census_corrected_name'] = "cad_calls_census_corrected.csv"
+                                st.session_state['census_conversion_summary'] = merge_summary
+                                st.session_state['census_download_notice'] = True
+
+                                df_c_full = merged_ready_df.reset_index(drop=True).copy()
+                                if len(df_c_full) > 25000:
+                                    df_c = df_c_full.sample(25000, random_state=42).reset_index(drop=True)
+                                    st.toast(f"⚠️ Optimization modeled with {len(df_c):,} representative calls out of {len(df_c_full):,} geocoded incidents.")
+                                else:
+                                    df_c = df_c_full.copy()
+
+                                _push_upload_log(
+                                    f"Merged Census results. {int(merge_summary.get('rows_ready', len(df_c_full)) or len(df_c_full)):,} rows now have coordinates."
+                                )
+                                _set_upload_overlay_status(
+                                    title="CENSUS AUTOMATION",
+                                    status="GEOCODING COMPLETE",
+                                    copy="Coordinates restored. Finalizing station discovery and jurisdiction setup now.",
+                                    progress=88,
+                                    logs=_upload_logs,
+                                )
+                                census_auto_processed = True
+
+                        if census_auto_processed:
+                            df_c_full = df_c_full.reset_index(drop=True).copy()
+                        else:
+                            df_c_full = df_c.reset_index(drop=True).copy()
 
                         if len(df_c_full) > 25000:
                             df_c = df_c_full.sample(25000, random_state=42).reset_index(drop=True)
@@ -3181,6 +4001,14 @@ def main():
                         })
 
                         if station_file is not None:
+                            _push_upload_log("Loading uploaded stations file.")
+                            _set_upload_overlay_status(
+                                title="UPLOAD PROCESSING",
+                                status="READING STATIONS FILE",
+                                copy="Reading the uploaded stations file and validating station coordinates.",
+                                progress=91,
+                                logs=_upload_logs,
+                            )
                             with st.spinner("🔍 Reading stations file…"):
                                 try:
                                     df_s, osm_note = load_station_file(station_file)
@@ -3192,6 +4020,14 @@ def main():
                                 st.error(f"❌ Stations file error: {osm_note}")
                                 st.stop()
                         else:
+                            _push_upload_log("No stations file provided. Building stations automatically from call data.")
+                            _set_upload_overlay_status(
+                                title="UPLOAD PROCESSING",
+                                status="BUILDING STATIONS",
+                                copy="No stations file was uploaded, so station candidates are being generated from the call data.",
+                                progress=91,
+                                logs=_upload_logs,
+                            )
                             st.session_state['stations_user_uploaded'] = False
                             with st.spinner("🌐 No stations file detected — querying OpenStreetMap for police, fire & schools…"):
                                 df_s, osm_note = generate_stations_from_calls(df_c)
@@ -3206,6 +4042,14 @@ def main():
                         if len(df_s) > 100:
                             df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
 
+                        _push_upload_log("Detecting jurisdiction from call locations.")
+                        _set_upload_overlay_status(
+                            title="UPLOAD PROCESSING",
+                            status="DETECTING JURISDICTION",
+                            copy="Using the restored coordinates to identify the active city/state and resolve the deployment area.",
+                            progress=95,
+                            logs=_upload_logs,
+                        )
                         with st.spinner(get_jurisdiction_message()):
                             detected_city, detected_state, detection_source = detect_location_from_calls(
                                 df_c,
@@ -3233,6 +4077,14 @@ def main():
                         st.session_state['total_original_calls'] = len(df_c_full)
                         st.session_state['total_modeled_calls'] = len(df_c)
 
+                        _push_upload_log("Resolving uploaded boundaries and final session state.")
+                        _set_upload_overlay_status(
+                            title="UPLOAD PROCESSING",
+                            status="FINALIZING DATASET",
+                            copy="Saving the restored calls dataset, resolving boundaries, and opening the stations workflow.",
+                            progress=98,
+                            logs=_upload_logs,
+                        )
                         with st.spinner(get_jurisdiction_message()):
                             resolve_uploaded_boundaries(
                                 st.session_state,
@@ -3249,6 +4101,14 @@ def main():
                         st.session_state['sim_mode_used'] = False
                         st.session_state['map_build_logged'] = False
                         st.session_state['csvs_ready'] = True
+                        _push_upload_log("Upload workflow complete. Opening the stations page.")
+                        _set_upload_overlay_status(
+                            title="UPLOAD COMPLETE",
+                            status="OPENING STATIONS PAGE",
+                            copy="The corrected calls dataset is ready. Transitioning into the stations workflow now.",
+                            progress=100,
+                            logs=_upload_logs,
+                        )
                         st.rerun()
 
         with path_demo_col:
@@ -3312,35 +4172,34 @@ def main():
                 if not st.session_state.get('demo_mode_used', False):
                     st.session_state['demo_mode_used'] = True
 
-            active_targets = [loc for loc in st.session_state['target_cities'] if loc['city'].strip()]
+            active_targets = [
+                {
+                    'city': str(loc.get('city', '') or '').strip(),
+                    'state': str(loc.get('state', '') or '').strip().upper(),
+                }
+                for loc in st.session_state['target_cities']
+                if str(loc.get('city', '') or '').strip() or str(loc.get('state', '') or '').strip().upper() in STATE_FIPS
+            ]
             if not active_targets:
-                st.error("Please enter at least one valid city name.")
+                st.error("Please enter at least one valid city, county, or state.")
                 st.stop()
 
+            _abbr_to_full = {abbr: name for name, abbr in US_STATES_ABBR.items()}
             if len(active_targets) == 1:
-                st.session_state['active_city']  = str(active_targets[0]['city']).title()
+                _target_city = str(active_targets[0]['city']).title()
+                if not _target_city:
+                    _target_city = _abbr_to_full.get(active_targets[0]['state'], active_targets[0]['state'])
+                st.session_state['active_city']  = _target_city
                 st.session_state['active_state'] = active_targets[0]['state']
             else:
-                st.session_state['active_city']  = f"{str(active_targets[0]['city']).title()} & {len(active_targets)-1} others"
+                _target_city = str(active_targets[0]['city']).title()
+                if not _target_city:
+                    _target_city = _abbr_to_full.get(active_targets[0]['state'], active_targets[0]['state'])
+                st.session_state['active_city']  = f"{_target_city} & {len(active_targets)-1} others"
                 st.session_state['active_state'] = active_targets[0]['state']
 
-            # ── Fetch real population for upload path ─────────────────────────────
-            try:
-                _upload_pop = 0
-                for _t in active_targets:
-                    _fips = STATE_FIPS.get(_t.get('state', ''), '')
-                    if _fips:
-                        _p = fetch_census_population(_fips, _t.get('city', ''))
-                        if _p:
-                            _upload_pop += _p
-                if _upload_pop > 0:
-                    st.session_state['estimated_pop'] = _upload_pop
-                    st.session_state['_pop_resolved'] = True
-            except Exception:
-                pass
-
             # ── Flight-path loading overlay ───────────────────────────────────────
-            _swarm_city = str(active_targets[0]['city']).title() if active_targets else "Jurisdiction"
+            _swarm_city = st.session_state.get('active_city', 'Jurisdiction') if active_targets else "Jurisdiction"
             _swarm_logo_b64 = get_themed_logo_base64("logo.png", theme="dark") or ""
             _swarm_gigs_b64 = get_transparent_product_base64("gigs.png") or ""
             _swarm_city_js  = _swarm_city.upper().replace('"', '').replace("'", '')
@@ -3353,7 +4212,7 @@ def main():
                 _swarm_map_svg = re.sub(r'<svg\b', '<svg id="fl-svg" class="fl-us-map" preserveAspectRatio="xMidYMid meet"', _swarm_map_svg, count=1)
             except Exception:
                 pass
-            components.html(f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+            _swarm_overlay_html = """<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{background:transparent;overflow:hidden}}
@@ -3648,7 +4507,18 @@ body{{background:transparent;overflow:hidden}}
 }})();
 </script>
 </body></html>
-""", height=0, scrolling=False)
+"""
+            _swarm_overlay_html = (
+                _swarm_overlay_html
+                .replace("{_swarm_logo_b64}", _swarm_logo_b64)
+                .replace("{_swarm_gigs_b64}", _swarm_gigs_b64)
+                .replace("{_swarm_map_svg}", _swarm_map_svg)
+                .replace("{_swarm_city_js}", _swarm_city_js)
+                .replace("{_swarm_state_js}", _swarm_state_js)
+                .replace("{{", "{")
+                .replace("}}", "}")
+            )
+            components.html(_swarm_overlay_html, height=0, scrolling=False)
             prog = st.progress(0, text="🫡 Preparing tools worthy of those who serve…")
             all_gdfs = []
             total_estimated_pop = 0
@@ -3675,7 +4545,7 @@ body{{background:transparent;overflow:hidden}}
 
 
 
-            all_gdfs, total_estimated_pop, boundary_messages, boundary_warnings, rerun_demo_target = build_demo_boundaries(
+            all_gdfs, total_estimated_pop, boundary_messages, boundary_warnings, rerun_demo_target, all_populations_verified = build_demo_boundaries(
                 st.session_state,
                 active_targets,
                 STATE_FIPS,
@@ -3683,8 +4553,10 @@ body{{background:transparent;overflow:hidden}}
                 DEMO_CITIES,
                 fetch_county_boundary_local,
                 fetch_place_boundary_local,
+                fetch_tiger_state_shapefile,
                 save_boundary_gdf,
                 fetch_census_population,
+                fetch_census_state_population,
             )
             for _msg in boundary_messages:
                 st.toast(_msg)
@@ -3720,7 +4592,7 @@ body{{background:transparent;overflow:hidden}}
             active_city_gdf = pd.concat(all_gdfs, ignore_index=True)
             city_poly = active_city_gdf.geometry.union_all()
             st.session_state['estimated_pop'] = total_estimated_pop
-            st.session_state['_pop_resolved'] = True
+            st.session_state['_pop_resolved'] = all_populations_verified
 
             prog.progress(55, text="🚔 Modeling 911 calls — every one represents someone who needed help…")
             df_demo, annual_cfs, simulated_points_count = build_demo_calls(city_poly, total_estimated_pop, generate_clustered_calls)
@@ -3804,6 +4676,25 @@ body{{background:transparent;overflow:hidden}}
         # ── MAP BUILD EVENT: log to sheets once per session ──────────────────────
         log_map_build_event_once(st.session_state, _log_to_sheets)
 
+        if st.session_state.get('census_download_notice'):
+            _census_conv = st.session_state.get('census_conversion_summary') or {}
+            _census_ready = int(_census_conv.get('rows_ready', len(df_calls_full)) or len(df_calls_full))
+            _census_total = int(st.session_state.get('total_original_calls', _census_ready) or _census_ready)
+            st.sidebar.info(
+                "Coordinates restored via Census batch geocoding.\n\n"
+                f"{_census_ready:,} of {_census_total:,} records now have usable coordinates."
+            )
+            if st.session_state.get('census_corrected_bytes'):
+                st.sidebar.download_button(
+                    "⬇️ Download Corrected Calls File",
+                    data=st.session_state['census_corrected_bytes'],
+                    file_name=st.session_state.get('census_corrected_name') or "cad_calls_census_corrected.csv",
+                    mime="text/csv",
+                    key="sidebar_download_corrected_census_calls_btn",
+                    width="stretch",
+                    help="Download the corrected calls file so the Census conversion does not need to run again in a future browser session.",
+                )
+            st.sidebar.caption("This corrected data is only stored for the current browser session.")
 
         master_gdf, _boundary_kind_note, _boundary_src_note = resolve_master_boundary(
             st,
@@ -4332,8 +5223,8 @@ body{{background:transparent;overflow:hidden}}
                 _unserv_calls_yr  = _unserv_calls_day * 365
 
                 # Extra stations needed to clear deficit (same type and alternate type)
-                _extra_same = int(math.ceil(_deficit_flights / _max_flights_cap)) if _has_deficit else 0
-                _extra_alt  = int(math.ceil(_deficit_flights / _alt_max_flights))  if _has_deficit else 0
+                _extra_same = int(math.ceil(_deficit_flights / _max_flights_cap)) if (_has_deficit and _max_flights_cap > 0) else 0
+                _extra_alt  = int(math.ceil(_deficit_flights / _alt_max_flights))  if (_has_deficit and _alt_max_flights > 0) else 0
 
                 # CapEx cost of each resolution path
                 _same_type_cost = CONFIG["GUARDIAN_COST"] if _is_guard else CONFIG["RESPONDER_COST"]
@@ -4665,6 +5556,11 @@ body{{background:transparent;overflow:hidden}}
             _tier_desc = "Core Functionality"
 
         # 1. THE SINGLE-LINE EXECUTIVE HEADER
+        _display_jurisdiction_name = _get_document_jurisdiction_name(
+            st.session_state,
+            selected_names,
+            fallback='Unknown City',
+        )
         logo_b64 = get_transparent_product_base64("gigs.png")
         main_logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:32px; vertical-align:middle; margin-right:15px;">' if logo_b64 else f'<span style="font-size:1.5rem; font-weight:900; letter-spacing:2px; color:#ffffff; margin-right:15px;">BRINC</span>'
 
@@ -4672,8 +5568,8 @@ body{{background:transparent;overflow:hidden}}
         <div style="margin-top: 5px; margin-bottom: 15px; padding-bottom: 12px; border-bottom: 1px solid {card_border}; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
             <div style="display: flex; align-items: center; flex-wrap: wrap; font-size: 0.9rem;">
                 <span style="color: {accent_color}; font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; letter-spacing: 1px; text-transform: uppercase; margin-right: 12px;">Strategic Deployment Plan</span>
-                <span style="font-weight: 800; color: {text_main}; font-size: 1.1rem; margin-right: 12px;">{st.session_state.get('active_city', 'Unknown City')}, {st.session_state.get('active_state', 'US')}</span>
-                <span style="color: {text_muted}; margin-right: 12px;">• Serving {st.session_state.get('estimated_pop', 0):,} residents across ~{int(area_sq_mi):,} sq miles</span>
+                <span style="font-weight: 800; color: {text_main}; font-size: 1.1rem; margin-right: 12px;">{_display_jurisdiction_name}, {st.session_state.get('active_state', 'US')}</span>
+                <span style="color: {text_muted}; margin-right: 12px;">• {"Serving {:,} residents across".format(st.session_state.get('estimated_pop', 0)) if st.session_state.get('estimated_pop', 0) else "Coverage area:"} ~{int(area_sq_mi):,} sq miles</span>
             </div>
             <div style="display: flex; align-items: center; font-size: 0.85rem; color: {text_muted}; gap: 15px;">
                 <span>Data Period: <span style="color:#fff;">{date_range_str}</span></span>
@@ -4828,7 +5724,7 @@ body{{background:transparent;overflow:hidden}}
                     showscale=False, name="Heatmap", hoverinfo='skip'))
 
             if show_dots and not display_calls.empty:
-                point_size = 1 if len(display_calls) > 150000 else 2 if len(display_calls) > 50000 else 3 if len(display_calls) > 20000 else 4
+                point_size = 2 if len(display_calls) > 150000 else 3 if len(display_calls) > 50000 else 4 if len(display_calls) > 20000 else 5
                 point_opacity = 0.06 if len(display_calls) > 150000 else 0.10 if len(display_calls) > 50000 else 0.18 if len(display_calls) > 20000 else 0.28 if len(display_calls) > 10000 else 0.4
                 # Split by agency so fire calls render red and police calls use the theme colour
                 _has_agency = 'agency' in display_calls.columns
@@ -5364,7 +6260,7 @@ body{{background:transparent;overflow:hidden}}
 
                 drone_svg = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M18 6a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4zm12 12a2 2 0 100-4 2 2 0 000 4zm-12 0a2 2 0 100-4 2 2 0 000 4z'/%3E%3Cpath stroke='white' stroke-width='2' stroke-linecap='round' d='M8.5 8.5l7 7m0-7l-7 7'/%3E%3Ccircle cx='12' cy='12' r='2' fill='white'/%3E%3C/svg%3E"
 
-                sim_html = f"""<!DOCTYPE html><html><head>
+                sim_html = """<!DOCTYPE html><html><head>
                 <script src="https://unpkg.com/deck.gl@8.9.35/dist.min.js"></script>
                 <script src="https://unpkg.com/maplibre-gl@3.0.0/dist/maplibre-gl.js"></script>
                 <link href="https://unpkg.com/maplibre-gl@3.0.0/dist/maplibre-gl.css" rel="stylesheet"/>
@@ -5454,6 +6350,21 @@ body{{background:transparent;overflow:hidden}}
                   }};
                   render();
                 </script></body></html>"""
+                sim_html = (
+                    sim_html
+                    .replace("{warn_html_sim}", warn_html_sim)
+                    .replace("{total_sim_flights:,}", f"{total_sim_flights:,}")
+                    .replace("{int(dfr_dispatch_rate*100)}", str(int(dfr_dispatch_rate * 100)))
+                    .replace("{legend_html_sim}", legend_html_sim)
+                    .replace("{json.dumps(stations_json)}", json.dumps(stations_json))
+                    .replace("{json.dumps(flights_json)}", json.dumps(flights_json))
+                    .replace("{center_lon}", str(center_lon))
+                    .replace("{center_lat}", str(center_lat))
+                    .replace("{dynamic_zoom}", str(dynamic_zoom))
+                    .replace("{drone_svg}", drone_svg)
+                    .replace("{{", "{")
+                    .replace("}}", "}")
+                )
 
                 components.html(sim_html, height=700)
 
@@ -5532,7 +6443,7 @@ body{{background:transparent;overflow:hidden}}
                 for _t in df_stations_all['type'].dropna().astype(str):
                     _cid_fac_counts[_t] = _cid_fac_counts.get(_t, 0) + 1
             _cid_html = html_reports.generate_community_impact_dashboard_html(
-                city=st.session_state.get('active_city', 'City'),
+                city=_get_document_jurisdiction_name(st.session_state, selected_names, fallback='City'),
                 state=st.session_state.get('active_state', 'TX'),
                 population=int(st.session_state.get('estimated_pop', 0) or 0),
                 total_calls=int(st.session_state.get('total_original_calls', full_total_calls or total_calls) or 0),
@@ -5931,7 +6842,7 @@ body{{background:transparent;overflow:hidden}}
             # The main program renders the full detailed boundary; mobile map focuses on station locations and calls
 
             _qr_params = _up.urlencode({
-                "city":  str(st.session_state.get("active_city", "")).title(),
+                "city":  _get_document_jurisdiction_name(st.session_state, selected_names, fallback="").title(),
                 "state": st.session_state.get("active_state", ""),
                 "pop":   int(st.session_state.get("estimated_pop", 0) or 0),
                 "cov":   round(float(calls_covered_perc or 0), 1),
@@ -5998,7 +6909,7 @@ body{{background:transparent;overflow:hidden}}
             if not _qr_name:
                 _name_seed = (_qr_email.split("@")[0] if _qr_email else _qr_user or "BRINC Representative")
                 _qr_name = " ".join(w.capitalize() for w in _name_seed.replace("_", ".").split("."))
-            _qr_city  = st.session_state.get("active_city", "")
+            _qr_city  = _get_document_jurisdiction_name(st.session_state, selected_names, fallback="")
             _qr_state = st.session_state.get("active_state", "")
             _qr_loc   = f"{_qr_city}, {_qr_state}" if _qr_city else "your city"
 
@@ -6123,7 +7034,7 @@ body{{background:transparent;overflow:hidden}}
               </div>
             """
 
-            _public_summary_html = f"""<!DOCTYPE html>
+            _public_summary_html = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -6294,6 +7205,31 @@ body{{background:transparent;overflow:hidden}}
 </div>
 </body>
 </html>"""
+            _public_summary_html = (
+                _public_summary_html
+                .replace("{_qr_city}", _qr_city)
+                .replace("{_qr_state}", _qr_state)
+                .replace("{_h(_qr_dept)}", _h(_qr_dept))
+                .replace("{_h(_qr_city)}", _h(_qr_city))
+                .replace("{_h(_qr_state)}", _h(_qr_state))
+                .replace("{_qr_email}", _qr_email)
+                .replace("{_h(_qr_loc)}", _h(_qr_loc))
+                .replace("{_qr_avg_resp:.1f}", f"{_qr_avg_resp:.1f}")
+                .replace("{_qr_time_saved:.1f}", f"{_qr_time_saved:.1f}")
+                .replace("{float(calls_covered_perc or 0):.1f}", f"{float(calls_covered_perc or 0):.1f}")
+                .replace("{_qr_covered_calls:,}", f"{_qr_covered_calls:,}")
+                .replace("{actual_k_responder}", str(actual_k_responder))
+                .replace("{actual_k_guardian}", str(actual_k_guardian))
+                .replace("{float(annual_savings or 0):,.0f}", f"{float(annual_savings or 0):,.0f}")
+                .replace("{_h(_qr_summary_text)}", _h(_qr_summary_text))
+                .replace("{_qr_fleet_total}", str(_qr_fleet_total))
+                .replace("{_impact_html}", _impact_html)
+                .replace("{_station_table_rows_html}", _station_table_rows_html)
+                .replace("{_h(_qr_name)}", _h(_qr_name))
+                .replace("{_h(_qr_email)}", _h(_qr_email))
+                .replace("{{", "{")
+                .replace("}}", "}")
+            )
             _report_id = st.session_state.get('public_report_id', '')
             _fleet_summary = f"{actual_k_responder}R / {actual_k_guardian}G"
             _stations_json = json.dumps([
@@ -6395,7 +7331,7 @@ body{{background:transparent;overflow:hidden}}
         prop_name = user_clean
 
         # Always define these so download buttons work regardless of fleet_capex
-        prop_city  = st.session_state.get('active_city', 'City')
+        prop_city  = _get_document_jurisdiction_name(st.session_state, selected_names, fallback='City')
         prop_state = st.session_state.get('active_state', 'FL')
         _safe_city_base = prop_city.replace(" ", "_").replace("/", "_")
         export_details = {}
@@ -6438,6 +7374,7 @@ body{{background:transparent;overflow:hidden}}
             "app_version": __version__,
             # ── Extended session state ────────────────────────────────────
             "estimated_pop":               int(st.session_state.get('estimated_pop', 0) or 0),
+            "_pop_resolved":              bool(st.session_state.get('_pop_resolved', False)),
             "total_original_calls":        int(st.session_state.get('total_original_calls', 0) or 0),
             "total_modeled_calls":         int(st.session_state.get('total_modeled_calls', 0) or 0),
             "inferred_daily_calls_override": st.session_state.get('inferred_daily_calls_override'),
@@ -6468,7 +7405,7 @@ body{{background:transparent;overflow:hidden}}
 
         if fleet_capex > 0:
 
-            prop_city  = st.session_state.get('active_city', 'City')
+            prop_city  = _get_document_jurisdiction_name(st.session_state, selected_names, fallback='City')
             prop_state = st.session_state.get('active_state', 'FL')
 
             pop_metric = st.session_state.get('estimated_pop', 250000)
@@ -6635,6 +7572,7 @@ body{{background:transparent;overflow:hidden}}
                 # ── Extended session state ────────────────────────────────────
                 # Jurisdiction metrics
                 "estimated_pop":               int(st.session_state.get('estimated_pop', 0) or 0),
+                "_pop_resolved":              bool(st.session_state.get('_pop_resolved', False)),
                 "total_original_calls":        int(st.session_state.get('total_original_calls', 0) or 0),
                 "total_modeled_calls":         int(st.session_state.get('total_modeled_calls', 0) or 0),
                 "inferred_daily_calls_override": st.session_state.get('inferred_daily_calls_override'),
@@ -6848,7 +7786,7 @@ body{{background:transparent;overflow:hidden}}
                 cad_charts_html_export = html_reports._build_cad_charts_html(df_calls_full if df_calls_full is not None else df_calls)
                 staffing_pressure_html_export = ""
     
-                prepared_for_city = st.session_state.get('active_city', prop_city) or prop_city
+                prepared_for_city = _get_document_jurisdiction_name(st.session_state, selected_names, fallback=prop_city) or prop_city
                 prepared_by_name = prop_name
     
                 # ── School safety export variables ────────────────────────────────────────
@@ -6981,7 +7919,68 @@ body{{background:transparent;overflow:hidden}}
                     else (_boundary_src_note.split('/')[-1].split('\\')[-1] if _boundary_src_note else 'live lookup')
                 )
                 _selected_labels_str = ', '.join(selected_names) if selected_names else prop_city
-    
+                _grant_context_text = " ".join(
+                    str(v) for v in [
+                        prepared_for_city, prop_city, prop_state, police_names_str,
+                        jurisdiction_list, dept_summary, _selected_labels_str,
+                    ] if v
+                ).lower()
+
+                def _grant_context_looks_like_state_agency(ctx_text: str) -> bool:
+                    _state_agency_markers = (
+                        "single state agency",
+                        "state agency",
+                        "state of ",
+                        "department of health",
+                        "behavioral health",
+                        "mental health",
+                        "substance abuse",
+                        "public health",
+                        "ssa",
+                    )
+                    return any(marker in ctx_text for marker in _state_agency_markers)
+
+                def _render_timed_custom_grant_html(
+                    *,
+                    title: str,
+                    description: str,
+                    deadline: datetime.date,
+                    eligibility_note: str,
+                    nofo_number: str = "",
+                    historical_note: str = "",
+                    require_state_agency: bool = False,
+                ) -> str:
+                    if datetime.date.today() > deadline:
+                        return ""
+                    if require_state_agency and not _grant_context_looks_like_state_agency(_grant_context_text):
+                        return ""
+                    _meta = [f"Application due {deadline.strftime('%B %d, %Y')}"]
+                    if nofo_number:
+                        _meta.append(f"NOFO {nofo_number}")
+                    if eligibility_note:
+                        _meta.append(eligibility_note)
+                    if historical_note:
+                        _meta.append(historical_note)
+                    return (
+                        f"<br><strong>{html.escape(title)}</strong> — {html.escape(description)} "
+                        f"<span style=\"color:#666;\">({' | '.join(html.escape(m) for m in _meta)})</span>"
+                    )
+
+                _custom_law_grants_html = "".join([
+                    _render_timed_custom_grant_html(
+                        title="SAMHSA State Opioid Response Grants (SOR)",
+                        description=(
+                            "Supports opioid and stimulant use-disorder prevention, harm reduction, "
+                            "treatment, recovery support, and MOUD access."
+                        ),
+                        deadline=datetime.date(2022, 7, 18),
+                        eligibility_note="Eligible applicants limited to Single State Agencies and territories",
+                        nofo_number="TI-22-005",
+                        historical_note="Historical NOFO posted before January 20, 2025",
+                        require_state_agency=True,
+                    ),
+                ])
+
                 export_html = f"""<!DOCTYPE html>
         <html lang="en"><head>
         <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -7353,8 +8352,8 @@ body{{background:transparent;overflow:hidden}}
                 <div class="cover-tag">Drone as a First Responder · Deployment Proposal</div>
                 <h1>Protecting <span>{prop_city}</span>,<br>{prop_state}</h1>
                 <div class="cover-population">
-                  Serving <strong>{int(pop_metric):,}</strong> residents of {prop_city}, {prop_state}
-                  <abbr title="Source: US Census Bureau American Community Survey (ACS) 5-Year Estimates · census.gov/programs-surveys/acs" style="font-size:11px;color:#666;margin-left:4px;text-decoration:none;cursor:help;">ⓘ</abbr>
+                  {"Serving <strong>" + f"{int(pop_metric):,}" + f"</strong> residents of {prop_city}, {prop_state}" if pop_metric else f"Aerial Response Deployment &mdash; {prop_city}, {prop_state}"}
+                  {('<abbr title="Source: US Census Bureau American Community Survey (ACS) 5-Year Estimates · census.gov/programs-surveys/acs" style="font-size:11px;color:#666;margin-left:4px;text-decoration:none;cursor:help;">ⓘ</abbr>') if pop_metric else ''}
                 </div>
                 <p>A data-driven deployment plan for <strong>{actual_k_responder + actual_k_guardian} BRINC aerial units</strong> covering {calls_covered_perc:.1f}% of {st.session_state.get('total_original_calls', total_calls):,} annual incidents · {len(df_stations_all):,} public facilities protected across {area_sq_mi_est:,} sq mi.</p>
               </div>
@@ -7487,7 +8486,7 @@ body{{background:transparent;overflow:hidden}}
           <div class="section-eyebrow">
             <span class="pg-num">06</span>
             <span class="pg-title">Grant Narrative</span>
-            <span class="src" data-src="Grant programs referenced: DOJ Byrne JAG · FEMA HSGP · DOJ COPS Office · DOT RAISE · DOJ Smart Policing Initiative. Financial figures are BRINC model estimates. Narrative is AI-generated — must be reviewed, localized, and fact-checked by your grants administrator before submission.">ⓘ</span>
+            <span class="src" data-src="Grant programs referenced: DOJ Byrne JAG · FEMA HSGP · DOJ COPS Office · DOT RAISE · DOJ Smart Policing Initiative. Timed custom grants render only while open and when the applicant context appears eligible. Financial figures are BRINC model estimates. Narrative is AI-generated — must be reviewed, localized, and fact-checked by your grants administrator before submission.">ⓘ</span>
             <button class="copy-section-btn grant-law" onclick="copyGrantText('grant-body-law', this)">
               <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0"><path d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6z"/><path d="M2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h-1v1H2V6h1V5H2z"/></svg>
               Copy Grant Text
@@ -7561,7 +8560,7 @@ body{{background:transparent;overflow:hidden}}
               <a href="https://www.fema.gov/grants/preparedness/homeland-security">FEMA HSGP</a> — Homeland security CapEx offset<br>
               <a href="https://cops.usdoj.gov/grants">DOJ COPS Office</a> — Law enforcement technology<br>
               <a href="https://www.transportation.gov/grants">DOT RAISE</a> — Regional infrastructure and safety<br>
-              <a href="https://bja.ojp.gov/program/smart-policing-initiative/overview">DOJ Smart Policing Initiative</a> — Data-driven public safety
+              <a href="https://bja.ojp.gov/program/smart-policing-initiative/overview">DOJ Smart Policing Initiative</a> — Data-driven public safety{_custom_law_grants_html}
             </p>
           </div>
           <div class="grant-sidebar">
@@ -7981,7 +8980,8 @@ body{{background:transparent;overflow:hidden}}
           <span>Prepared by {prop_name} · <a href="mailto:{prop_email}">{prop_email}</a>{" · " + _doc_phone if _doc_phone else ""}</span>
         </footer>
     
-        </main>
+        </main>"""
+                export_html += """
         <script>
         // Highlight active nav link on scroll
         const sections=document.querySelectorAll('section[id],div[id="analytics"]');
@@ -8045,7 +9045,7 @@ body{{background:transparent;overflow:hidden}}
           }});
         }}
         </script>
-        </body></html>"""
+        </body></html>""".replace("{{", "{").replace("}}", "}")
     
                 # Section 09 (Analytics Dashboard) removed — its content (cad_charts_html_export)
                 # is already rendered in Section 04 (Incident Data Analysis). Duplicating it
