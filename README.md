@@ -1,6 +1,6 @@
-# Frankenstein
+# beta-optimizer
 
-`Frankenstein` is a Streamlit application for planning BRINC Drone as First Responder deployments. It ingests incident/CAD data, derives a jurisdiction boundary, generates candidate stations, solves fleet placement with mixed-integer optimization, and produces map, budget, RF, and export outputs for proposal workflows.
+`beta-optimizer` is a Streamlit application for planning BRINC Drone as First Responder deployments. It ingests incident/CAD data, derives a jurisdiction boundary, generates candidate stations, solves fleet placement with mixed-integer optimization, and produces map, budget, RF, and export outputs for proposal workflows.
 
 ## What It Does
 
@@ -23,17 +23,14 @@
 
 ## Repository Layout
 
-- [`app.py`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/app.py): primary application entry point and most business logic
-- [`requirements.txt`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/requirements.txt): Python dependencies
-- [`download_regulatory_layers.py`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/download_regulatory_layers.py): downloads and caches FAA / infrastructure overlays
-- [`download_fcc_coverage.py`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/download_fcc_coverage.py): helper for coverage data
-- [`jurisdiction_data`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/jurisdiction_data): local boundary shapefile cache
-- [`regulatory_layers`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/regulatory_layers): cached parquet overlays, generated locally
-- [`cell_coverage`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/cell_coverage): local coverage data
-- [`patch`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/patch): local patch artifacts
-- [`QUICKSTART.md`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/QUICKSTART.md): operational quick start for regulatory layers
-- [`REGULATORY_LAYERS_README.md`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/REGULATORY_LAYERS_README.md): deeper notes on cached map layers
-- [`RF_COVERAGE_ENGINE_SUMMARY.md`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/RF_COVERAGE_ENGINE_SUMMARY.md): RF modeling notes
+- `app.py`: primary application entry point and most business logic
+- `requirements.txt`: Python dependencies
+- `download_regulatory_layers.py`: downloads and caches FAA / infrastructure overlays
+- `jurisdiction_data/`: local boundary shapefile cache
+- `regulatory_layers/`: cached parquet overlays, generated locally
+- `cell_coverage/`: local coverage data
+- `modules/`: extracted helpers for parsing, onboarding, optimization, reporting, and config
+- `QUICKSTART.md`: operational quick start for regulatory layers
 
 ## Local Setup
 
@@ -50,7 +47,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-The advanced RF section imports `scipy`, but `scipy` is not currently listed in [`requirements.txt`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/requirements.txt). Install it manually if you use that section:
+The advanced RF section imports `scipy`, but `scipy` is not currently listed in `requirements.txt`. Install it manually if you use that section:
 
 ```powershell
 pip install scipy
@@ -58,7 +55,7 @@ pip install scipy
 
 ### 3. Configure Streamlit secrets
 
-The app reads configuration from [`.streamlit/secrets.toml`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/.streamlit/secrets.toml).
+The app reads configuration from `.streamlit/secrets.toml`.
 
 Keys referenced in the code include:
 
@@ -104,13 +101,13 @@ The repo already contains several large local datasets and caches. In normal ope
 - cached regulatory parquet files in `regulatory_layers/`
 - uploaded CAD / XLSX / CSV / related incident exports from the user
 
-Some generated data is intentionally ignored by git. See [`.gitignore`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/.gitignore).
+Some generated data is intentionally ignored by git. See `.gitignore`.
 
 ## Architecture Notes
 
 Current implementation characteristics:
 
-- The application is mostly a monolith in [`app.py`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/app.py), which is roughly 11k lines.
+- The application is mostly a monolith in `app.py`.
 - UI, geospatial data access, optimization, export generation, and external integrations are tightly coupled.
 - The `pages/` directory exists but is effectively unused, so this is still a single-app layout rather than a split Streamlit multipage app.
 
@@ -123,19 +120,8 @@ That structure works, but it increases change risk. The most natural refactor bo
 - export generation
 - RF coverage modeling
 
-## Related Docs
+## Cleanup Notes
 
-- [`QUICKSTART.md`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/QUICKSTART.md)
-- [`REGULATORY_LAYERS_README.md`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/REGULATORY_LAYERS_README.md)
-- [`RF_COVERAGE_ENGINE_SUMMARY.md`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/RF_COVERAGE_ENGINE_SUMMARY.md)
-- [`IMPLEMENTATION_CHECKLIST.md`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/IMPLEMENTATION_CHECKLIST.md)
-- [`CODE_CHANGES_REFERENCE.md`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/CODE_CHANGES_REFERENCE.md)
-
-## Current Repo State
-
-At inspection time:
-
-- branch: `main`
-- remote: `origin = https://github.com/stevebeltran/Frankenstein.git`
-- latest commit: `a5102d2` on April 8, 2026
-- local unstaged change present in `jurisdiction_data/place__springfield_IL.dbf`
+- `public_reports/`, `streamlit_start.out`, `streamlit_start.err`, and `jurisdiction_data/temp_tiger_states/` are generated runtime artifacts and should not be committed.
+- `pages/` currently appears unused and can be removed once you confirm there is no planned multipage UI split.
+- `app.py` is still very large, so the next real cleanup step after repo hygiene is code extraction rather than more file deletion.
