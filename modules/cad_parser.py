@@ -792,7 +792,12 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
             if _agency_col:
                 res['agency'] = raw_df[_agency_col].astype(str).str.strip().str.lower()
             else:
-                res['agency'] = 'police'   # safe default for single-agency files
+                # Fall back to filename-based agency detection when no agency column exists
+                _fname_lower = str(cfile.name).lower()
+                if any(k in _fname_lower for k in ('fire', 'ems', 'medic', 'rescue', 'ambulance', 'engine', 'ladder', 'battalion')):
+                    res['agency'] = 'fire'
+                else:
+                    res['agency'] = 'police'   # safe default for single-agency files
 
             # City/state detection: store top values on rows for location detection
             top_city_name = None
@@ -856,7 +861,9 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
         combined = combined.dropna(subset=['lat', 'lon'])
         combined['lat'] = pd.to_numeric(combined['lat'], errors='coerce')
         combined['lon'] = pd.to_numeric(combined['lon'], errors='coerce')
-        combined = combined[(combined['lat'].between(-90, 90)) & (combined['lon'].between(-180, 180))]
+        # Filter to US territory bounds — eliminates corrupted placeholder coords (e.g. -1,-1)
+        # that pass the zero-sentinel but would distort the bounding box and UTM zone calculation
+        combined = combined[(combined['lat'].between(17.5, 72)) & (combined['lon'].between(-180, -64))]
     else:
         combined = pd.concat(all_calls_list, ignore_index=True)
         if 'lat' in combined.columns:
