@@ -21,6 +21,7 @@ import urllib.request
 import urllib.parse
 import zipfile
 import streamlit.components.v1 as components
+from streamlit.components.v1 import declare_component
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import gspread
@@ -127,8 +128,24 @@ from modules.onboarding import (
     load_simulation_boundary_overlay, load_simulation_custom_stations,
     build_demo_boundaries, build_demo_calls, resolve_demo_stations,
 )
+from modules.highway_corridor import (
+    STATE_PRIMARY_INTERSTATES,
+    fetch_highway_geometry,
+    build_corridor_polygon,
+    estimate_corridor_calls,
+    build_corridor_demo,
+)
 
 APP_DIR = Path(__file__).resolve().parent
+QUICK_PIN_COMPONENT_DIR = APP_DIR / "quick_pin_component"
+QUICK_PIN_COMPONENT = (
+    declare_component(
+        "quick_pin_component",
+        path=str(QUICK_PIN_COMPONENT_DIR),
+    )
+    if QUICK_PIN_COMPONENT_DIR.is_dir()
+    else None
+)
 
 
 def _uploaded_files_signature(files):
@@ -335,7 +352,7 @@ def _render_public_report_route():
     except Exception:
         pass
 
-    st.set_page_config(layout="wide", page_title="BRINC DFR")
+    st.set_page_config(layout="wide", page_title="BRINC DFR", page_icon="https://brincdrones.com/favicon.ico")
     st.markdown("""
         <style>
             header, footer, #MainMenu,
@@ -2221,7 +2238,7 @@ def _prepare_sampling_polygon(polygon):
     try:
         if isinstance(polygon, MultiPolygon):
             non_empty = [p for p in polygon.geoms if p is not None and not p.is_empty]
-            polygon = max(non_empty, key=lambda p: p.area) if non_empty else None
+            polygon = MultiPolygon(non_empty) if non_empty else None
         if polygon is None or polygon.is_empty:
             return None
         if not polygon.is_valid:
@@ -2881,7 +2898,11 @@ def build_display_calls(df_calls_full, _city_m, epsg_code, max_points=300000, se
 # ============================================================
 # PAGE CONFIG — must be the first Streamlit command
 # ============================================================
-st.set_page_config(layout="wide", page_title="BRINC Drone-as-First-Responder")
+st.set_page_config(
+    layout="wide",
+    page_title="BRINC Drone-as-First-Responder",
+    page_icon="https://brincdrones.com/favicon.ico"
+)
 
 # ============================================================
 # GOOGLE OAUTH LOGIN GATE
@@ -3290,6 +3311,59 @@ def main():
 
             st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
+            # ── Highway / State Police Mode ───────────────────────────────────
+            _hw_mode_ui = st.checkbox(
+                "Highway / State Police Mode",
+                key="highway_patrol_mode",
+                help="Route calls along specific interstate corridors instead of jurisdiction boundaries. Each highway runs as an independent deployment plan.",
+            )
+            if _hw_mode_ui:
+                _hw_ui_states = list(dict.fromkeys(
+                    loc['state'] for loc in st.session_state['target_cities']
+                    if loc.get('state') in STATE_FIPS
+                ))
+                _hw_ui_state = _hw_ui_states[0] if _hw_ui_states else None
+                if _hw_ui_state:
+                    _default_hws = STATE_PRIMARY_INTERSTATES.get(_hw_ui_state, [])
+                    _hw_src = st.radio(
+                        "Corridors",
+                        ["Primary interstates (auto)", "Custom"],
+                        horizontal=True,
+                        key="hw_source_radio",
+                    )
+                    if _hw_src == "Primary interstates (auto)":
+                        st.caption(
+                            f"Will deploy: {', '.join(_default_hws)}" if _default_hws
+                            else "No primary interstates defined for this state."
+                        )
+                        st.session_state['selected_highways'] = _default_hws
+                    else:
+                        _custom_hw_str = st.text_input(
+                            "Highways (comma-separated)",
+                            placeholder="e.g. I-80, I-29",
+                            key="custom_highways_input",
+                        )
+                        st.session_state['selected_highways'] = [
+                            h.strip() for h in _custom_hw_str.split(',') if h.strip()
+                        ]
+                    _avail_hws = st.session_state.get('selected_highways', [])
+                    if len(_avail_hws) > 1:
+                        st.session_state['active_highway'] = st.selectbox(
+                            "Run plan for:",
+                            _avail_hws,
+                            key="active_highway_select",
+                        )
+                    elif len(_avail_hws) == 1:
+                        st.session_state['active_highway'] = _avail_hws[0]
+                    else:
+                        st.session_state['active_highway'] = None
+                else:
+                    st.caption("Enter a state abbreviation above first.")
+                    st.session_state['selected_highways'] = []
+                    st.session_state['active_highway'] = None
+
+            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
             st.file_uploader(
                 "Optional: Stations + boundary overlay files",
                 accept_multiple_files=True,
@@ -3368,18 +3442,24 @@ def main():
 
       function bindEnterToDeploy(){
         var doc = parent.document;
-        var cityInput = doc.querySelector('input[aria-label="city_or_county_0"]');
-        if(!cityInput || cityInput.getAttribute('data-brinc-enter-submit')) return;
-        cityInput.setAttribute('data-brinc-enter-submit', '1');
-        cityInput.addEventListener('keydown', function(evt){
-          if(evt.key !== 'Enter' || evt.shiftKey || evt.ctrlKey || evt.altKey || evt.metaKey) return;
-          var deployBtn = Array.from(doc.querySelectorAll('[data-testid="stButton"] > button')).find(function(btn){
-            var p = btn.querySelector('p');
-            return p && p.textContent.trim() === 'Deploy';
+        var targets = Array.from(doc.querySelectorAll('input[type="text"], input:not([type]), textarea'));
+        targets.forEach(function(input){
+          if(!input || input.getAttribute('data-brinc-enter-submit')) return;
+          input.setAttribute('data-brinc-enter-submit', '1');
+          input.addEventListener('keydown', function(evt){
+            if(evt.key !== 'Enter' || evt.shiftKey || evt.ctrlKey || evt.altKey || evt.metaKey) return;
+            var deployBtn = Array.from(doc.querySelectorAll('[data-testid="stButton"] > button')).find(function(btn){
+              var p = btn.querySelector('p');
+              return p && p.textContent.trim() === 'Deploy';
+            });
+            if(!deployBtn) return;
+            try {
+              input.dispatchEvent(new Event('change', {bubbles:true}));
+              input.blur();
+            } catch (e) {}
+            evt.preventDefault();
+            setTimeout(function(){ deployBtn.click(); }, 60);
           });
-          if(!deployBtn) return;
-          evt.preventDefault();
-          setTimeout(function(){ deployBtn.click(); }, 30);
         });
       }
 
@@ -4584,35 +4664,64 @@ body{{background:transparent;overflow:hidden}}
 
 
 
-            all_gdfs, total_estimated_pop, boundary_messages, boundary_warnings, rerun_demo_target, all_populations_verified = build_demo_boundaries(
-                st.session_state,
-                active_targets,
-                STATE_FIPS,
-                KNOWN_POPULATIONS,
-                DEMO_CITIES,
-                fetch_county_boundary_local,
-                fetch_place_boundary_local,
-                fetch_tiger_state_shapefile,
-                save_boundary_gdf,
-                fetch_census_population,
-                fetch_census_state_population,
-            )
-            for _msg in boundary_messages:
-                st.toast(_msg)
-            for _warn in boundary_warnings:
-                st.warning(_warn)
-            if rerun_demo_target is not None:
-                rcity, rstate = rerun_demo_target
-                st.session_state['_last_demo_city'] = rcity
-                st.session_state['target_cities'] = [{"city": rcity, "state": rstate}]
-                for j in range(10):
-                    st.session_state.pop(f"c_{j}", None)
-                    st.session_state.pop(f"s_{j}", None)
-                st.rerun()
+            # ── Corridor mode vs. Census boundary mode ───────────────────────
+            _hw_exec = st.session_state.get('highway_patrol_mode', False)
+            _active_hw = st.session_state.get('active_highway')
+            _hw_state = active_targets[0]['state'] if active_targets else None
+            _corridor_mode = _hw_exec and bool(_active_hw) and bool(_hw_state)
 
-            if not all_gdfs:
-                prog.empty()
-                components.html("""<!DOCTYPE html><html><head></head><body><script>
+            if _corridor_mode:
+                prog.progress(20, text=f"🛣️ Fetching {_active_hw} route geometry…")
+                _hw_gdf = fetch_highway_geometry(_active_hw, _hw_state)
+                if _hw_gdf is None:
+                    prog.empty()
+                    st.error(
+                        f"❌ Could not fetch route geometry for {_active_hw} in {_hw_state}. "
+                        "Check the highway reference (e.g. I-80) and try again."
+                    )
+                    st.stop()
+                prog.progress(38, text=f"📐 Building {_active_hw} corridor boundary…")
+                _corridor_poly, _corridor_line, _corridor_miles = build_corridor_polygon(_hw_gdf)
+                city_poly = _corridor_poly
+                st.session_state['estimated_pop'] = 0
+                st.session_state['_pop_resolved'] = False
+                prog.progress(55, text=f"🚔 Modeling patrol calls along {_corridor_miles:.0f} miles of {_active_hw}…")
+                annual_cfs = estimate_corridor_calls(_corridor_miles)
+                df_demo, annual_cfs, simulated_points_count = build_corridor_demo(
+                    _corridor_line, _corridor_poly, annual_cfs, generate_random_points_in_polygon
+                )
+                st.toast(f"✅ {_active_hw} · {_hw_state} · {_corridor_miles:.0f} mi · {annual_cfs:,} calls/yr")
+
+            else:
+                all_gdfs, total_estimated_pop, boundary_messages, boundary_warnings, rerun_demo_target, all_populations_verified = build_demo_boundaries(
+                    st.session_state,
+                    active_targets,
+                    STATE_FIPS,
+                    KNOWN_POPULATIONS,
+                    DEMO_CITIES,
+                    fetch_county_boundary_local,
+                    fetch_place_boundary_local,
+                    fetch_tiger_state_shapefile,
+                    save_boundary_gdf,
+                    fetch_census_population,
+                    fetch_census_state_population,
+                )
+                for _msg in boundary_messages:
+                    st.toast(_msg)
+                for _warn in boundary_warnings:
+                    st.warning(_warn)
+                if rerun_demo_target is not None:
+                    rcity, rstate = rerun_demo_target
+                    st.session_state['_last_demo_city'] = rcity
+                    st.session_state['target_cities'] = [{"city": rcity, "state": rstate}]
+                    for j in range(10):
+                        st.session_state.pop(f"c_{j}", None)
+                        st.session_state.pop(f"s_{j}", None)
+                    st.rerun()
+
+                if not all_gdfs:
+                    prog.empty()
+                    components.html("""<!DOCTYPE html><html><head></head><body><script>
 (function(){
   var doc=parent.document;
   if(parent._brincFloWd){parent.clearInterval(parent._brincFloWd);parent._brincFloWd=null;}
@@ -4624,17 +4733,35 @@ body{{background:transparent;overflow:hidden}}
     },360);}
 })();
 </script></body></html>""", height=0, scrolling=False)
-                st.error("❌ Could not find Census boundaries for any of the entered locations. Check spelling.")
-                st.stop()
+                    st.error("❌ Could not find Census boundaries for any of the entered locations. Check spelling.")
+                    st.stop()
 
-            prog.progress(35, text="💙 Boundaries loaded — honoring the officers who know every street…")
-            active_city_gdf = pd.concat(all_gdfs, ignore_index=True)
-            city_poly = active_city_gdf.geometry.union_all()
-            st.session_state['estimated_pop'] = total_estimated_pop
-            st.session_state['_pop_resolved'] = all_populations_verified
+                _selected_boundary_override = pd.concat(all_gdfs, ignore_index=True).copy()
+                _selected_name_col = next(
+                    (column for column in ['NAME', 'DISTRICT', 'NAMELSAD'] if column in _selected_boundary_override.columns),
+                    None,
+                )
+                if _selected_name_col is None:
+                    _selected_boundary_override['DISPLAY_NAME'] = 'Selected Boundary'
+                else:
+                    _selected_boundary_override['DISPLAY_NAME'] = _selected_boundary_override[_selected_name_col].astype(str)
+                _selected_boundary_override['data_count'] = 1
+                st.session_state['master_gdf_override'] = _selected_boundary_override[['DISPLAY_NAME', 'data_count', 'geometry']].copy()
+                _demo_selected_names = [
+                    str(name).strip() for name in _selected_boundary_override['DISPLAY_NAME'].tolist()
+                    if str(name).strip()
+                ]
+                st.session_state['saved_jurisdiction_names'] = list(dict.fromkeys(_demo_selected_names))
+                st.session_state['population_reference_targets'] = list(dict.fromkeys(_demo_selected_names))
 
-            prog.progress(55, text="🚔 Modeling 911 calls — every one represents someone who needed help…")
-            df_demo, annual_cfs, simulated_points_count = build_demo_calls(city_poly, total_estimated_pop, generate_clustered_calls)
+                prog.progress(35, text="💙 Boundaries loaded — honoring the officers who know every street…")
+                active_city_gdf = pd.concat(all_gdfs, ignore_index=True)
+                city_poly = active_city_gdf.geometry.union_all()
+                st.session_state['estimated_pop'] = total_estimated_pop
+                st.session_state['_pop_resolved'] = all_populations_verified
+
+                prog.progress(55, text="🚔 Modeling 911 calls — every one represents someone who needed help…")
+                df_demo, annual_cfs, simulated_points_count = build_demo_calls(city_poly, total_estimated_pop, generate_clustered_calls)
             st.session_state['total_original_calls'] = annual_cfs
             st.session_state['df_calls'] = df_demo
             st.session_state['df_calls_full'] = df_demo.copy()
@@ -5739,8 +5866,17 @@ body{{background:transparent;overflow:hidden}}
                 geoms_to_draw = [city_boundary_geom] if isinstance(city_boundary_geom, Polygon) else list(city_boundary_geom.geoms)
                 for gi, geom in enumerate(geoms_to_draw):
                     bx, by = geom.exterior.coords.xy
+                    fig.add_trace(go.Scattermap(
+                        mode="lines",
+                        lon=list(bx),
+                        lat=list(by),
+                        line=dict(color="rgba(8, 15, 28, 0.95)", width=6),
+                        name="Jurisdiction Boundary Halo",
+                        hoverinfo='skip',
+                        showlegend=False,
+                    ))
                     fig.add_trace(go.Scattermap(mode="lines", lon=list(bx), lat=list(by),
-                        line=dict(color=map_boundary_color, width=2), name="Jurisdiction Boundary",
+                        line=dict(color="#3CF2FF", width=3), name="Jurisdiction Boundary",
                         hoverinfo='skip', showlegend=(gi==0)))
 
             boundary_overlay_gdf = st.session_state.get('boundary_overlay_gdf')
@@ -5755,8 +5891,17 @@ body{{background:transparent;overflow:hidden}}
                         _overlay_parts.extend(list(_overlay_geom.geoms))
                 for oi, geom in enumerate(_overlay_parts):
                     bx, by = geom.exterior.coords.xy
+                    fig.add_trace(go.Scattermap(
+                        mode="lines",
+                        lon=list(bx),
+                        lat=list(by),
+                        line=dict(color="rgba(8, 15, 28, 0.9)", width=5),
+                        name="Uploaded Boundary Overlay Halo",
+                        hoverinfo='skip',
+                        showlegend=False,
+                    ))
                     fig.add_trace(go.Scattermap(mode="lines", lon=list(bx), lat=list(by),
-                        line=dict(color="#00D2FF", width=2), name="Uploaded Boundary Overlay",
+                        line=dict(color="#FFD166", width=2.5), name="Uploaded Boundary Overlay",
                         hoverinfo='skip', showlegend=(oi==0)))
 
             if show_heatmap and not display_calls.empty:
@@ -5901,6 +6046,18 @@ body{{background:transparent;overflow:hidden}}
                         text=_custom_text,
                     ))
 
+            _pending_pin = st.session_state.get('pending_pin')
+            if isinstance(_pending_pin, dict) and _pending_pin.get('lat') is not None and _pending_pin.get('lon') is not None:
+                fig.add_trace(go.Scattermap(
+                    lat=[float(_pending_pin['lat'])],
+                    lon=[float(_pending_pin['lon'])],
+                    mode='markers',
+                    marker=dict(size=18, color='#39FF14', symbol='diamond'),
+                    name='Pending Pin',
+                    hovertemplate='Pending custom station<extra></extra>',
+                    showlegend=False,
+                ))
+
             map_cfg = dict(center=dict(lat=center_lat, lon=center_lon), zoom=dynamic_zoom, style=map_style)
             if show_satellite:
                 map_cfg["style"] = "carto-positron"
@@ -5909,11 +6066,7 @@ body{{background:transparent;overflow:hidden}}
                     "source":["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"]}]
 
             _pin_drop_active = st.session_state.get('pin_drop_mode', False)
-
-            # In pin-drop mode, switch Plotly to 'select' dragmode so a click-drag
-            # draws a selection box instead of panning.  The center of that box
-            # becomes the pin coordinate — no need to hit an invisible point precisely.
-            _layout_extra = dict(dragmode='select') if _pin_drop_active else {}
+            _layout_extra = {}
 
             fig.update_layout(uirevision="LOCKED_MAP", map=map_cfg,
                 margin=dict(l=0,r=0,t=0,b=0), height=800, font=dict(size=18),
@@ -5924,73 +6077,90 @@ body{{background:transparent;overflow:hidden}}
                 **_layout_extra)
 
             if _pin_drop_active:
-                # Dense grid of subtle markers so box-select always captures at least
-                # one point to confirm the lat/lon.  Size=40 ensures full overlap at
-                # typical city zoom levels (no gaps between adjacent markers).
-                _grid_n = 80
-                _grid_lats = np.linspace(miny, maxy, _grid_n)
-                _grid_lons = np.linspace(minx, maxx, _grid_n)
-                _gla, _glo = np.meshgrid(_grid_lats, _grid_lons)
-                fig.add_trace(go.Scattermap(
-                    lat=_gla.ravel().tolist(),
-                    lon=_glo.ravel().tolist(),
-                    mode='markers',
-                    marker=dict(size=40, color='rgba(0,210,255,0.04)'),
-                    hoverinfo='skip',
-                    showlegend=False,
-                    name='__pin_grid__',
-                ))
                 fig.add_annotation(
-                    text="📍 Pin Drop Mode — click and drag a small box on your target location",
+                    text=(
+                        "📍 Pin Drop Mode — single-click the map to capture a station location"
+                        if QUICK_PIN_COMPONENT is not None
+                        else "📍 Pin Drop Mode — click and drag a small box on your target location"
+                    ),
                     xref="paper", yref="paper", x=0.5, y=0.98,
                     showarrow=False, font=dict(size=13, color="#00D2FF"),
                     bgcolor="rgba(0,0,0,0.72)", bordercolor="#00D2FF", borderwidth=1,
                     borderpad=6, xanchor="center",
                 )
-
-            _map_event = st.plotly_chart(
-                fig, width="stretch",
-                config={"scrollZoom": not _pin_drop_active, "displayModeBar": _pin_drop_active},
-                on_select="rerun" if _pin_drop_active else "ignore",
-                key="main_map_chart",
-            )
-
-            # Resolve pin location from whichever signal arrives first:
-            #   1. Selection box center  (most reliable — works even on empty map)
-            #   2. First selected point  (fallback)
-            if _pin_drop_active and _map_event and hasattr(_map_event, 'selection') \
-                    and st.session_state.get('pending_pin') is None:
-                _sel = _map_event.selection
-                _clicked_lat = _clicked_lon = None
-
-                # Priority 1: bounding box of the drawn selection rectangle
-                _box_list = getattr(_sel, 'box', None) or []
-                if _box_list:
-                    _b = _box_list[0]
-                    _lats = _b.get('y') or _b.get('lat') or []
-                    _lons = _b.get('x') or _b.get('lon') or []
-                    if len(_lats) >= 2 and len(_lons) >= 2:
-                        _clicked_lat = (min(_lats) + max(_lats)) / 2.0
-                        _clicked_lon = (min(_lons) + max(_lons)) / 2.0
-
-                # Priority 2: nearest grid point that was selected
-                if _clicked_lat is None:
-                    _sel_pts = getattr(_sel, 'points', []) or []
-                    if _sel_pts:
-                        _pt = _sel_pts[0]
-                        _clicked_lat = _pt.get('lat') or _pt.get('y')
-                        _clicked_lon = _pt.get('lon') or _pt.get('x')
-
-                if _clicked_lat is not None and _clicked_lon is not None:
-                    # Dedup: ignore if this is the same selection that was already processed
-                    _sel_hash = hash(f"{_clicked_lat:.4f},{_clicked_lon:.4f}")
-                    if _sel_hash != st.session_state.get('_pin_sel_hash'):
-                        st.session_state['_pin_sel_hash'] = _sel_hash
-                        st.session_state['pending_pin'] = {
-                            'lat': round(float(_clicked_lat), 6),
-                            'lon': round(float(_clicked_lon), 6),
-                        }
-                        st.rerun()
+                if QUICK_PIN_COMPONENT is not None:
+                    _quick_pin_event = QUICK_PIN_COMPONENT(
+                        figure_json=fig.to_plotly_json(),
+                        height=800,
+                        key="quick_pin_component",
+                        default=None,
+                    )
+                    if isinstance(_quick_pin_event, dict):
+                        _clicked_lat = _quick_pin_event.get('lat')
+                        _clicked_lon = _quick_pin_event.get('lon')
+                        _click_nonce = _quick_pin_event.get('nonce')
+                        if _clicked_lat is not None and _clicked_lon is not None and _click_nonce != st.session_state.get('_pin_click_nonce'):
+                            st.session_state['_pin_click_nonce'] = _click_nonce
+                            st.session_state['_pin_sel_hash'] = hash(f"{float(_clicked_lat):.4f},{float(_clicked_lon):.4f}")
+                            st.session_state['pending_pin'] = {
+                                'lat': round(float(_clicked_lat), 6),
+                                'lon': round(float(_clicked_lon), 6),
+                            }
+                            st.rerun()
+                else:
+                    _grid_n = 80
+                    _grid_lats = np.linspace(miny, maxy, _grid_n)
+                    _grid_lons = np.linspace(minx, maxx, _grid_n)
+                    _gla, _glo = np.meshgrid(_grid_lats, _grid_lons)
+                    fig.add_trace(go.Scattermap(
+                        lat=_gla.ravel().tolist(),
+                        lon=_glo.ravel().tolist(),
+                        mode='markers',
+                        marker=dict(size=40, color='rgba(0,210,255,0.04)'),
+                        hoverinfo='skip',
+                        showlegend=False,
+                        name='__pin_grid__',
+                    ))
+                    fig.update_layout(dragmode='select')
+                    _map_event = st.plotly_chart(
+                        fig,
+                        width="stretch",
+                        config={"scrollZoom": False, "displayModeBar": True},
+                        on_select="rerun",
+                        key="main_map_chart_pin_fallback",
+                    )
+                    if _map_event and hasattr(_map_event, 'selection') and st.session_state.get('pending_pin') is None:
+                        _sel = _map_event.selection
+                        _clicked_lat = _clicked_lon = None
+                        _box_list = getattr(_sel, 'box', None) or []
+                        if _box_list:
+                            _b = _box_list[0]
+                            _lats = _b.get('y') or _b.get('lat') or []
+                            _lons = _b.get('x') or _b.get('lon') or []
+                            if len(_lats) >= 2 and len(_lons) >= 2:
+                                _clicked_lat = (min(_lats) + max(_lats)) / 2.0
+                                _clicked_lon = (min(_lons) + max(_lons)) / 2.0
+                        if _clicked_lat is None:
+                            _sel_pts = getattr(_sel, 'points', []) or []
+                            if _sel_pts:
+                                _pt = _sel_pts[0]
+                                _clicked_lat = _pt.get('lat') or _pt.get('y')
+                                _clicked_lon = _pt.get('lon') or _pt.get('x')
+                        if _clicked_lat is not None and _clicked_lon is not None:
+                            _sel_hash = hash(f"{_clicked_lat:.4f},{_clicked_lon:.4f}")
+                            if _sel_hash != st.session_state.get('_pin_sel_hash'):
+                                st.session_state['_pin_sel_hash'] = _sel_hash
+                                st.session_state['pending_pin'] = {
+                                    'lat': round(float(_clicked_lat), 6),
+                                    'lon': round(float(_clicked_lon), 6),
+                                }
+                                st.rerun()
+            else:
+                st.plotly_chart(
+                    fig, width="stretch",
+                    config={"scrollZoom": True, "displayModeBar": False},
+                    key="main_map_chart",
+                )
 
 
         # ── UNIT ECONOMICS CARDS (directly below map, no toggle) ─────────────────
@@ -7421,8 +7591,16 @@ body{{background:transparent;overflow:hidden}}
             "inferred_daily_calls_override": st.session_state.get('inferred_daily_calls_override'),
             "data_source":                 st.session_state.get('data_source', 'unknown'),
             "active_dept_name":            st.session_state.get('active_dept_name', ''),
+            "target_cities":               st.session_state.get('target_cities', []),
+            "city_count":                  int(st.session_state.get('city_count', 1) or 1),
+            "saved_jurisdiction_names":    list(st.session_state.get('population_reference_targets', [])),
+            "population_reference_kind":   st.session_state.get('population_reference_kind', ''),
+            "population_reference_targets": list(st.session_state.get('population_reference_targets', [])),
+            "session_start":               st.session_state.get('session_start', ''),
+            "export_event_log":            list(st.session_state.get('export_event_log', [])),
+            "export_count":                int(st.session_state.get('export_count', 0) or 0),
             "file_meta":                   {k: v for k, v in (st.session_state.get('file_meta') or {}).items()
-                                            if isinstance(v, (str, int, float, bool, type(None)))},
+                                           if isinstance(v, (str, int, float, bool, type(None)))},
             "show_satellite_b":            st.session_state.get('show_satellite_b', False),
             "show_boundaries_b":           st.session_state.get('show_boundaries_b', True),
             "show_faa_b":                  st.session_state.get('show_faa_b', False),
@@ -7619,6 +7797,14 @@ body{{background:transparent;overflow:hidden}}
                 "inferred_daily_calls_override": st.session_state.get('inferred_daily_calls_override'),
                 "data_source":                 st.session_state.get('data_source', 'unknown'),
                 "active_dept_name":            st.session_state.get('active_dept_name', ''),
+                "target_cities":               st.session_state.get('target_cities', []),
+                "city_count":                  int(st.session_state.get('city_count', 1) or 1),
+                "saved_jurisdiction_names":    list(selected_names),
+                "population_reference_kind":   st.session_state.get('population_reference_kind', ''),
+                "population_reference_targets": list(st.session_state.get('population_reference_targets', [])),
+                "session_start":               st.session_state.get('session_start', ''),
+                "export_event_log":            list(st.session_state.get('export_event_log', [])),
+                "export_count":                int(st.session_state.get('export_count', 0) or 0),
                 "file_meta":                   {k: v for k, v in (st.session_state.get('file_meta') or {}).items()
                                                 if isinstance(v, (str, int, float, bool, type(None)))},
                 # Display options (widget keys)
@@ -9228,10 +9414,8 @@ body{{background:transparent;overflow:hidden}}
             "k_resp": 0, "k_guard": 0,
             "_disclaimer": "No drones deployed yet.",
         })
-        # Include authenticated user's name in the .brinc filename for easy identification
-        _user_name_safe = user_clean.replace(" ", "_")
         if st.sidebar.download_button("💾 Save Deployment Plan", data=_brinc_data,
-                                      file_name=f"{_user_name_safe}_BRINC_DFR_{_safe_city}_{_version_slug}_{_ts}.brinc",
+                                      file_name=f"BRINC_Deployment_Plan_{_safe_city}_{_version_slug}_{_ts}.brinc",
                                       mime="application/json", width="stretch"):
             # ── Track export event ───────────────────────────────────────────────
             st.session_state['export_event_log'] = st.session_state.get('export_event_log', []) + ['BRINC']
@@ -9263,7 +9447,7 @@ body{{background:transparent;overflow:hidden}}
         if active_drones:
             if st.sidebar.download_button("🌏 Google Earth Briefing File",
                                           data=html_reports.generate_kml(active_gdf, active_drones, calls_in_city),
-                                          file_name="drone_deployment.kml",
+                                          file_name=f"BRINC_Google_Earth_Briefing_{_safe_city}_{_version_slug}_{_ts}.kml",
                                           mime="application/vnd.google-earth.kml+xml",
                                           width="stretch"):
                 # ── Track export event ───────────────────────────────────────────

@@ -289,7 +289,23 @@ def render_sidebar_jurisdiction_selector(
     options_map = dict(zip(master_gdf['LABEL'], master_gdf['DISPLAY_NAME']))
     all_options = master_gdf['LABEL'].tolist()
     default_selection = [all_options[0]] if all_options else []
+    saved_selection_names = []
+    for _saved_name in (session_state.get('saved_jurisdiction_names') or []):
+        _saved_text = str(_saved_name or '').strip()
+        if _saved_text:
+            saved_selection_names.append(_saved_text)
+    if saved_selection_names:
+        _saved_labels = [label for label, display_name in options_map.items() if display_name in saved_selection_names]
+        if _saved_labels:
+            default_selection = _saved_labels
     options_signature = tuple(all_options)
+    current_selection = [
+        label for label in (session_state.get('jurisdictions_multiselect') or [])
+        if label in options_map
+    ]
+    if current_selection:
+        default_selection = current_selection
+
     if session_state.get('_jurisdiction_options_signature') != options_signature:
         session_state['jurisdictions_multiselect'] = default_selection
         session_state['_jurisdiction_options_signature'] = options_signature
@@ -858,7 +874,7 @@ def manage_custom_stations(
     pin_mode = bool(session_state.get('pin_drop_mode', False))
     if pin_mode:
         st.sidebar.markdown(
-            "<div style='background:rgba(0,210,255,0.08);border:1px solid rgba(0,210,255,0.35);border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:0.72rem;color:#e0e0f0;'><b>Drop Pin Mode Active</b><br>Click-and-drag a small box on the map to place a station.</div>",
+            "<div style='background:rgba(0,210,255,0.08);border:1px solid rgba(0,210,255,0.35);border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:0.72rem;color:#e0e0f0;'><b>Drop Pin Mode Active</b><br>Single-click the map to capture a station location.</div>",
             unsafe_allow_html=True,
         )
         if st.sidebar.button('Cancel Drop Pin', width="stretch", key='cancel_drop_pin_mode_btn'):
@@ -923,7 +939,7 @@ def manage_custom_stations(
                 unsafe_allow_html=True,
             )
         elif pin_mode:
-            st.info('Pin Drop is active. Click and drag a small box on the map, then return here to add the station.')
+            st.info('Pin Drop is active. Single-click the map to capture a station location, then return here to add the station.')
 
         if pin_mode and pending_pin is not None:
             pp_label = st.text_input('Dropped Pin Name', value=session_state['pp_label_buf'], placeholder=next_custom_station_name(), key='pp_label_input', help='Optional station label for the dropped pin. Leave blank to use an auto-generated name.')

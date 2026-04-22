@@ -3,6 +3,7 @@ Build version management for BRINC app.
 """
 
 import datetime
+import subprocess
 from pathlib import Path
 
 try:
@@ -14,6 +15,7 @@ _MONSTER_NAMES = ["prom", "behe", "quasi", "drac"]
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BUILD_META_PATH = _REPO_ROOT / ".build_meta"
 _APP_PATH = _REPO_ROOT / "app.py"
+_VERSION_ANCHOR_COMMIT = "6156fc0"
 
 
 def _read_build_meta():
@@ -38,6 +40,41 @@ def _write_build_meta(mtime, revision):
         pass
 
 
+def _read_anchor_revision():
+    """Read the revision stored when versioning was introduced."""
+    try:
+        _raw_meta = subprocess.check_output(
+            ["git", "show", f"{_VERSION_ANCHOR_COMMIT}:.build_meta"],
+            cwd=_REPO_ROOT,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        ).strip()
+        _parts = _raw_meta.split("|", 1)
+        if len(_parts) == 2:
+            return max(1, int(_parts[1]))
+    except Exception:
+        pass
+    return 1
+
+
+def _git_revision():
+    """Return a stable revision derived from git history when available."""
+    try:
+        _count = subprocess.check_output(
+            ["git", "rev-list", "--count", f"{_VERSION_ANCHOR_COMMIT}..HEAD"],
+            cwd=_REPO_ROOT,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        ).strip()
+        if _count:
+            return _read_anchor_revision() + max(0, int(_count))
+    except Exception:
+        pass
+    return None
+
+
 def _sync_build_meta():
     """
     Advance the revision when app.py has been saved since the last recorded build.
@@ -47,6 +84,13 @@ def _sync_build_meta():
     """
     _app_mtime = float(_APP_PATH.stat().st_mtime)
     _stored_mtime, _stored_revision = _read_build_meta()
+    _git_revision_value = _git_revision()
+
+    if _git_revision_value is not None:
+        _revision = max(_stored_revision, _git_revision_value)
+        if abs(_app_mtime - _stored_mtime) > 1e-9 or _revision != _stored_revision:
+            _write_build_meta(_app_mtime, _revision)
+        return _app_mtime, _revision
 
     if _stored_mtime <= 0:
         _write_build_meta(_app_mtime, 1)

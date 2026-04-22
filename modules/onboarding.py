@@ -90,6 +90,34 @@ def restore_brinc_session(session_state, save_data):
     session_state['_brinc_k_override'] = True
     session_state.pop('_auto_minimums_sig', None)
 
+    target_cities = save_data.get('target_cities')
+    if isinstance(target_cities, list):
+        restored_targets = []
+        for target in target_cities:
+            if not isinstance(target, dict):
+                continue
+            restored_targets.append({
+                'city': str(target.get('city', '') or '').strip(),
+                'state': str(target.get('state', session_state.get('active_state', '')) or '').strip().upper(),
+            })
+        if restored_targets:
+            session_state['target_cities'] = restored_targets
+            session_state['city_count'] = max(1, int(save_data.get('city_count', len(restored_targets)) or len(restored_targets)))
+        else:
+            session_state['target_cities'] = [{'city': session_state['active_city'], 'state': session_state['active_state']}]
+            session_state['city_count'] = 1
+    else:
+        session_state['target_cities'] = [{'city': session_state['active_city'], 'state': session_state['active_state']}]
+        session_state['city_count'] = 1
+
+    saved_jurisdiction_names = save_data.get('saved_jurisdiction_names')
+    if isinstance(saved_jurisdiction_names, list):
+        session_state['saved_jurisdiction_names'] = [
+            str(name or '').strip() for name in saved_jurisdiction_names if str(name or '').strip()
+        ]
+    else:
+        session_state['saved_jurisdiction_names'] = []
+
     for cache_key in _OPT_CACHE_KEYS:
         session_state.pop(cache_key, None)
 
@@ -105,8 +133,8 @@ def restore_brinc_session(session_state, save_data):
             raise ValueError('.brinc file contains no valid coordinate data after parsing.')
         session_state['df_calls'] = calls_df
         session_state['df_calls_full'] = calls_df.copy()
-        session_state['total_original_calls'] = len(calls_df)
-        session_state['total_modeled_calls'] = len(calls_df)
+        session_state['total_original_calls'] = int(save_data.get('total_original_calls', len(calls_df)) or len(calls_df))
+        session_state['total_modeled_calls'] = int(save_data.get('total_modeled_calls', len(calls_df)) or len(calls_df))
 
     stations_data = save_data.get('stations_data')
     if stations_data:
@@ -150,16 +178,27 @@ def restore_brinc_session(session_state, save_data):
         session_state['estimated_pop'] = int(save_data['estimated_pop'] or 0)
     session_state['_pop_resolved'] = bool(save_data.get('_pop_resolved', False))
     if 'total_original_calls' in save_data and 'calls_data' not in save_data:
-        # Only override if calls_data isn't present (otherwise set from len above)
         session_state['total_original_calls'] = int(save_data['total_original_calls'] or 0)
     if 'total_modeled_calls' in save_data and 'calls_data' not in save_data:
         session_state['total_modeled_calls'] = int(save_data['total_modeled_calls'] or 0)
+    if 'population_reference_kind' in save_data:
+        session_state['population_reference_kind'] = str(save_data.get('population_reference_kind') or '')
+    if isinstance(save_data.get('population_reference_targets'), list):
+        session_state['population_reference_targets'] = [
+            str(target or '').strip() for target in save_data.get('population_reference_targets', []) if str(target or '').strip()
+        ]
     if save_data.get('inferred_daily_calls_override') is not None:
         session_state['inferred_daily_calls_override'] = save_data['inferred_daily_calls_override']
     if save_data.get('active_dept_name'):
         session_state['active_dept_name'] = save_data['active_dept_name']
     if save_data.get('file_meta'):
         session_state['file_meta'] = dict(save_data['file_meta'])
+    if save_data.get('session_start'):
+        session_state['session_start'] = str(save_data['session_start'])
+    if isinstance(save_data.get('export_event_log'), list):
+        session_state['export_event_log'] = [str(item or '') for item in save_data.get('export_event_log', [])]
+    if 'export_count' in save_data:
+        session_state['export_count'] = int(save_data.get('export_count') or 0)
 
     # Display options — restore widget keys so toggles/sliders pick up saved state
     _bool_display_keys = [
@@ -216,26 +255,62 @@ def split_uploaded_files(uploaded_files, is_boundary_sidecar, looks_like_station
     return call_files, station_file, boundary_files
 
 
-def load_station_file(station_file):
-    station_name = station_file.name.lower()
+def _read_station_upload(uploaded_file):
+    station_name = str(getattr(uploaded_file, 'name', '')).lower()
     if station_name.endswith(('.xlsx', '.xls', '.xlsm', '.xlsb')):
         engine = 'xlrd' if station_name.endswith('.xls') else 'pyxlsb' if station_name.endswith('.xlsb') else 'openpyxl'
-        stations_df = pd.read_excel(io.BytesIO(station_file.getvalue()), engine=engine)
-    else:
-        station_file.seek(0)
-        stations_df = pd.read_csv(station_file)
+        uploaded_file.seek(0)
+        return pd.read_excel(io.BytesIO(uploaded_file.getvalue()), engine=engine)
+    uploaded_file.seek(0)
+    return pd.read_csv(uploaded_file)
 
-    stations_df.columns = [str(column).lower().strip() for column in stations_df.columns]
-    if 'latitude' in stations_df.columns:
-        stations_df = stations_df.rename(columns={'latitude': 'lat'})
-    if 'longitude' in stations_df.columns:
-        stations_df = stations_df.rename(columns={'longitude': 'lon'})
-    if 'station_name' in stations_df.columns:
-        stations_df = stations_df.rename(columns={'station_name': 'name'})
-    if 'station_type' in stations_df.columns:
-        stations_df = stations_df.rename(columns={'station_type': 'type'})
+
+def _normalize_station_columns(station_df):
+    station_df = station_df.copy()
+    station_df.columns = [str(column).lower().strip() for column in station_df.columns]
+    if 'latitude' in station_df.columns:
+        station_df = station_df.rename(columns={'latitude': 'lat'})
+    if 'longitude' in station_df.columns:
+        station_df = station_df.rename(columns={'longitude': 'lon'})
+    if 'station_name' in station_df.columns:
+        station_df = station_df.rename(columns={'station_name': 'name'})
+    if 'station_type' in station_df.columns:
+        station_df = station_df.rename(columns={'station_type': 'type'})
+    return station_df
+
+
+def _extract_single_column_station_addresses(station_df):
+    if station_df is None or station_df.empty or len(station_df.columns) != 1:
+        return station_df, None
+
+    sole_col = station_df.columns[0]
+    header_value = str(sole_col).strip()
+    series = station_df.iloc[:, 0]
+    values = [str(value).strip() for value in series.tolist() if pd.notna(value) and str(value).strip()]
+    header_looks_like_address = any(ch.isdigit() for ch in header_value) and ',' in header_value
+
+    if not values and not header_looks_like_address:
+        return station_df, None
+
+    address_rows = []
+    if header_looks_like_address:
+        address_rows.append(header_value)
+    address_rows.extend(values)
+    if not address_rows:
+        return station_df, None
+
+    extracted_df = pd.DataFrame({'address': address_rows})
+    return extracted_df, 'Detected a single-column address list and treated each row as a station address.'
+
+
+def load_station_file(station_file):
+    stations_df = _read_station_upload(station_file)
+    stations_df = _normalize_station_columns(stations_df)
+    stations_df, single_col_note = _extract_single_column_station_addresses(stations_df)
 
     if 'lat' not in stations_df.columns or 'lon' not in stations_df.columns:
+        if single_col_note:
+            raise ValueError('Detected address rows but no lat/lon columns. In Path 01, address-only station files are geocoded during simulation upload.')
         raise ValueError('Could not find lat/lon columns.')
 
     stations_df['lat'] = pd.to_numeric(stations_df['lat'], errors='coerce')
@@ -507,15 +582,9 @@ def load_simulation_boundary_overlay(session_state, boundary_files, load_uploade
 
 
 def load_simulation_custom_stations(sim_uploader, active_targets, forward_geocode):
-    station_name = sim_uploader.name.lower()
-    if station_name.endswith(('.xlsx', '.xls', '.xlsm', '.xlsb')):
-        engine = 'xlrd' if station_name.endswith('.xls') else 'pyxlsb' if station_name.endswith('.xlsb') else 'openpyxl'
-        station_df = pd.read_excel(io.BytesIO(sim_uploader.getvalue()), engine=engine)
-    else:
-        sim_uploader.seek(0)
-        station_df = pd.read_csv(sim_uploader)
-
-    station_df.columns = [str(column).lower().strip() for column in station_df.columns]
+    station_df = _read_station_upload(sim_uploader)
+    station_df = _normalize_station_columns(station_df)
+    station_df, _single_col_note = _extract_single_column_station_addresses(station_df)
     lat_col = next((c for c in station_df.columns if c in ['lat', 'latitude', 'y']), None)
     lon_col = next((c for c in station_df.columns if c in ['lon', 'long', 'longitude', 'x']), None)
     addr_col = next((c for c in station_df.columns if any(a in c for a in ['address', 'street', 'location'])), None)
