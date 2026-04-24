@@ -401,6 +401,12 @@ def render_display_options(st):
             key='show_dots_b',
             help='Show individual 911 call locations as dots on the map.',
         )
+        show_rapid_response_ring = st.toggle(
+            'Rapid Response Ring',
+            value=True,
+            key='show_rapid_response_ring_b',
+            help='Show or hide the highlighted 5-mile rapid response ring around extended Guardian stations.',
+        )
         simulate_traffic = st.toggle(
             'Simulate Ground Traffic',
             value=False,
@@ -438,6 +444,7 @@ def render_display_options(st):
         'show_cell_towers': show_cell_towers,
         'show_heatmap': show_heatmap,
         'show_dots': show_dots,
+        'show_rapid_response_ring': show_rapid_response_ring,
         'simulate_traffic': simulate_traffic,
         'show_health': show_health,
         'show_financials': show_financials,
@@ -748,7 +755,8 @@ def manage_custom_stations(
 ):
     n = len(df_stations_all)
     max_resp_calc = min(n, int(math.ceil(area_sq_mi / (math.pi * (r_resp_est**2)))) + 5)
-    max_guard_calc = min(n, int(math.ceil(area_sq_mi / (math.pi * (r_guard_est**2)))) + 5)
+    # Guardian placements should be allowed at any uploaded in-boundary station.
+    max_guard_calc = n
 
     try:
         pin_r_count = len(session_state.get('pinned_resp_names', []))
@@ -850,7 +858,7 @@ def manage_custom_stations(
                 for _, row in custom_existing[['name', 'type']].dropna().iterrows()
             )
         guard = [s for s in list(dict.fromkeys(new_guard_names)) if s in valid_lock_names]
-        resp = [s for s in list(dict.fromkeys(new_resp_names)) if s in valid_lock_names and s not in guard]
+        resp = [s for s in list(dict.fromkeys(new_resp_names)) if s in valid_lock_names]
         session_state['pinned_guard_names'] = list(guard)
         session_state['pinned_resp_names'] = list(resp)
         session_state['lock_guard_ms'] = list(guard)
@@ -889,7 +897,7 @@ def manage_custom_stations(
             session_state['pin_drop_used'] = False
 
     saved_g = [s for s in session_state.get('pinned_guard_names', []) if s in station_names]
-    saved_r = [s for s in session_state.get('pinned_resp_names', []) if s in station_names and s not in saved_g]
+    saved_r = [s for s in session_state.get('pinned_resp_names', []) if s in station_names]
     set_station_locks(saved_g, saved_r, ensure_capacity=False)
 
     pinned_guard_names = list(session_state.get('pinned_guard_names', []))
@@ -1201,7 +1209,7 @@ def manage_custom_stations(
     with lock_expander:
         st.caption('Assign specific stations to Guardian or Responder and force them into the deployed fleet.')
         new_g = st.multiselect('Lock as Guardian', options=station_names, key='lock_guard_ms_widget_b', help='These stations will always be assigned a Guardian drone and deployed into Unit Economics.')
-        new_r = st.multiselect('Lock as Responder', options=[s for s in station_names if s not in new_g], key='lock_resp_ms_widget_b', help='These stations will always be assigned a Responder drone and deployed into Unit Economics.')
+        new_r = st.multiselect('Lock as Responder', options=station_names, key='lock_resp_ms_widget_b', help='These stations will always be assigned a Responder drone and deployed into Unit Economics.')
         if new_g != pinned_guard_names or new_r != pinned_resp_names:
             set_station_locks(new_g, new_r, ensure_capacity=True)
             session_state['show_lock_stations'] = True
@@ -1362,31 +1370,8 @@ def optimize_fleet_selection(
             'guard_claims_by_idx': {},
         }
 
-    total_requested = int(k_responder or 0) + int(k_guardian or 0)
-    if total_requested > n:
-        if total_requested <= 0:
-            k_responder = 0
-            k_guardian = 0
-        else:
-            cap = n
-            resp_share = int(round(cap * (int(k_responder or 0) / total_requested))) if total_requested else 0
-            resp_share = max(0, min(resp_share, cap))
-            guard_share = cap - resp_share
-
-            if int(k_responder or 0) > 0 and resp_share == 0:
-                resp_share = 1
-                guard_share = max(0, cap - 1)
-            if int(k_guardian or 0) > 0 and guard_share == 0 and cap > 1:
-                guard_share = 1
-                resp_share = max(0, cap - 1)
-
-            k_responder = min(int(k_responder or 0), resp_share)
-            k_guardian = min(int(k_guardian or 0), guard_share)
-
-            st.warning(
-                f"Station file limits the fleet to {n} placement sites. "
-                f"Adjusted request to {k_responder} Responder and {k_guardian} Guardian drones."
-            )
+    k_responder = min(int(k_responder or 0), n)
+    k_guardian = min(int(k_guardian or 0), n)
 
     if k_responder == 0 and k_guardian == 0:
         pass
@@ -1455,7 +1440,12 @@ def optimize_fleet_selection(
                     assigned_calls = covered_calls[nearest_guard_pos == local_pos]
                     if len(assigned_calls) == 0:
                         continue
-                    avg_dist = float(station_metadata[guard_idx].get('avg_dist_g', 0) or 0)
+                    avg_dist = optimization_module.mean_covered_distance_miles(
+                        dist_matrix_g,
+                        guard_matrix,
+                        guard_idx,
+                        fallback_miles=float(station_metadata[guard_idx].get('avg_dist_g', 0) or 0),
+                    )
                     avg_time_min = (avg_dist / guard_speed) * 60.0
                     response_cost = avg_time_min + min_scene_min
                     if response_cost <= 0:
