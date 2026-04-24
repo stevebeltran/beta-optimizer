@@ -18,6 +18,18 @@ from pathlib import Path
 import pyproj
 from modules.config import STATE_FIPS, US_STATES_ABBR, KNOWN_POPULATIONS
 
+def _safe_notna_ratio(values) -> float:
+    """Return a stable non-null ratio for possibly empty parse results."""
+    try:
+        if values is None:
+            return 0.0
+        size = int(getattr(values, 'size', len(values)))
+        if size <= 0:
+            return 0.0
+        return float(pd.Series(values).notna().mean())
+    except Exception:
+        return 0.0
+
 def _extract_file_meta(raw_df, res_df, filename=""):
     """
     Compute and return a dict of data-matrix statistics from a parsed CAD upload.
@@ -66,7 +78,7 @@ def _extract_file_meta(raw_df, res_df, filename=""):
 
         # ── Null rate across key CAD fields ──────────────────────────────────
         _key_fields = [c for c in ['lat', 'lon', 'date', 'time', 'priority', 'call_type_desc'] if c in res_df.columns]
-        if _key_fields:
+        if _key_fields and len(res_df) > 0:
             _null_pct = res_df[_key_fields].isnull().values.mean()
             meta['file_null_rate_pct'] = round(float(_null_pct) * 100, 1)
         else:
@@ -168,9 +180,15 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                 lat_lon_rate = (a_num.between(-90, 90) & b_num.between(-180, 180)).mean()
                 return max(lon_lat_rate, lat_lon_rate)
 
-            date_rate = pd.to_datetime(sample.iloc[:, 0], format='mixed', errors='coerce').notna().mean()
-            time_rate = pd.to_datetime(sample.iloc[:, 1], format='%H:%M:%S', errors='coerce').notna().mean() if len(sample.columns) > 1 else 0.0
-            datetime_rate = pd.to_datetime((sample.iloc[:, 0].astype(str).str.strip() + ' ' + sample.iloc[:, 1].astype(str).str.strip()), format='mixed', errors='coerce').notna().mean() if len(sample.columns) > 1 else 0.0
+            date_rate = _safe_notna_ratio(pd.to_datetime(sample.iloc[:, 0], format='mixed', errors='coerce'))
+            time_rate = _safe_notna_ratio(pd.to_datetime(sample.iloc[:, 1], format='%H:%M:%S', errors='coerce')) if len(sample.columns) > 1 else 0.0
+            datetime_rate = _safe_notna_ratio(
+                pd.to_datetime(
+                    sample.iloc[:, 0].astype(str).str.strip() + ' ' + sample.iloc[:, 1].astype(str).str.strip(),
+                    format='mixed',
+                    errors='coerce',
+                )
+            ) if len(sample.columns) > 1 else 0.0
             textish_rate = sample.iloc[:, 2].astype(str).str.strip().ne('').mean() if len(sample.columns) > 2 else 0.0
             coord_score = 0.0
             max_scan = min(len(sample.columns) - 1, 7)
@@ -576,7 +594,7 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                     """Convert a column that may contain datetime objects → 'YYYY-MM-DD' strings."""
                     try:
                         _p = pd.to_datetime(series, format='mixed', errors='coerce')
-                        if _p.notna().mean() > 0.6:
+                        if _safe_notna_ratio(_p) > 0.6:
                             return _p.dt.strftime('%Y-%m-%d').where(_p.notna(), '')
                     except Exception:
                         pass

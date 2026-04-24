@@ -5,6 +5,7 @@ import json
 import os
 import glob
 import time
+import re
 import urllib.parse
 import urllib.request
 
@@ -206,7 +207,7 @@ def restore_brinc_session(session_state, save_data):
     _bool_display_keys = [
         'show_satellite_b', 'show_boundaries_b', 'show_faa_b', 'show_no_fly_b',
         'show_obstacles_b', 'show_coverage_b', 'show_cell_towers_b', 'show_heatmap_b',
-        'show_dots_b', 'simulate_traffic_b', 'show_health_b', 'show_financials_b',
+        'show_dots_b', 'show_rapid_response_ring_b', 'simulate_traffic_b', 'show_health_b', 'show_financials_b',
         'simple_cards_b',
     ]
     for _k in _bool_display_keys:
@@ -254,7 +255,33 @@ def split_uploaded_files(uploaded_files, is_boundary_sidecar, looks_like_station
                 call_files = [second_file]
                 station_file = first_file
 
+    if station_file is None and len(call_files) > 1:
+        for candidate in list(call_files):
+            if _looks_like_station_upload_content(candidate):
+                station_file = candidate
+                call_files = [uploaded_file for uploaded_file in call_files if uploaded_file is not candidate]
+                break
+
     return call_files, station_file, boundary_files
+
+
+def _looks_like_station_upload_content(uploaded_file):
+    """Best-effort station-file detector for uploads without a helpful filename."""
+    try:
+        station_df = _read_station_upload(uploaded_file)
+        station_df = _normalize_station_columns(station_df)
+        station_df, single_col_note = _extract_single_column_station_addresses(station_df)
+        cols = {str(column).lower().strip() for column in station_df.columns}
+        if single_col_note:
+            return True
+        if not cols:
+            return False
+        has_coords = {'lat', 'lon'}.issubset(cols)
+        has_station_shape = bool(cols & {'name', 'type', 'address', 'lat', 'lon'})
+        cad_like = bool(cols & {'date', 'time', 'priority', 'call_type_desc', 'nature', 'description'})
+        return bool(has_coords and has_station_shape and not cad_like)
+    except Exception:
+        return False
 
 
 def _read_station_upload(uploaded_file):
@@ -305,6 +332,90 @@ def _extract_single_column_station_addresses(station_df):
     return extracted_df, 'Detected a single-column address list and treated each row as a station address.'
 
 
+def _station_label_from_address(address_value, fallback_label):
+    """Create a concise station label from an uploaded address string."""
+    text = str(address_value or '').strip()
+    if not text:
+        return fallback_label
+
+    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r',?\s+[A-Z]{2}\s+\d{5}(?:-\d{4})?\s*$', '', text)
+    text = text.strip(' ,')
+    return text or fallback_label
+
+
+def _normalize_station_state_abbr(state_value, us_states_abbr=None):
+    text = str(state_value or '').strip()
+    if not text:
+        return ''
+    upper = text.upper()
+    if len(upper) == 2 and upper.isalpha():
+        return upper
+    if us_states_abbr:
+        return str(us_states_abbr.get(text.title(), '') or '').strip().upper()
+    return ''
+
+
+def infer_simulation_targets_from_station_file(
+    sim_uploader,
+    forward_geocode,
+    reverse_geocode_state,
+    us_states_abbr,
+    default_state='',
+):
+    station_df = _read_station_upload(sim_uploader)
+    station_df = _normalize_station_columns(station_df)
+    station_df, _single_col_note = _extract_single_column_station_addresses(station_df)
+
+    city_col = next(
+        (c for c in station_df.columns if c in ['city', 'town', 'village', 'municipality']),
+        None,
+    )
+    state_col = next((c for c in station_df.columns if c in ['state', 'state_abbr', 'st']), None)
+    addr_col = next((c for c in station_df.columns if any(a in c for a in ['address', 'street', 'location'])), None)
+    fallback_state = _normalize_station_state_abbr(default_state, us_states_abbr)
+
+    inferred_targets = []
+    seen = set()
+    geocode_used = False
+
+    for _, row in station_df.iterrows():
+        city_name = str(row[city_col]).strip() if city_col and pd.notna(row[city_col]) else ''
+        state_name = (
+            _normalize_station_state_abbr(row[state_col], us_states_abbr)
+            if state_col and pd.notna(row[state_col]) else ''
+        )
+        address_value = str(row[addr_col]).strip() if addr_col and pd.notna(row[addr_col]) else ''
+
+        if (not city_name or not state_name) and address_value:
+            lat, lon = forward_geocode(address_value)
+            if lat is not None and lon is not None:
+                geocode_used = True
+                state_full, reverse_city = reverse_geocode_state(lat, lon)
+                if reverse_city and not city_name:
+                    city_name = str(reverse_city).strip()
+                if state_full and not state_name:
+                    state_name = _normalize_station_state_abbr(state_full, us_states_abbr)
+            time.sleep(1)
+
+        if city_name and not state_name:
+            state_name = fallback_state
+
+        if not city_name or not state_name:
+            continue
+
+        dedupe_key = (city_name.strip().lower(), state_name)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        inferred_targets.append({'city': city_name.strip(), 'state': state_name})
+
+    notice = ''
+    if inferred_targets and geocode_used:
+        notice = 'Derived jurisdiction targets from the uploaded stations file.'
+    return inferred_targets, notice
+
+
 def load_station_file(station_file):
     stations_df = _read_station_upload(station_file)
     stations_df = _normalize_station_columns(stations_df)
@@ -319,11 +430,23 @@ def load_station_file(station_file):
     stations_df['lon'] = pd.to_numeric(stations_df['lon'], errors='coerce')
 
     if 'name' not in stations_df.columns:
-        stations_df['name'] = [f"Site {i+1}" for i in range(len(stations_df))]
+        if 'address' in stations_df.columns:
+            stations_df['name'] = [
+                _station_label_from_address(addr, f"Site {i+1}")
+                for i, addr in enumerate(stations_df['address'])
+            ]
+        else:
+            stations_df['name'] = [f"Site {i+1}" for i in range(len(stations_df))]
     else:
         stations_df['name'] = stations_df['name'].fillna('').astype(str).str.strip()
         stations_df['name'] = stations_df['name'].replace(r'(?i)^(null|<null>|nan|none)$', '', regex=True)
-        stations_df['name'] = [name if name else f"Site {i+1}" for i, name in enumerate(stations_df['name'])]
+        if 'address' in stations_df.columns:
+            stations_df['name'] = [
+                name if name else _station_label_from_address(addr, f"Site {i+1}")
+                for i, (name, addr) in enumerate(zip(stations_df['name'], stations_df['address']))
+            ]
+        else:
+            stations_df['name'] = [name if name else f"Site {i+1}" for i, name in enumerate(stations_df['name'])]
 
     counts = {}
     deduped_names = []
@@ -562,6 +685,12 @@ def split_simulation_optional_files(optional_files, is_boundary_sidecar, looks_l
     if station_file is None and len(non_boundary_files) == 1:
         station_file = non_boundary_files[0]
 
+    if station_file is None and len(non_boundary_files) > 1:
+        for optional_file in non_boundary_files:
+            if _looks_like_station_upload_content(optional_file):
+                station_file = optional_file
+                break
+
     unused_files = [
         optional_file.name for optional_file in non_boundary_files
         if station_file is None or optional_file.name != station_file.name
@@ -596,14 +725,18 @@ def load_simulation_custom_stations(sim_uploader, active_targets, forward_geocod
     parsed_stations = []
     ungeocoded = []
     for idx, row in station_df.iterrows():
-        station_label = str(row[name_col]) if name_col and pd.notna(row[name_col]) else f'Custom Station {idx+1}'
+        addr_str = str(row[addr_col]).strip() if addr_col and pd.notna(row[addr_col]) else ''
+        station_label = (
+            str(row[name_col]).strip()
+            if name_col and pd.notna(row[name_col]) and str(row[name_col]).strip()
+            else _station_label_from_address(addr_str, f'Custom Station {idx+1}')
+        )
         station_type = str(row[type_col]) if type_col and pd.notna(row[type_col]) else 'Custom'
         station_lat, station_lon = None, None
 
         if lat_col and lon_col and pd.notna(row[lat_col]) and pd.notna(row[lon_col]):
             station_lat, station_lon = float(row[lat_col]), float(row[lon_col])
         elif addr_col and pd.notna(row[addr_col]):
-            addr_str = str(row[addr_col])
             station_lat, station_lon = forward_geocode(addr_str)
             if station_lat is None:
                 station_lat, station_lon = forward_geocode(
@@ -619,6 +752,7 @@ def load_simulation_custom_stations(sim_uploader, active_targets, forward_geocod
                 'lat': station_lat,
                 'lon': station_lon,
                 'type': station_type,
+                'address': addr_str,
             })
 
     if not parsed_stations:
@@ -687,6 +821,7 @@ def build_demo_boundaries(
     fetch_census_state_population,
 ):
     all_gdfs = []
+    boundary_records = []
     total_estimated_pop = 0
     all_populations_verified = True
     boundary_messages = []
@@ -749,6 +884,14 @@ def build_demo_boundaries(
                 estimated_pop = known_populations.get(city_name or state_name, int(area_sq_mi * default_density))
                 total_estimated_pop += estimated_pop
                 boundary_messages.append(f"⚠️ {city_name or state_name} population estimated: {estimated_pop:,}")
+                population = estimated_pop
+            boundary_records.append({
+                'name': city_name or state_name,
+                'state': state_name,
+                'boundary_kind': boundary_kind,
+                'population': int(population or 0),
+                'geometry': temp_gdf.geometry.union_all(),
+            })
         else:
             warnings.append(f"⚠️ Could not find a boundary for {city_name or state_name}, {state_name}. Try another city or state.")
             if session_state.get('_last_demo_city') == city_name:
@@ -761,15 +904,59 @@ def build_demo_boundaries(
     boundary_messages = [_normalize_display_text(msg) for msg in boundary_messages]
     warnings = [_normalize_display_text(msg) for msg in warnings]
 
-    return all_gdfs, total_estimated_pop, boundary_messages, warnings, rerun_demo_target, all_populations_verified
+    return all_gdfs, boundary_records, total_estimated_pop, boundary_messages, warnings, rerun_demo_target, all_populations_verified
 
 
-def build_demo_calls(city_poly, total_estimated_pop, generate_clustered_calls):
+def _allocate_demo_counts(weights, total_count):
+    if total_count <= 0:
+        return [0 for _ in weights]
+    weight_total = sum(max(float(weight or 0), 0.0) for weight in weights)
+    if weight_total <= 0:
+        base = total_count // max(len(weights), 1)
+        counts = [base for _ in weights]
+        for index in range(total_count - sum(counts)):
+            counts[index % max(len(weights), 1)] += 1
+        return counts
+
+    raw = [(max(float(weight or 0), 0.0) / weight_total) * total_count for weight in weights]
+    counts = [int(value) for value in raw]
+    remainder = total_count - sum(counts)
+    order = sorted(
+        range(len(raw)),
+        key=lambda index: (raw[index] - counts[index], weights[index]),
+        reverse=True,
+    )
+    for index in order[:remainder]:
+        counts[index] += 1
+    return counts
+
+
+def build_demo_calls(city_poly, total_estimated_pop, generate_clustered_calls, boundary_records=None):
     annual_cfs = int(total_estimated_pop * 0.6)
+    if boundary_records:
+        boundary_weights = [int(record.get('population', 0) or 0) * 0.6 for record in boundary_records]
+        weighted_annual_cfs = sum(int(weight) for weight in boundary_weights)
+        if weighted_annual_cfs > 0:
+            annual_cfs = weighted_annual_cfs
     simulated_points_count = min(max(int(annual_cfs), 365), 36500)
     np.random.seed(42)
     random.seed(42)
-    call_points = generate_clustered_calls(city_poly, simulated_points_count)
+    call_points = []
+
+    if boundary_records:
+        boundary_weights = [int(record.get('population', 0) or 0) * 0.6 for record in boundary_records]
+        allocations = _allocate_demo_counts(boundary_weights, simulated_points_count)
+        for record, allocation in zip(boundary_records, allocations):
+            if allocation <= 0:
+                continue
+            record_geometry = record.get('geometry')
+            if record_geometry is None or record_geometry.is_empty:
+                continue
+            call_points.extend(generate_clustered_calls(record_geometry, allocation))
+        random.shuffle(call_points)
+
+    if not call_points:
+        call_points = generate_clustered_calls(city_poly, simulated_points_count)
 
     base_date = datetime.datetime.now() - datetime.timedelta(days=364)
     fake_datetimes = [

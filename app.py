@@ -1,4 +1,10 @@
 ﻿# Copyright (c) Steven Beltran. Created by Steven Beltran in partnership with BRINC Drones.
+import warnings
+warnings.filterwarnings(
+    "ignore",
+    message=r"authlib\.jose module is deprecated, please use joserfc instead\.",
+    category=DeprecationWarning,
+)
 import streamlit as st
 import pandas as pd
 import os
@@ -134,19 +140,39 @@ except KeyError:
     _session_state_spec.loader.exec_module(_session_state_mod)
     init_session_state = _session_state_mod.init_session_state
 from modules.dashboard_helpers import log_map_build_event_once, resolve_master_boundary, render_sidebar_jurisdiction_selector, render_data_filters, render_display_options, render_deployment_strategy, prepare_station_candidates, manage_custom_stations, prepare_runtime_context, optimize_fleet_selection
-from modules.onboarding import (
-    detect_brinc_file, load_brinc_save_data, restore_brinc_session,
-    split_uploaded_files, load_station_file, detect_location_from_calls,
-    resolve_uploaded_boundaries, split_simulation_optional_files,
-    load_simulation_boundary_overlay, load_simulation_custom_stations,
-    build_demo_boundaries, build_demo_calls, resolve_demo_stations,
-)
+from modules import onboarding as _onboarding_mod
 from modules.highway_corridor import (
     STATE_PRIMARY_INTERSTATES,
     fetch_highway_geometry,
     build_corridor_polygon,
     estimate_corridor_calls,
     build_corridor_demo,
+)
+
+
+detect_brinc_file = _onboarding_mod.detect_brinc_file
+load_brinc_save_data = _onboarding_mod.load_brinc_save_data
+restore_brinc_session = _onboarding_mod.restore_brinc_session
+split_uploaded_files = _onboarding_mod.split_uploaded_files
+load_station_file = _onboarding_mod.load_station_file
+detect_location_from_calls = _onboarding_mod.detect_location_from_calls
+resolve_uploaded_boundaries = _onboarding_mod.resolve_uploaded_boundaries
+split_simulation_optional_files = _onboarding_mod.split_simulation_optional_files
+load_simulation_boundary_overlay = _onboarding_mod.load_simulation_boundary_overlay
+load_simulation_custom_stations = _onboarding_mod.load_simulation_custom_stations
+build_demo_boundaries = _onboarding_mod.build_demo_boundaries
+build_demo_calls = _onboarding_mod.build_demo_calls
+resolve_demo_stations = _onboarding_mod.resolve_demo_stations
+
+
+def _infer_simulation_targets_from_station_file_fallback(*args, **kwargs):
+    return [], ''
+
+
+infer_simulation_targets_from_station_file = getattr(
+    _onboarding_mod,
+    'infer_simulation_targets_from_station_file',
+    _infer_simulation_targets_from_station_file_fallback,
 )
 
 APP_DIR = Path(__file__).resolve().parent
@@ -4404,8 +4430,35 @@ def main():
                     'state': str(loc.get('state', '') or '').strip().upper(),
                 }
                 for loc in st.session_state['target_cities']
-                if str(loc.get('city', '') or '').strip() or str(loc.get('state', '') or '').strip().upper() in STATE_FIPS
+                if (
+                    str(loc.get('city', '') or '').strip()
+                    or (
+                        st.session_state.get('highway_patrol_mode', False)
+                        and str(loc.get('state', '') or '').strip().upper() in STATE_FIPS
+                    )
+                )
             ]
+            if not active_targets:
+                _pre_sim_station_file, _, _ = split_simulation_optional_files(
+                    st.session_state.get('sim_optional_uploader') or [],
+                    _is_boundary_sidecar,
+                    _looks_like_stations,
+                )
+                if _pre_sim_station_file is not None:
+                    _inferred_targets, _inferred_notice = infer_simulation_targets_from_station_file(
+                        _pre_sim_station_file,
+                        forward_geocode,
+                        reverse_geocode_state,
+                        US_STATES_ABBR,
+                        default_state=st.session_state.get('active_state', ''),
+                    )
+                    if _inferred_targets:
+                        active_targets = _inferred_targets
+                        st.session_state['target_cities'] = list(_inferred_targets)
+                        st.session_state['active_city'] = _inferred_targets[0]['city']
+                        st.session_state['active_state'] = _inferred_targets[0]['state']
+                        if _inferred_notice:
+                            st.toast(_inferred_notice)
             if not active_targets:
                 st.error("Please enter at least one valid city, county, or state.")
                 st.stop()
@@ -4814,7 +4867,7 @@ body{{background:transparent;overflow:hidden}}
                 st.toast(f"✅ {_active_hw} · {_hw_state} · {_corridor_miles:.0f} mi · {annual_cfs:,} calls/yr")
 
             else:
-                all_gdfs, total_estimated_pop, boundary_messages, boundary_warnings, rerun_demo_target, all_populations_verified = build_demo_boundaries(
+                all_gdfs, boundary_records, total_estimated_pop, boundary_messages, boundary_warnings, rerun_demo_target, all_populations_verified = build_demo_boundaries(
                     st.session_state,
                     active_targets,
                     STATE_FIPS,
@@ -4882,7 +4935,12 @@ body{{background:transparent;overflow:hidden}}
                 st.session_state['_pop_resolved'] = all_populations_verified
 
                 prog.progress(55, text="🚔 Modeling 911 calls — every one represents someone who needed help…")
-                df_demo, annual_cfs, simulated_points_count = build_demo_calls(city_poly, total_estimated_pop, generate_clustered_calls)
+                df_demo, annual_cfs, simulated_points_count = build_demo_calls(
+                    city_poly,
+                    total_estimated_pop,
+                    generate_clustered_calls,
+                    boundary_records=boundary_records,
+                )
             st.session_state['total_original_calls'] = annual_cfs
             st.session_state['df_calls'] = df_demo
             st.session_state['df_calls_full'] = df_demo.copy()
@@ -5029,6 +5087,7 @@ body{{background:transparent;overflow:hidden}}
         show_cell_towers = _display_opts['show_cell_towers']
         show_heatmap = _display_opts['show_heatmap']
         show_dots = _display_opts['show_dots']
+        show_rapid_response_ring = _display_opts['show_rapid_response_ring']
         simulate_traffic = _display_opts['simulate_traffic']
         show_health = _display_opts['show_health']
         show_financials = _display_opts['show_financials']
@@ -5116,6 +5175,10 @@ body{{background:transparent;overflow:hidden}}
         locked_r_pins = [_name_to_idx[n] for n in pinned_resp_names if n in _name_to_idx]
 
         bounds_hash = f"{minx}_{miny}_{maxx}_{maxy}_{n}_{resp_radius_mi}_{guard_radius_mi}"
+        _station_signature = "|".join(
+            f"{str(row.get('name', ''))}:{float(row.get('lat', 0) or 0):.5f}:{float(row.get('lon', 0) or 0):.5f}"
+            for _, row in df_stations_all.iterrows()
+        )
 
         _runtime_ctx = prepare_runtime_context(
             st,
@@ -5161,7 +5224,7 @@ body{{background:transparent;overflow:hidden}}
         deflection_rate = _runtime_ctx['deflection_rate']
         # ── OPTIMIZATION ──────────────────────────────────────────────────
         _pins_key = f"{sorted(locked_g_pins)}_{sorted(locked_r_pins)}"
-        opt_cache_key = f"{k_responder}_{k_guardian}_{resp_radius_mi}_{guard_radius_mi}_{guard_strategy}_{resp_strategy}_{deployment_mode}_{incremental_build}_{bounds_hash}_{_pins_key}"
+        opt_cache_key = f"{k_responder}_{k_guardian}_{resp_radius_mi}_{guard_radius_mi}_{guard_strategy}_{resp_strategy}_{deployment_mode}_{incremental_build}_{bounds_hash}_{_station_signature}_{_pins_key}"
         _opt_result = optimize_fleet_selection(
             st,
             st.session_state,
@@ -5368,11 +5431,23 @@ body{{background:transparent;overflow:hidden}}
         for idx, d_type in ordered_deployments_raw:
             if d_type == 'RESPONDER':
                 cov_array = resp_matrix[idx]; cost = CONFIG["RESPONDER_COST"]
-                speed_mph = CONFIG["RESPONDER_SPEED"]; avg_dist = station_metadata[idx]['avg_dist_r']
+                speed_mph = CONFIG["RESPONDER_SPEED"]
+                avg_dist = optimization.mean_covered_distance_miles(
+                    dist_matrix_r,
+                    resp_matrix,
+                    idx,
+                    fallback_miles=float(station_metadata[idx].get('avg_dist_r', 0) or 0),
+                )
                 radius_m  = resp_radius_mi * 1609.34
             else:
                 cov_array = guard_matrix[idx]; cost = CONFIG["GUARDIAN_COST"]
-                speed_mph = CONFIG["GUARDIAN_SPEED"]; avg_dist = station_metadata[idx]['avg_dist_g']
+                speed_mph = CONFIG["GUARDIAN_SPEED"]
+                avg_dist = optimization.mean_covered_distance_miles(
+                    dist_matrix_g,
+                    guard_matrix,
+                    idx,
+                    fallback_miles=float(station_metadata[idx].get('avg_dist_g', 0) or 0),
+                )
                 radius_m  = guard_radius_mi * 1609.34
             map_color    = active_color_map[f"{idx}_{d_type}"]
             avg_time_min = (avg_dist / speed_mph) * 60
@@ -6078,7 +6153,7 @@ body{{background:transparent;overflow:hidden}}
                     fill='toself', fillcolor='rgba(0,0,0,0)', name=lbl, hoverinfo='name'))
 
                 # The 5-mile Rapid Response ring gets the "Important" styling (thick, solid, heavier fill)
-                if is_extended_guardian:
+                if is_extended_guardian and show_rapid_response_ring:
                     f_lats, f_lons = get_circle_coords(d['lat'], d['lon'], r_mi=5.0)
                     fig.add_trace(go.Scattermap(
                         lat=list(f_lats), lon=list(f_lons),
@@ -7743,6 +7818,7 @@ body{{background:transparent;overflow:hidden}}
             "show_cell_towers_b":          st.session_state.get('show_cell_towers_b', False),
             "show_heatmap_b":              st.session_state.get('show_heatmap_b', False),
             "show_dots_b":                 st.session_state.get('show_dots_b', True),
+            "show_rapid_response_ring_b":  st.session_state.get('show_rapid_response_ring_b', True),
             "simulate_traffic_b":          st.session_state.get('simulate_traffic_b', False),
             "show_health_b":               st.session_state.get('show_health_b', False),
             "show_financials_b":           st.session_state.get('show_financials_b', True),
@@ -7952,6 +8028,7 @@ body{{background:transparent;overflow:hidden}}
                 "show_cell_towers_b":          st.session_state.get('show_cell_towers_b', False),
                 "show_heatmap_b":              st.session_state.get('show_heatmap_b', False),
                 "show_dots_b":                 st.session_state.get('show_dots_b', True),
+                "show_rapid_response_ring_b":  st.session_state.get('show_rapid_response_ring_b', True),
                 "simulate_traffic_b":          st.session_state.get('simulate_traffic_b', False),
                 "show_health_b":               st.session_state.get('show_health_b', False),
                 "show_financials_b":           st.session_state.get('show_financials_b', True),
@@ -8305,43 +8382,183 @@ body{{background:transparent;overflow:hidden}}
                     )
                     return any(marker in ctx_text for marker in _state_agency_markers)
 
-                def _render_timed_custom_grant_html(
+                def _grant_context_looks_like_state_law_enforcement(ctx_text: str) -> bool:
+                    _state_law_markers = (
+                        "state police",
+                        "state patrol",
+                        "highway patrol",
+                        "department of public safety",
+                        "state bureau of investigation",
+                        "state law enforcement",
+                    )
+                    return any(marker in ctx_text for marker in _state_law_markers)
+
+                def _grant_context_looks_like_tribal_applicant(ctx_text: str) -> bool:
+                    _tribal_markers = (
+                        "tribe",
+                        "tribal",
+                        "nation",
+                        "pueblo",
+                        "rancheria",
+                    )
+                    return any(marker in ctx_text for marker in _tribal_markers)
+
+                def _render_federal_grant_card_html(
                     *,
                     title: str,
                     description: str,
-                    deadline: datetime.date,
+                    narrative: str,
+                    status_label: str,
+                    status_tone: str,
                     eligibility_note: str,
+                    links: list[tuple[str, str]],
+                    grants_gov_deadline: str = "",
+                    portal_deadline: str = "",
                     nofo_number: str = "",
-                    historical_note: str = "",
+                    status_note: str = "",
                     require_state_agency: bool = False,
+                    require_state_law_enforcement: bool = False,
+                    require_tribal: bool = False,
                 ) -> str:
-                    if datetime.date.today() > deadline:
-                        return ""
                     if require_state_agency and not _grant_context_looks_like_state_agency(_grant_context_text):
                         return ""
-                    _meta = [f"Application due {deadline.strftime('%B %d, %Y')}"]
+                    if require_state_law_enforcement and not _grant_context_looks_like_state_law_enforcement(_grant_context_text):
+                        return ""
+                    if require_tribal and not _grant_context_looks_like_tribal_applicant(_grant_context_text):
+                        return ""
+                    _badge_styles = {
+                        "open": "display:inline-block;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;white-space:nowrap;background:rgba(34,197,94,0.12);color:#15803d;border:1px solid rgba(34,197,94,0.25);",
+                        "watch": "display:inline-block;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;white-space:nowrap;background:rgba(245,158,11,0.12);color:#b45309;border:1px solid rgba(245,158,11,0.28);",
+                        "closed": "display:inline-block;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;white-space:nowrap;background:rgba(59,130,246,0.1);color:#1d4ed8;border:1px solid rgba(59,130,246,0.2);",
+                    }
+                    _meta = [status_label]
+                    if grants_gov_deadline:
+                        _meta.append(f"Grants.gov deadline: {grants_gov_deadline}")
+                    if portal_deadline:
+                        _meta.append(portal_deadline)
                     if nofo_number:
                         _meta.append(f"NOFO {nofo_number}")
                     if eligibility_note:
                         _meta.append(eligibility_note)
-                    if historical_note:
-                        _meta.append(historical_note)
+                    if status_note:
+                        _meta.append(status_note)
+                    _links_html = " · ".join(
+                        f'<a href="{html.escape(url, quote=True)}" target="_blank" style="color:#2563eb;text-decoration:none;font-weight:700;">{html.escape(label)}</a>'
+                        for label, url in links if label and url
+                    )
+                    _badge_style = _badge_styles.get(status_tone, _badge_styles["closed"])
+                    _primary_link = next((url for _label, url in links if _label and url), "")
+                    if _primary_link:
+                        _badge_html = (
+                            f'<a href="{html.escape(_primary_link, quote=True)}" target="_blank" '
+                            f'class="grant-status-badge {html.escape(status_tone)}" '
+                            f'style="{_badge_style}text-decoration:none;cursor:pointer;">{html.escape(status_label)}</a>'
+                        )
+                    else:
+                        _badge_html = (
+                            f'<span class="grant-status-badge {html.escape(status_tone)}" '
+                            f'style="{_badge_style}">{html.escape(status_label)}</span>'
+                        )
                     return (
-                        f"<br><strong>{html.escape(title)}</strong> — {html.escape(description)} "
-                        f"<span style=\"color:#666;\">({' | '.join(html.escape(m) for m in _meta)})</span>"
+                        f"<div class=\"federal-grant-card\" style=\"background:#fff;border:1px solid rgba(148,163,184,0.22);border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:0 4px 18px rgba(15,23,42,0.04);\">"
+                        f"<div class=\"federal-grant-head\" style=\"margin-bottom:6px;\">"
+                        f"<strong style=\"display:block;font-size:14px;color:#0f172a;margin-bottom:6px;\">{html.escape(title)}</strong>"
+                        f"{_badge_html}"
+                        f"</div>"
+                        f"<div class=\"federal-grant-desc\" style=\"font-size:12px;color:#334155;margin:8px 0;\">{html.escape(description)}</div>"
+                        f"<div class=\"federal-grant-meta\" style=\"font-size:11px;color:#64748b;margin:0 0 10px;\">{' | '.join(html.escape(m) for m in _meta)}</div>"
+                        f"<p style=\"font-size:13px;color:#334155;line-height:1.65;margin:0 0 10px;\">{html.escape(narrative)}</p>"
+                        f"<div class=\"federal-grant-links\" style=\"font-size:12px;font-weight:700;line-height:1.6;\">{_links_html}</div>"
+                        f"</div>"
                     )
 
-                _custom_law_grants_html = "".join([
-                    _render_timed_custom_grant_html(
-                        title="SAMHSA State Opioid Response Grants (SOR)",
+                _current_federal_grants_html = "".join([
+                    _render_federal_grant_card_html(
+                        title="DOJ/BJA Comprehensive Opioid, Stimulant, and Substance Use Program (COSSUP)",
                         description=(
-                            "Supports opioid and stimulant use-disorder prevention, harm reduction, "
-                            "treatment, recovery support, and MOUD access."
+                            "Supports coordinated opioid, stimulant, and substance-use response across public "
+                            "safety, overdose response, diversion, deflection, treatment access, recovery, and data-sharing."
                         ),
-                        deadline=datetime.date(2022, 7, 18),
-                        eligibility_note="Eligible applicants limited to Single State Agencies and territories",
-                        nofo_number="TI-22-005",
-                        historical_note="Historical NOFO posted before January 20, 2025",
+                        narrative=(
+                            "For this DFR deployment, COSSUP is the strongest federal opioid-response fit because it "
+                            "allows the agency to position BRINC as overdose-scene intelligence infrastructure that improves "
+                            "dispatcher awareness, accelerates multi-agency coordination, reduces responder risk, and supports "
+                            "deflection workflows linking law enforcement, EMS, and behavioral-health partners."
+                        ),
+                        status_label="Open now",
+                        status_tone="open",
+                        eligibility_note="Eligible applicants include states, units of local government, and Indian tribal governments",
+                        links=[
+                            ("BJA FY25 COSSUP opportunity", "https://bja.ojp.gov/funding/opportunities/o-bja-2025-172485"),
+                            ("BJA COSSUP overview", "https://www.bja.ojp.gov/program/cossup/about"),
+                        ],
+                        grants_gov_deadline="May 4, 2026, 11:59 p.m. ET",
+                        portal_deadline="JustGrants deadline: May 11, 2026, 8:59 p.m. ET",
+                        nofo_number="O-BJA-2025-172485",
+                    ),
+                    _render_federal_grant_card_html(
+                        title="SAMHSA Tribal Opioid Response (TOR)",
+                        description=(
+                            "Supports opioid and stimulant prevention, harm reduction, treatment, recovery support, and "
+                            "MOUD access for tribal communities."
+                        ),
+                        narrative=(
+                            "When the applicant is a Tribe or tribal organization, TOR can support a DFR deployment framed "
+                            "around faster overdose-scene assessment, safer responder approach, and stronger connection between "
+                            "dispatch, tribal public safety, EMS, and treatment or recovery partners."
+                        ),
+                        status_label="Forecasted / watchlist",
+                        status_tone="watch",
+                        eligibility_note="Eligible applicants are federally recognized Tribes and tribal organizations",
+                        links=[
+                            ("Simpler.Grants.gov forecast search", "https://simpler.grants.gov/search?query=opioid+use+disorder"),
+                            ("SAMHSA TOR program page", "https://www.samhsa.gov/grants/grant-announcements/ti-24-009"),
+                        ],
+                        status_note="FY26 forecast posted March 20, 2026; close date not yet published",
+                        require_tribal=True,
+                    ),
+                    _render_federal_grant_card_html(
+                        title="COPS Anti-Heroin Task Force (AHTF)",
+                        description=(
+                            "Funds statewide collaborative law-enforcement efforts focused on heroin, fentanyl, carfentanil, "
+                            "and unlawful prescription-opioid distribution."
+                        ),
+                        narrative=(
+                            "For state law-enforcement applicants, AHTF can support a DFR narrative centered on earlier aerial "
+                            "scene intelligence for trafficking investigations, safer operational planning, and faster coordination "
+                            "across state task-force partners confronting opioid distribution networks."
+                        ),
+                        status_label="Recurring program",
+                        status_tone="closed",
+                        eligibility_note="Eligible applicants are state law-enforcement agencies with statewide jurisdiction",
+                        links=[
+                            ("COPS AHTF program page", "https://cops.usdoj.gov/ahtf"),
+                            ("COPS grants page", "https://cops.usdoj.gov/grants"),
+                        ],
+                        grants_gov_deadline="June 25, 2025, 4:59 p.m. ET",
+                        portal_deadline="JustGrants deadline: July 2, 2025, 4:59 p.m. ET",
+                        status_note="Most recent posted cycle is closed; keep on the watchlist for the next federal round",
+                        require_state_law_enforcement=True,
+                    ),
+                    _render_federal_grant_card_html(
+                        title="SAMHSA State Opioid Response (SOR)",
+                        description=(
+                            "Supports opioid and stimulant prevention, harm reduction, treatment, recovery support, and "
+                            "MOUD access through Single State Agencies and territorial applicants."
+                        ),
+                        narrative=(
+                            "For state behavioral-health or Single State Agency applicants, SOR can support a DFR narrative "
+                            "focused on overdose-scene intelligence, faster linkage to care, coordinated field response, and "
+                            "safer interoperability between public safety and treatment systems."
+                        ),
+                        status_label="State-only program",
+                        status_tone="closed",
+                        eligibility_note="Eligible applicants are Single State Agencies and territories",
+                        links=[
+                            ("SAMHSA SOR program page", "https://www.samhsa.gov/grants/grant-announcements/ti-24-008"),
+                        ],
+                        grants_gov_deadline="July 1, 2024",
+                        status_note="Most recent public NOFO is historical; include only for state-level behavioral-health applicants",
                         require_state_agency=True,
                     ),
                 ])
@@ -8659,6 +8876,22 @@ body{{background:transparent;overflow:hidden}}
         .grant-stat .gs-sub{{font-size:11px;color:var(--muted);margin-top:4px}}
         .grant-stat.gold .gs-val{{color:var(--gold)}}
         .grant-stat.green .gs-val{{color:var(--green)}}
+        .federal-grants-wrap{{margin:20px 0 22px;padding:18px 20px;border-radius:12px;background:linear-gradient(180deg,#f8fbff 0%,#f4f8fc 100%);border:1px solid rgba(59,130,246,0.18)}}
+        .federal-grants-wrap h4{{font-size:12px;font-weight:800;letter-spacing:1.3px;text-transform:uppercase;color:#1d4ed8;margin-bottom:8px}}
+        .federal-grants-wrap p{{font-size:13px;color:#334155;margin-bottom:14px}}
+        .federal-grant-card{{background:#fff;border:1px solid rgba(148,163,184,0.22);border-radius:10px;padding:14px 16px;margin-bottom:12px;box-shadow:0 4px 18px rgba(15,23,42,0.04)}}
+        .federal-grant-card:last-child{{margin-bottom:0}}
+        .federal-grant-head{{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}}
+        .federal-grant-head strong{{font-size:14px;color:#0f172a}}
+        .federal-grant-desc{{font-size:12px;color:#334155;margin-bottom:8px}}
+        .federal-grant-meta{{font-size:11px;color:#64748b;margin-bottom:10px}}
+        .grant-status-badge{{display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:0.8px;text-transform:uppercase;white-space:nowrap}}
+        .grant-status-badge.open{{background:rgba(34,197,94,0.12);color:#15803d;border:1px solid rgba(34,197,94,0.25)}}
+        .grant-status-badge.watch{{background:rgba(245,158,11,0.12);color:#b45309;border:1px solid rgba(245,158,11,0.28)}}
+        .grant-status-badge.closed{{background:rgba(59,130,246,0.1);color:#1d4ed8;border:1px solid rgba(59,130,246,0.2)}}
+        .federal-grant-links{{font-size:12px;font-weight:700}}
+        .federal-grant-links a{{color:#2563eb;text-decoration:none}}
+        .federal-grant-links a:hover{{text-decoration:underline}}
     
         /* ── CRIME STATS BOX ─────────────────────────────────────────── */
         .crime-box{{
@@ -8887,7 +9120,7 @@ body{{background:transparent;overflow:hidden}}
           <div class="section-eyebrow">
             <span class="pg-num">06</span>
             <span class="pg-title">Grant Narrative</span>
-            <span class="src" data-src="Grant programs referenced: DOJ Byrne JAG · FEMA HSGP · DOJ COPS Office · DOT RAISE · DOJ Smart Policing Initiative. Timed custom grants render only while open and when the applicant context appears eligible. Financial figures are BRINC model estimates. Narrative is AI-generated — must be reviewed, localized, and fact-checked by your grants administrator before submission.">ⓘ</span>
+            <span class="src" data-src="Grant programs referenced: DOJ Byrne JAG · FEMA HSGP · DOJ COPS Office · DOT RAISE · DOJ Smart Policing Initiative · DOJ/BJA COSSUP · COPS AHTF · SAMHSA TOR · SAMHSA SOR. Federal opioid-program dates and eligibility are based on current public federal postings as of April 24, 2026. Financial figures are BRINC model estimates. Narrative is AI-generated — must be reviewed, localized, and fact-checked by your grants administrator before submission.">ⓘ</span>
             <button class="copy-section-btn grant-law" onclick="copyGrantText('grant-body-law', this)">
               <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0"><path d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H6z"/><path d="M2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h-1v1H2V6h1V5H2z"/></svg>
               Copy Grant Text
@@ -8951,18 +9184,23 @@ body{{background:transparent;overflow:hidden}}
             </table>
     
             <p><strong>Officer Safety &amp; Liability Reduction:</strong> Beyond direct operational savings, DFR programs measurably reduce officer exposure to unknown-risk call scenarios. First-arriving drones perform scene reconnaissance before ground units arrive, enabling officers to approach with full situational awareness. Documented outcomes across peer agencies include: reduced officer injuries in drone-supported zones (avg. 18% reduction, per DOJ data), faster suspect identification improving apprehension rates, and reduced use-of-force incidents through earlier de-escalation intelligence. These outcomes reduce agency liability costs and workers' compensation claims — benefits not captured in the direct cost model above.</p>
-
-            <p><strong>Community &amp; Economic Impact:</strong> Response time improvements of <strong>{avg_time_saved:.1f} minutes</strong> translate directly to better outcomes in time-sensitive incidents: cardiac events, structure fires, crimes in progress, and missing persons cases. Studies by the International Association of Chiefs of Police (IACP) document measurable improvements in case clearance rates, property crime deterrence (15–30% reduction in areas with visible DFR patrols), and community trust metrics in agencies with active drone programs. For {prop_city}'s business community, faster emergency response reduces property damage, shortens insurance claim cycles, and improves the commercial district safety perception that drives foot traffic and investment.</p>
     
-            {_cossup_opioid_narrative_html}
+            <p><strong>Community &amp; Economic Impact:</strong> Response time improvements of <strong>{avg_time_saved:.1f} minutes</strong> translate directly to better outcomes in time-sensitive incidents: cardiac events, structure fires, crimes in progress, and missing persons cases. Studies by the International Association of Chiefs of Police (IACP) document measurable improvements in case clearance rates, property crime deterrence (15–30% reduction in areas with visible DFR patrols), and community trust metrics in agencies with active drone programs. For {prop_city}'s business community, faster emergency response reduces property damage, shortens insurance claim cycles, and improves the commercial district safety perception that drives foot traffic and investment.</p>
 
+            <div class="federal-grants-wrap">
+              <h4>Current Federal Opioid-Response Grants</h4>
+              <p>Federal opioid-response funding can strengthen this executive export when the DFR program is positioned as overdose-scene intelligence, responder-safety infrastructure, and a coordination layer connecting dispatch, law enforcement, EMS, and behavioral-health partners. The entries below surface the best current-fit federal opportunities for the applicant context reflected in this export.</p>
+              {_current_federal_grants_html}
+            </div>
+            {_cossup_opioid_narrative_html}
+    
             <p style="background:#f8f9fa;padding:15px;border-radius:8px;border:1px solid #eee;font-size:13px">
               <strong>Applicable Grant Funding Sources:</strong><br>
               <a href="https://bja.ojp.gov/program/jag/overview">DOJ Byrne JAG</a> — Technology and equipment procurement<br>
               <a href="https://www.fema.gov/grants/preparedness/homeland-security">FEMA HSGP</a> — Homeland security CapEx offset<br>
               <a href="https://cops.usdoj.gov/grants">DOJ COPS Office</a> — Law enforcement technology<br>
               <a href="https://www.transportation.gov/grants">DOT RAISE</a> — Regional infrastructure and safety<br>
-              <a href="https://bja.ojp.gov/program/smart-policing-initiative/overview">DOJ Smart Policing Initiative</a> — Data-driven public safety{_custom_law_grants_html}
+              <a href="https://bja.ojp.gov/program/smart-policing-initiative/overview">DOJ Smart Policing Initiative</a> — Data-driven public safety
             </p>
           </div>
           <div class="grant-sidebar">

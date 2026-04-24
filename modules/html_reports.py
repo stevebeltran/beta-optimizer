@@ -21,6 +21,44 @@ from modules.cad_parser import _get_annualized_calls
 from modules.faa_rf import get_circle_coords
 
 
+def _parse_datetime_series(series, formats=None):
+
+    """Parse a datetime-like series without falling straight to dateutil inference."""
+
+    if series is None:
+
+        return None
+
+    parsed = None
+
+    for fmt in (formats or []):
+
+        try:
+
+            trial = pd.to_datetime(series, format=fmt, errors='coerce')
+
+            if trial.notna().sum() > 0:
+
+                parsed = trial
+
+                break
+
+        except Exception:
+
+            continue
+
+    if parsed is None:
+
+        try:
+
+            parsed = pd.to_datetime(series, format='mixed', errors='coerce')
+
+        except Exception:
+
+            return None
+
+    return parsed
+
 
 def _detect_datetime_series_for_labels(df):
 
@@ -34,7 +72,10 @@ def _detect_datetime_series_for_labels(df):
 
         if 'date' in df.columns and 'time' in df.columns:
 
-            s = pd.to_datetime(df['date'].astype(str).fillna('') + ' ' + df['time'].astype(str).fillna(''), errors='coerce')
+            s = _parse_datetime_series(
+                df['date'].astype(str).fillna('') + ' ' + df['time'].astype(str).fillna(''),
+                formats=['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%m/%d/%Y %H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%Y %I:%M %p'],
+            )
 
             if s.notna().sum() > 0:
 
@@ -42,7 +83,10 @@ def _detect_datetime_series_for_labels(df):
 
         if 'date' in df.columns:
 
-            s = pd.to_datetime(df['date'], errors='coerce')
+            s = _parse_datetime_series(
+                df['date'],
+                formats=['%Y-%m-%d', '%m/%d/%Y', '%m-%d-%Y', '%Y/%m/%d', '%d/%m/%Y'],
+            )
 
             if s.notna().sum() > 0:
 
@@ -66,7 +110,10 @@ def _detect_datetime_series_for_labels(df):
 
             if col is not None:
 
-                s = pd.to_datetime(df[col], errors='coerce')
+                s = _parse_datetime_series(
+                    df[col],
+                    formats=['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%m/%d/%Y %H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%Y %I:%M %p'],
+                )
 
                 if s.notna().sum() > 0:
 
@@ -554,7 +601,10 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False):
 
         if dt_obj is None or dt_obj.dropna().empty:
 
-            dt_obj = pd.to_datetime(_combined, errors='coerce')
+            dt_obj = _parse_datetime_series(
+                _combined,
+                formats=['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d', '%m/%d/%Y %H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%Y %I:%M %p'],
+            )
 
 
 
@@ -574,7 +624,10 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False):
 
             if cand in df_ana.columns:
 
-                trial = pd.to_datetime(df_ana[cand], errors='coerce')
+                trial = _parse_datetime_series(
+                    df_ana[cand],
+                    formats=['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%m/%d/%Y %H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%Y %I:%M %p'],
+                )
 
                 if trial.dropna().shape[0] > 0:
 
@@ -630,7 +683,10 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False):
 
                 if dt_obj is None or dt_obj.dropna().empty:
 
-                    trial = pd.to_datetime(df_ana[_col_real], errors='coerce')
+                    trial = _parse_datetime_series(
+                        df_ana[_col_real],
+                        formats=['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%m/%d/%Y %H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%Y %I:%M %p'],
+                    )
 
                     if trial.dropna().shape[0] > 0:
 

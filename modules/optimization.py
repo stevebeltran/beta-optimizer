@@ -10,6 +10,27 @@ import streamlit as st
 from modules.config import CONFIG
 from modules.geospatial import build_display_calls
 
+def mean_covered_distance_miles(dist_matrix, cover_matrix, station_idx, fallback_miles=0.0):
+    """Return the mean covered distance for one station from the live coverage matrices."""
+    try:
+        idx = int(station_idx)
+        if dist_matrix is None or cover_matrix is None:
+            return float(fallback_miles or 0.0)
+        if idx < 0 or idx >= len(cover_matrix) or idx >= len(dist_matrix):
+            return float(fallback_miles or 0.0)
+        mask = np.asarray(cover_matrix[idx], dtype=bool)
+        if mask.size == 0 or not mask.any():
+            return float(fallback_miles or 0.0)
+        distances = np.asarray(dist_matrix[idx], dtype=float)[mask]
+        if distances.size == 0:
+            return float(fallback_miles or 0.0)
+        finite = distances[np.isfinite(distances)]
+        if finite.size == 0:
+            return float(fallback_miles or 0.0)
+        return float(finite.mean())
+    except Exception:
+        return float(fallback_miles or 0.0)
+
 @st.cache_resource
 def precompute_spatial_data(df_calls, df_calls_full, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash):
     gdf_calls = gpd.GeoDataFrame(df_calls, geometry=gpd.points_from_xy(df_calls.lon, df_calls.lat), crs="EPSG:4326")

@@ -401,12 +401,14 @@ def render_display_options(st):
             key='show_dots_b',
             help='Show individual 911 call locations as dots on the map.',
         )
-        show_rapid_response_ring = st.toggle(
+        if 'show_rapid_response_ring_b' not in st.session_state:
+            st.session_state['show_rapid_response_ring_b'] = True
+        st.toggle(
             'Rapid Response Ring',
-            value=True,
             key='show_rapid_response_ring_b',
             help='Show or hide the highlighted 5-mile rapid response ring around extended Guardian stations.',
         )
+        show_rapid_response_ring = bool(st.session_state.get('show_rapid_response_ring_b', True))
         simulate_traffic = st.toggle(
             'Simulate Ground Traffic',
             value=False,
