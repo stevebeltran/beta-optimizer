@@ -21,11 +21,12 @@ _VERSION_ANCHOR_COMMIT = "6156fc0"
 def _read_build_meta():
     """Read stored build timestamp and revision from .build_meta."""
     try:
-        _raw_meta = _BUILD_META_PATH.read_text(encoding="utf-8").strip()
-        if _raw_meta:
-            _parts = _raw_meta.split("|", 1)
-            if len(_parts) == 2:
-                return float(_parts[0]), max(1, int(_parts[1]))
+        if _BUILD_META_PATH.exists():
+            _raw_meta = _BUILD_META_PATH.read_text(encoding="utf-8").strip()
+            if _raw_meta:
+                _parts = _raw_meta.split("|", 1)
+                if len(_parts) == 2:
+                    return float(_parts[0]), max(1, int(_parts[1]))
     except (ValueError, OSError):
         pass
     return 0.0, 1

@@ -88,19 +88,6 @@ from modules.versioning import (
     __build_line_count__,
     _render_version_badge,
 )
-from modules.public_reports import (
-    PUBLIC_REPORTS_DIR,
-    _build_public_report_url,
-    _get_document_jurisdiction_name,
-    _get_public_report_secret,
-    _get_query_params_dict,
-    _get_request_base_url,
-    _publish_public_report_html,
-    _public_report_html_path,
-    _resolve_public_reports_dir,
-    _sign_public_report_id,
-    _slugify,
-)
 from modules.image_utils import (
     get_base64_of_bin_file, get_themed_logo_base64, get_transparent_product_base64
 )
@@ -188,6 +175,105 @@ def _reset_census_state(session_state):
     session_state['census_corrected_name'] = ""
     session_state['census_corrected_format'] = "csv"
     session_state['census_download_notice'] = False
+
+
+def _resolve_public_reports_dir():
+    for _candidate in (APP_DIR / "public_reports", Path(tempfile.gettempdir()) / "frankenstein_public_reports"):
+        try:
+            _candidate.mkdir(parents=True, exist_ok=True)
+            if _candidate.is_dir():
+                return _candidate
+        except OSError:
+            continue
+    raise OSError("Unable to initialize a writable public reports directory.")
+
+
+PUBLIC_REPORTS_DIR = _resolve_public_reports_dir()
+
+
+def _get_query_params_dict():
+    try:
+        return {str(k): str(v) for k, v in dict(st.query_params).items()}
+    except Exception:
+        return {}
+
+
+def _slugify(value):
+    return re.sub(r'[^a-z0-9]+', '-', str(value or '').lower()).strip('-') or 'report'
+
+
+def _get_document_jurisdiction_name(session_state, selected_names=None, fallback="City"):
+    _active_name = str(session_state.get("active_city", fallback) or fallback).strip() or fallback
+    _boundary_kind = str(session_state.get("boundary_kind", "") or "").strip().lower()
+    _use_county_boundary = bool(session_state.get("use_county_boundary", False))
+    _selected = [str(name).strip() for name in (selected_names or []) if str(name).strip()]
+
+    if _use_county_boundary or _boundary_kind == "county":
+        if _selected:
+            return ", ".join(_selected)
+        return _active_name
+
+    return _active_name
+
+
+def _get_request_base_url():
+    try:
+        _host = st.context.headers.get("host", "") or st.context.headers.get("Host", "")
+        if _host:
+            _proto = "https" if ("streamlit.app" in _host or "share" in _host) else "http"
+            return f"{_proto}://{_host}"
+    except Exception:
+        pass
+    return "http://localhost:8501"
+
+
+def _get_public_report_secret():
+    try:
+        if "PUBLIC_REPORT_SECRET" in st.secrets:
+            return str(st.secrets["PUBLIC_REPORT_SECRET"])
+        if "auth" in st.secrets and isinstance(st.secrets["auth"], dict):
+            _cookie_secret = st.secrets["auth"].get("cookie_secret")
+            if _cookie_secret:
+                return str(_cookie_secret)
+    except Exception:
+        pass
+    return "brinc-public-report-dev-secret"
+
+
+def _sign_public_report_id(report_id):
+    return hmac.new(
+        _get_public_report_secret().encode("utf-8"),
+        str(report_id).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _build_public_report_url(report_id):
+    _sig = _sign_public_report_id(report_id)
+    try:
+        _public_webapp_url = str(st.secrets.get("PUBLIC_REPORT_WEBAPP_URL", "")).strip()
+    except Exception:
+        _public_webapp_url = ""
+    if _public_webapp_url:
+        _query = urllib.parse.urlencode({"report_id": report_id, "sig": _sig})
+        _sep = "&" if "?" in _public_webapp_url else "?"
+        return f"{_public_webapp_url}{_sep}{_query}"
+    return f"{_get_request_base_url()}/?public_report={report_id}&sig={_sig}"
+
+
+def _public_report_html_path(report_id):
+    return PUBLIC_REPORTS_DIR / f"{report_id}.html"
+
+
+def _publish_public_report_html(report_id, html_text, metadata=None):
+    _html_path = _public_report_html_path(report_id)
+    _html_path.write_text(str(html_text or ""), encoding="utf-8")
+    if metadata is not None:
+        (PUBLIC_REPORTS_DIR / f"{report_id}.json").write_text(
+            json.dumps(metadata, ensure_ascii=True, indent=2),
+            encoding="utf-8",
+        )
+    return _html_path
 
 
 def _render_public_report_route():
@@ -2961,197 +3047,7 @@ init_session_state(st.session_state, _slugify, _build_public_report_url)
 # APP FLOW
 # ============================================================
 
-FAQ_CHANGELOG = [
-    {
-        "version": __version__,
-        "timestamp": __build_datetime__,
-        "summary": "Added an in-app FAQ launcher in the upper-left with a compact versioned release-notes footer.",
-    },
-]
-
-
-def _render_in_app_faq():
-    _faq_items = [
-        (
-            "What does this software do?",
-            "It helps plan BRINC Drone as First Responder deployments using incident data, jurisdiction boundaries, station modeling, and optimization.",
-        ),
-        (
-            "What file should I upload?",
-            "The most common input is a CAD or incident export in CSV or Excel format with usable location data.",
-        ),
-        (
-            "How is the jurisdiction selected?",
-            "The app matches uploaded incident coordinates to local jurisdiction boundary data, then lets you confirm or refine the selected area in the sidebar.",
-        ),
-        (
-            "What is the difference between Responder and Guardian?",
-            "Responder is modeled for shorter-range tactical response, while Guardian is modeled for broader long-range coverage and overwatch.",
-        ),
-        (
-            "Can I choose my own stations?",
-            "Yes. The app can recommend stations automatically, and you can also add or lock custom stations into the plan.",
-        ),
-        (
-            "What outputs can I export?",
-            "You can export a saved deployment plan, an executive-summary HTML report, and a Google Earth KML briefing file.",
-        ),
-        (
-            "Why are map layers or FAA overlays missing?",
-            "The regulatory cache may be missing or outdated. Re-run download_regulatory_layers.py and restart the app.",
-        ),
-    ]
-
-    _faq_html_parts = []
-    for _question, _answer in _faq_items:
-        _faq_html_parts.append(
-            f"""
-            <div class="faq-item">
-                <div class="faq-q">{html.escape(_question)}</div>
-                <div class="faq-a">{html.escape(_answer)}</div>
-            </div>
-            """
-        )
-
-    _changelog_lines = "".join(
-        f'<div class="faq-changelog-line">v{html.escape(str(_entry["version"]))} | '
-        f'{html.escape(str(_entry["timestamp"]))} | '
-        f'{html.escape(str(_entry["summary"]))}</div>'
-        for _entry in FAQ_CHANGELOG
-    )
-
-    st.markdown(
-        f"""
-        <style>
-        .faq-float {{
-            position: fixed;
-            top: 12px;
-            left: 14px;
-            z-index: 9998;
-            width: min(420px, calc(100vw - 28px));
-            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        }}
-        .faq-float summary {{
-            list-style: none;
-        }}
-        .faq-float summary::-webkit-details-marker {{
-            display: none;
-        }}
-        .faq-pill {{
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 5px 10px;
-            border-radius: 999px;
-            background: rgba(8, 12, 20, 0.88);
-            border: 1px solid rgba(116, 224, 255, 0.22);
-            color: rgba(226, 238, 246, 0.92);
-            font-size: 0.72rem;
-            font-weight: 700;
-            letter-spacing: 0.04em;
-            cursor: pointer;
-            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
-            backdrop-filter: blur(8px);
-        }}
-        .faq-pill:hover {{
-            border-color: rgba(116, 224, 255, 0.42);
-            background: rgba(10, 16, 28, 0.96);
-        }}
-        .faq-panel {{
-            margin-top: 8px;
-            background: rgba(7, 11, 18, 0.97);
-            border: 1px solid rgba(116, 224, 255, 0.18);
-            border-radius: 16px;
-            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
-            overflow: hidden;
-        }}
-        .faq-panel-inner {{
-            max-height: min(78vh, 760px);
-            overflow-y: auto;
-            padding: 14px 14px 12px;
-        }}
-        .faq-title {{
-            color: #f4fbff;
-            font-size: 0.92rem;
-            font-weight: 800;
-            margin: 0 0 4px 0;
-        }}
-        .faq-subtitle {{
-            color: rgba(193, 209, 221, 0.78);
-            font-size: 0.76rem;
-            line-height: 1.5;
-            margin-bottom: 12px;
-        }}
-        .faq-item {{
-            padding: 10px 0;
-            border-top: 1px solid rgba(255, 255, 255, 0.06);
-        }}
-        .faq-item:first-of-type {{
-            border-top: none;
-            padding-top: 0;
-        }}
-        .faq-q {{
-            color: #f6fbff;
-            font-size: 0.79rem;
-            font-weight: 700;
-            margin-bottom: 4px;
-        }}
-        .faq-a {{
-            color: rgba(209, 220, 230, 0.84);
-            font-size: 0.75rem;
-            line-height: 1.52;
-        }}
-        .faq-footer {{
-            margin-top: 12px;
-            padding-top: 10px;
-            border-top: 1px solid rgba(116, 224, 255, 0.14);
-        }}
-        .faq-footer-label {{
-            color: #7edfff;
-            font-size: 0.68rem;
-            font-weight: 800;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            margin-bottom: 6px;
-        }}
-        .faq-version-line {{
-            color: rgba(245, 250, 255, 0.92);
-            font-size: 0.72rem;
-            font-family: "IBM Plex Mono", Consolas, monospace;
-            margin-bottom: 8px;
-        }}
-        .faq-changelog-line {{
-            color: rgba(201, 214, 225, 0.82);
-            font-size: 0.70rem;
-            line-height: 1.45;
-            font-family: "IBM Plex Mono", Consolas, monospace;
-            word-break: break-word;
-        }}
-        </style>
-        <details class="faq-float">
-            <summary class="faq-pill">Help / FAQ</summary>
-            <div class="faq-panel">
-                <div class="faq-panel-inner">
-                    <div class="faq-title">BRINC DFR Planning FAQ</div>
-                    <div class="faq-subtitle">
-                        Quick answers for upload, jurisdiction setup, fleet planning, exports, and map-layer troubleshooting.
-                    </div>
-                    {''.join(_faq_html_parts)}
-                    <div class="faq-footer">
-                        <div class="faq-footer-label">Version &amp; Changelog</div>
-                        <div class="faq-version-line">Current version: v{html.escape(__version__)} | Build time: {html.escape(__build_datetime__)}</div>
-                        {_changelog_lines}
-                    </div>
-                </div>
-            </div>
-        </details>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def main():
-    _render_in_app_faq()
     if not st.session_state['csvs_ready']:
 
         # GRAB THE LOGO FOR THE UPLOAD PAGE
@@ -3307,7 +3203,7 @@ def main():
                     Model coverage, forecast ROI, and generate grant-ready proposals in minutes.
                 </div>
                 <div class="brinc-badges" style="justify-content:flex-start;">
-                    <div class="brinc-badge">🛰 3D Swarm Simulation</div>
+                    <div class="brinc-badge pulse">🛰 3D Swarm Simulation</div>
                     <div class="brinc-badge">🗺 Census Boundaries</div>
                     <div class="brinc-badge">📄 Grant Narrative Export</div>
                     <div class="brinc-badge">✈️ FAA LAANC Overlay</div>
@@ -3434,7 +3330,6 @@ def main():
                         ["Primary interstates (auto)", "Custom"],
                         horizontal=True,
                         key="hw_source_radio",
-                        help="Choose whether to deploy along the state's primary interstates automatically, or enter custom corridor names.",
                     )
                     if _hw_src == "Primary interstates (auto)":
                         st.caption(
@@ -3447,7 +3342,6 @@ def main():
                             "Highways (comma-separated)",
                             placeholder="e.g. I-80, I-29",
                             key="custom_highways_input",
-                            help="Enter interstate or highway designations separated by commas. Each corridor runs as an independent deployment plan.",
                         )
                         st.session_state['selected_highways'] = [
                             h.strip() for h in _custom_hw_str.split(',') if h.strip()
@@ -3458,7 +3352,6 @@ def main():
                             "Run plan for:",
                             _avail_hws,
                             key="active_highway_select",
-                            help="Select which corridor to run the active deployment plan against. Switch between corridors to compare coverage.",
                         )
                     elif len(_avail_hws) == 1:
                         st.session_state['active_highway'] = _avail_hws[0]
@@ -4349,7 +4242,7 @@ def main():
 
             st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
-            if st.button("⚡ Launch Random Demo City", width="stretch", key="demo_btn", help="Load a random US city with simulated 911 call data to demo the full DFR deployment workflow."):
+            if st.button("⚡ Launch Random Demo City", width="stretch", key="demo_btn"):
                 random.seed(datetime.datetime.now().microsecond + os.getpid())
                 already_used = st.session_state.get('_last_demo_city', '')
                 candidates = [c for c in FAST_DEMO_CITIES if c[0] != already_used]
@@ -4790,20 +4683,6 @@ body{{background:transparent;overflow:hidden}}
                 prog.progress(38, text=f"📐 Building {_active_hw} corridor boundary…")
                 _corridor_poly, _corridor_line, _corridor_miles = build_corridor_polygon(_hw_gdf)
                 city_poly = _corridor_poly
-                _corridor_label = f"{_active_hw} Corridor"
-                _corridor_override = gpd.GeoDataFrame(
-                    {
-                        'DISPLAY_NAME': [_corridor_label],
-                        'data_count': [1],
-                    },
-                    geometry=[_corridor_poly],
-                    crs="EPSG:4326",
-                )
-                st.session_state['master_gdf_override'] = _corridor_override
-                st.session_state['saved_jurisdiction_names'] = [_corridor_label]
-                st.session_state['population_reference_targets'] = [_corridor_label]
-                st.session_state['active_city'] = _corridor_label
-                st.session_state['active_state'] = _hw_state
                 st.session_state['estimated_pop'] = 0
                 st.session_state['_pop_resolved'] = False
                 prog.progress(55, text=f"🚔 Modeling patrol calls along {_corridor_miles:.0f} miles of {_active_hw}…")
@@ -5840,9 +5719,6 @@ body{{background:transparent;overflow:hidden}}
         if _pricing_tier == "Safe Guard":
             _tier_badge = "🛡️ Safe Guard"
             _tier_desc = "Advanced Custom Features"
-        elif _pricing_tier == "Custom Quote":
-            _tier_badge = "Custom Quote"
-            _tier_desc = "Sales-Entered Pricing"
         else:
             _tier_badge = "🛡️ Safe Guard Lite"
             _tier_desc = "Core Functionality"
@@ -6262,16 +6138,10 @@ body{{background:transparent;overflow:hidden}}
                                 }
                                 st.rerun()
             else:
-                _map_key = "main_map_chart"
-                if st.session_state.get('highway_patrol_mode', False):
-                    _map_state = st.session_state.get('active_state', '')
-                    _map_hw = st.session_state.get('active_highway', '')
-                    if _map_state or _map_hw:
-                        _map_key = f"main_map_chart_{_map_state}_{_map_hw}"
                 st.plotly_chart(
                     fig, width="stretch",
                     config={"scrollZoom": True, "displayModeBar": False},
-                    key=_map_key,
+                    key="main_map_chart",
                 )
 
 
@@ -6360,12 +6230,7 @@ body{{background:transparent;overflow:hidden}}
                     paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                     hoverlabel=dict(bgcolor=card_bg, font_size=13, font_color=text_main, bordercolor=accent_color)
                 )
-                st.plotly_chart(
-                    fig_curve,
-                    width="stretch",
-                    config={'displayModeBar': False},
-                    key="coverage_curve_chart",
-                )
+                st.plotly_chart(fig_curve, width="stretch", config={'displayModeBar':False})
             else:
                 st.info("Run optimization to generate coverage curve.")
 
@@ -6490,12 +6355,7 @@ body{{background:transparent;overflow:hidden}}
                     paper_bgcolor='rgba(0,0,0,0)',
                     hoverlabel=dict(bgcolor=card_bg, font_size=12, font_color=text_main),
                 )
-                st.plotly_chart(
-                    fig_ring,
-                    width="stretch",
-                    config={'displayModeBar': False},
-                    key="station_distribution_ring",
-                )
+                st.plotly_chart(fig_ring, width="stretch", config={'displayModeBar':False})
 
                 # Mode legend below the ring
                 _mode_label = {
@@ -6531,7 +6391,7 @@ body{{background:transparent;overflow:hidden}}
             st.markdown(f"<h3 style='color:{text_main};'>🚁 3D Swarm Simulation <span class='tip' data-tip='Deck.gl-powered 3D animation of all DFR flights compressed into a single 24-hour day. Each arc represents a dispatch flight from station to incident. Use the speed slider to control playback. Best viewed fullscreen for council presentations.'>?</span></h3>", unsafe_allow_html=True)
             st.markdown(f"<div style='font-size:0.82rem; color:{text_muted}; margin-bottom:10px;'>Animated deck.gl simulation of all DFR flights over a compressed 24-hour day. Use the speed slider to accelerate or slow the simulation. Great for council presentations.</div>", unsafe_allow_html=True)
 
-            show_sim = st.toggle("🎬 Enable 3D Simulation", value=False, key='show_sim_b', help='Deck.gl 3D arc animation of all DFR dispatches compressed into a 24-hour day. Best viewed fullscreen for council presentations.')
+            show_sim = st.toggle("🎬 Enable 3D Simulation", value=False, key='show_sim_b')
             if show_sim:
                 calls_lonlat = calls_in_city.to_crs(epsg=4326)
                 calls_coords = np.column_stack((calls_lonlat.geometry.x, calls_lonlat.geometry.y))
@@ -6705,7 +6565,6 @@ body{{background:transparent;overflow:hidden}}
             "Show CAD Ingestion Analytics",
             value=True,
             key="show_cad_ingestion_analytics_section",
-            help="Temporal breakdown of uploaded CAD data — hourly call volume, day-of-week patterns, optimal DFR shift windows, and a call-volume calendar heatmap.",
         )
         if _show_analytics_section:
             # ── COMMAND CENTER ANALYTICS DASHBOARD ──
@@ -6756,7 +6615,6 @@ body{{background:transparent;overflow:hidden}}
             "Show Community Impact Dashboard",
             value=True,
             key="show_community_impact_dashboard_section",
-            help="Public-facing transparency report: flight hours, response time advantage, Fourth Amendment safeguards, community outcomes, and taxpayer ROI. Designed for city council presentations.",
         )
         if _show_community_impact_section:
             # ── COMMUNITY IMPACT DASHBOARD ────────────────────────────────────────────
@@ -6806,7 +6664,6 @@ body{{background:transparent;overflow:hidden}}
             "Show School Safety Impact",
             value=True,
             key="show_school_safety_impact_section",
-            help="Side-by-side comparison of DFR vs. School Resource Officer (SRO) response capability, cost per school, and coverage reach.",
         )
         if _show_school_safety_section:
             # ── SCHOOL SAFETY IMPACT MATRIX ──────────────────────────────────────────
@@ -7062,7 +6919,6 @@ body{{background:transparent;overflow:hidden}}
             "Show 4G LTE Cell Coverage",
             value=True,
             key="show_lte_cell_coverage_section",
-            help="Per-carrier 4G LTE coverage analysis for the deployment area. Shows AT&T, T-Mobile, and Verizon coverage percentages to validate drone data-link reliability.",
         )
         if _show_lte_section:
             # ── 4G LTE CELL COVERAGE — 3 carrier maps with % coverage ────────────────
@@ -7713,8 +7569,6 @@ body{{background:transparent;overflow:hidden}}
             "boundary_source_path": st.session_state.get('boundary_source_path', ''),
             "brinc_user": st.session_state.get('brinc_user', ''),
             "pricing_tier": st.session_state.get('pricing_tier', 'Safe Guard'),
-            "custom_responder_cost": int(st.session_state.get('custom_responder_cost', 79999) or 79999),
-            "custom_guardian_cost": int(st.session_state.get('custom_guardian_cost', 159999) or 159999),
             "app_version": __version__,
             # ── Extended session state ────────────────────────────────────
             "estimated_pop":               int(st.session_state.get('estimated_pop', 0) or 0),
@@ -7920,8 +7774,6 @@ body{{background:transparent;overflow:hidden}}
                 "brinc_user": st.session_state.get('brinc_user', ''),
                 # Pricing tier selection
                 "pricing_tier": st.session_state.get('pricing_tier', 'Safe Guard'),
-                "custom_responder_cost": int(st.session_state.get('custom_responder_cost', 79999) or 79999),
-                "custom_guardian_cost": int(st.session_state.get('custom_guardian_cost', 159999) or 159999),
                 "app_version": __version__,
                 # ── Extended session state ────────────────────────────────────
                 # Jurisdiction metrics
@@ -8270,9 +8122,6 @@ body{{background:transparent;overflow:hidden}}
                 if _exp_pricing_tier == "Safe Guard":
                     _tier_badge = "🛡️ Safe Guard"
                     _tier_desc = "Advanced Custom Features"
-                elif _exp_pricing_tier == "Custom Quote":
-                    _tier_badge = "Custom Quote"
-                    _tier_desc = "Sales-Entered Pricing"
                 else:
                     _tier_badge = "🛡️ Safe Guard Lite"
                     _tier_desc = "Core Functionality"
@@ -8345,43 +8194,6 @@ body{{background:transparent;overflow:hidden}}
                         require_state_agency=True,
                     ),
                 ])
-                _cossup_opportunity_url = "https://bja.ojp.gov/funding/opportunities/o-bja-2025-172485"
-                _cossup_overview_url = "https://bja.ojp.gov/program/cossup"
-                _cossup_funding_url = "https://bja.ojp.gov/program/cossup/funding"
-                _cossup_webinar_url = "https://bja.ojp.gov/events/fy25-comprehensive-opioid-stimulant-and-substance-use-site-based-program-cossup"
-                _cossup_success_url = "https://bja.ojp.gov/news/success-spotlight/bjas-cossup-brings-life-saving-interventions"
-                _cossup_kpi_url = "https://bja.ojp.gov/media/document/51081"
-                _cossup_opioid_narrative_html = f"""
-                <div class="opioid-grant-subsection" style="margin:20px 0 18px;padding:18px 20px;border-radius:12px;background:linear-gradient(180deg,#fff 0%,#f8fbff 100%);border:1px solid rgba(37,99,235,0.18);">
-                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
-                    <div>
-                      <div style="font-size:11px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:#1d4ed8;margin-bottom:6px;">Grant Narrative Subsection B</div>
-                      <div style="font-size:18px;font-weight:800;color:#0f172a;line-height:1.3;">DOJ/BJA FY25 Comprehensive Opioid, Stimulant, and Substance Use, Site-Based Program (COSSUP)</div>
-                      <div style="font-size:12px;color:#64748b;margin-top:6px;">Opportunity ID O-BJA-2025-172485 · Solicitation status: Open · Grants.gov deadline: May 4, 2026, 11:59 p.m. Eastern · JustGrants deadline: May 11, 2026, 8:59 p.m. Eastern</div>
-                    </div>
-                    <button class="copy-section-btn grant-law" onclick="copyGrantText('grant-body-opioid', this)">Copy Opioid Grant Text</button>
-                  </div>
-                  <div id="grant-body-opioid" style="font-size:13px;color:#334155;line-height:1.7;">
-                    <p><strong>Project Title:</strong> BRINC Drones Overdose-Response and Multi-Agency Coordination Initiative — {_get_document_jurisdiction_name(st.session_state, selected_names, fallback=prop_city)}, {prop_state}</p>
-                    <p><strong>Program Fit and Funding Opportunity Alignment:</strong> The FY25 COSSUP site-based solicitation is designed to help eligible state, local, and tribal governments develop, implement, or expand coordinated responses that identify, respond to, treat, and support people impacted by illicit opioids, stimulants, and other substances [1][2]. BJA’s current overview and webinar materials emphasize cross-system collaboration among public safety, behavioral health, treatment, and community partners; law-enforcement-related activities tied to overdose response and prevention; stronger access to prevention tools and overdose reversal medications; and expanded treatment and recovery pathways in the community and, where applicable, correctional settings [1][3]. This proposal is written to match that frame directly.</p>
-                    <p><strong>Statement of Need:</strong> {_get_document_jurisdiction_name(st.session_state, selected_names, fallback=prop_city)} currently generates approximately <strong>{st.session_state.get('total_original_calls', total_calls):,} calls for service annually</strong>, or about <strong>{max(1,int(st.session_state.get('total_original_calls', total_calls)/365)):,} calls per day</strong>. Within that operating tempo, overdose calls, unconscious-person calls, welfare checks, narcotics-related incidents, and co-occurring behavioral-health events place responders into fast-moving scenes where delayed situational awareness increases risk to the patient, the public, and first responders. The proposed BRINC deployment closes that gap by moving eyes-on-scene forward to the first minutes of the event, giving dispatch, law enforcement, fire/EMS, and partner agencies a common operating picture before personnel commit to the address.</p>
-                    <p><strong>Proposed COSSUP-Supported Response Model:</strong> The applicant proposes to deploy a BRINC Drone as a First Responder network consisting of <strong>{actual_k_responder} Responder units</strong> and <strong>{actual_k_guardian} Guardian units</strong> across <strong>{jurisdiction_list}</strong>. In the modeled configuration, the network reaches <strong>{calls_covered_perc:.1f}% of historical incidents</strong>, improves average arrival speed by <strong>{avg_time_saved:.1f} minutes</strong> versus patrol response, and gives dispatchers and field supervisors live HD and thermal intelligence during suspected overdose, unsafe-entry, and multi-agency scenes. BRINC’s launch-on-dispatch workflow, live-streaming video, chain-of-custody flight logging, and integrated operational analytics allow the applicant to present the system not as a stand-alone aircraft purchase, but as overdose-scene intelligence infrastructure that supports public safety decision-making, responder protection, and coordinated care pathways.</p>
-                    <p><strong>How BRINC Advances COSSUP Priorities:</strong> First, the platform strengthens the public-safety response by letting dispatch and field commanders verify scene conditions, assess ingress/egress constraints, identify bystanders or secondary hazards, and determine whether immediate law-enforcement, EMS, fire, crisis-response, or co-responder resources are needed. Second, it supports overdose response and treatment engagement by enabling earlier, safer coordination with naloxone-equipped responders, post-overdose outreach teams, peer navigators, hospital partners, and behavioral-health providers. Third, it improves information sharing by creating time-stamped aerial records, incident-level deployment logs, and repeatable performance measures that can be shared across the public-safety and treatment ecosystem. Fourth, it helps align resources by directing the highest-cost human response only where the aerial picture shows it is necessary, which is especially important in jurisdictions facing staffing pressure, overdose-call surges, or wide geographic coverage demands [1][2][3].</p>
-                    <p><strong>Implementation and Partnerships:</strong> The applicant will use COSSUP support to formalize an overdose-response workflow that connects dispatch, law enforcement, fire/EMS, emergency communications, hospital and treatment partners, behavioral-health providers, peer-support or deflection teams, and any county or regional overdose task force already operating in the jurisdiction. The BRINC system will be integrated into standard operating procedures for overdose, possible overdose, unconscious subject, welfare check, open-air drug scene, and allied public-safety events. Where local practice supports it, the same aerial workflow can also support post-overdose follow-up, hotspot intelligence, and rapid coordination with community-based providers so that overdose survivors and families are connected to treatment, recovery support, or deflection resources rather than being left with only a traditional enforcement response.</p>
-                    <p><strong>Evidence Base and Expected Impact:</strong> BJA describes COSSUP as a flexible national program that has funded more than 500 sites in the last four years and centers collaboration across public safety, behavioral health, and treatment systems [1]. BJA’s 2021–2022 COSSUP Key Performance Indicator report summarizes data from hundreds of grantees and subawardees operating across all 50 states, two territories, and the District of Columbia, reflecting a large federal investment in naloxone training, diversion, treatment access, and recovery support [5]. BJA’s Oakland County success spotlight shows how a COSSUP-funded sheriff’s crisis-response unit used Narcan to revive an overdose victim and paired law-enforcement follow-up with community health and prevention partners [4]. This applicant’s BRINC deployment builds on that same federal logic: faster scene verification, safer first-responder approach, tighter coordination with care partners, and better operational data to document outcomes and improve future overdose-response decisions.</p>
-                    <p><strong>Performance Measurement and Sustainability:</strong> The applicant will track at minimum: (1) time from dispatch to aerial scene assessment, (2) number of overdose-related or suspected overdose incidents receiving drone support, (3) number of incidents in which aerial intelligence changed resource deployment, (4) referrals or handoffs to EMS, treatment, behavioral-health, or peer-support partners, (5) responder-safety outcomes, and (6) recurring hotspot or trend information useful for prevention and enforcement planning. Because the current deployment model projects <strong>${annual_savings:,.0f} in annual operational savings</strong> with a break-even horizon of <strong>{break_even_text.lower()}</strong>, the applicant can argue that federal start-up support will stand up an enduring response capability rather than a one-time pilot. That sustainability argument is strengthened further by BRINC’s integrated analytics, domestic manufacturing, operational training, and immediate fit with the agency’s existing dispatch-centered deployment model.</p>
-                    <p><strong>References:</strong></p>
-                    <ol style="margin:0 0 0 18px;padding:0 0 0 10px;">
-                      <li><a href="{html.escape(_cossup_opportunity_url, quote=True)}" target="_blank" style="color:#2563eb;text-decoration:none;">Bureau of Justice Assistance, FY25 Comprehensive Opioid, Stimulant, and Substance Use, Site-Based Program, Opportunity ID O-BJA-2025-172485</a></li>
-                      <li><a href="{html.escape(_cossup_overview_url, quote=True)}" target="_blank" style="color:#2563eb;text-decoration:none;">Bureau of Justice Assistance, COSSUP Overview</a></li>
-                      <li><a href="{html.escape(_cossup_webinar_url, quote=True)}" target="_blank" style="color:#2563eb;text-decoration:none;">Bureau of Justice Assistance, FY25 COSSUP Site-Based Program Webinar Page</a></li>
-                      <li><a href="{html.escape(_cossup_success_url, quote=True)}" target="_blank" style="color:#2563eb;text-decoration:none;">Bureau of Justice Assistance, “BJA's COSSUP Brings Life-Saving Interventions” Success Spotlight</a></li>
-                      <li><a href="{html.escape(_cossup_kpi_url, quote=True)}" target="_blank" style="color:#2563eb;text-decoration:none;">Bureau of Justice Assistance, Comprehensive Opioid, Stimulant, and Substance Use Program Key Performance Indicator Report, Calendar Years 2021–2022</a></li>
-                      <li><a href="{html.escape(_cossup_funding_url, quote=True)}" target="_blank" style="color:#2563eb;text-decoration:none;">Bureau of Justice Assistance, COSSUP Funding Page</a></li>
-                    </ol>
-                  </div>
-                </div>
-                """
 
                 export_html = f"""<!DOCTYPE html>
         <html lang="en"><head>
@@ -8757,6 +8569,7 @@ body{{background:transparent;overflow:hidden}}
                   {"Serving <strong>" + f"{int(pop_metric):,}" + f"</strong> residents of {prop_city}, {prop_state}" if pop_metric else f"Aerial Response Deployment &mdash; {prop_city}, {prop_state}"}
                   {('<abbr title="Source: US Census Bureau American Community Survey (ACS) 5-Year Estimates · census.gov/programs-surveys/acs" style="font-size:11px;color:#666;margin-left:4px;text-decoration:none;cursor:help;">ⓘ</abbr>') if pop_metric else ''}
                 </div>
+                <p>A data-driven deployment plan for <strong>{actual_k_responder + actual_k_guardian} BRINC aerial units</strong> covering {calls_covered_perc:.1f}% of {st.session_state.get('total_original_calls', total_calls):,} annual incidents · {len(df_stations_all):,} public facilities protected across {area_sq_mi_est:,} sq mi.</p>
               </div>
               <div class="cover-meta">
                 <div class="cover-meta-cell"><div class="label">Fleet CapEx</div><div class="value accent">${fleet_capex:,.0f}</div></div>
@@ -8781,7 +8594,7 @@ body{{background:transparent;overflow:hidden}}
     
         <!-- ── 01: EXECUTIVE SUMMARY ──────────────────────────────────── -->
         <section class="doc-section" id="executive">
-          <div class="section-eyebrow"><span class="pg-num">01</span><span class="pg-title">Executive Summary</span><span class="src" data-src="Sources: Incident coverage &amp; response time computed from uploaded CAD data via BRINC geospatial optimizer. Hardware pricing: BRINC Responder ${CONFIG['RESPONDER_COST']:,} · Guardian ${CONFIG['GUARDIAN_COST']:,} per unit{'' if st.session_state.get('pricing_tier', 'Safe Guard') == 'Custom Quote' else ' (' + st.session_state.get('pricing_tier', 'Safe Guard') + ')'}. Officer dispatch cost benchmark: $76–$120/call (IACP/DOJ). Population: US Census Bureau ACS.">ⓘ</span></div>
+          <div class="section-eyebrow"><span class="pg-num">01</span><span class="pg-title">Executive Summary</span><span class="src" data-src="Sources: Incident coverage &amp; response time computed from uploaded CAD data via BRINC geospatial optimizer. Hardware pricing: BRINC Responder $80K · Guardian $160K (MSRP). Officer dispatch cost benchmark: $76–$120/call (IACP/DOJ). Population: US Census Bureau ACS.">ⓘ</span></div>
           <div class="metrics-hero">
             <div class="metric-cell"><div class="m-label">Fleet Capital Expenditure</div><div class="m-value cyan">${fleet_capex:,.0f}</div><div class="m-sub">{actual_k_responder} Responder · {actual_k_guardian} Guardian</div></div>
             <div class="metric-cell"><div class="m-label">Annual Savings Capacity</div><div class="m-value gold">${annual_savings:,.0f}</div><div class="m-sub">At {int(dfr_dispatch_rate*100)}% dispatch · {int(deflection_rate*100)}% resolution</div></div>
@@ -8925,6 +8738,7 @@ body{{background:transparent;overflow:hidden}}
           <div class="grant-body" id="grant-body-law">
             <p><strong>Project Title:</strong> BRINC Drones Drone as a First Responder (DFR) Program — {prepared_for_city}, {prop_state}</p>
     
+            <p><strong>Executive Summary:</strong> The {jurisdiction_list} respectfully requests funding to establish a Drone as a First Responder (DFR) program deploying {actual_k_responder + actual_k_guardian} purpose-built BRINC aerial units — {actual_k_responder} BRINC Responder and {actual_k_guardian} BRINC Guardian — across {dept_summary} serving {pop_metric:,} residents. Modeled against {st.session_state.get('total_original_calls', total_calls):,} historical incidents from {_exp_date_range}, the program is projected to cover <strong>{calls_covered_perc:.1f}%</strong> of calls for service, arrive an average of <strong>{avg_time_saved:.1f} minutes faster</strong> than ground patrol, and generate <strong>${annual_savings:,.0f} in annual operational savings</strong>, with an additional modeled specialty-response upside of <strong>${possible_additional_savings:,.0f}</strong> from thermal-supported searches and avoided K-9 deployments, reaching full cost recovery in <strong>{break_even_text.lower()}</strong>.</p>
     
             <p><strong>Statement of Need:</strong> {jurisdiction_list} currently responds to an estimated {st.session_state.get('total_original_calls', total_calls):,} calls for service annually — approximately {max(1,int(st.session_state.get('total_original_calls',total_calls)/365)):,} calls per day. Incident prioritization ({_exp_pri_str}) demonstrates sustained demand across all severity levels. Ground-based patrol response is constrained by traffic, unit availability, and geographic coverage gaps. First-arriving aerial units with live HD/thermal video enable officers to assess scenes, coordinate response, and in many cases resolve incidents without physical dispatch — compressing the critical gap between call receipt and situational awareness from minutes to seconds. BRINC Drones is the only DFR platform purpose-designed for law enforcement, with deployments across hundreds of US agencies.</p>
     
@@ -8951,11 +8765,9 @@ body{{background:transparent;overflow:hidden}}
             </table>
     
             <p><strong>Officer Safety &amp; Liability Reduction:</strong> Beyond direct operational savings, DFR programs measurably reduce officer exposure to unknown-risk call scenarios. First-arriving drones perform scene reconnaissance before ground units arrive, enabling officers to approach with full situational awareness. Documented outcomes across peer agencies include: reduced officer injuries in drone-supported zones (avg. 18% reduction, per DOJ data), faster suspect identification improving apprehension rates, and reduced use-of-force incidents through earlier de-escalation intelligence. These outcomes reduce agency liability costs and workers' compensation claims — benefits not captured in the direct cost model above.</p>
-
+    
             <p><strong>Community &amp; Economic Impact:</strong> Response time improvements of <strong>{avg_time_saved:.1f} minutes</strong> translate directly to better outcomes in time-sensitive incidents: cardiac events, structure fires, crimes in progress, and missing persons cases. Studies by the International Association of Chiefs of Police (IACP) document measurable improvements in case clearance rates, property crime deterrence (15–30% reduction in areas with visible DFR patrols), and community trust metrics in agencies with active drone programs. For {prop_city}'s business community, faster emergency response reduces property damage, shortens insurance claim cycles, and improves the commercial district safety perception that drives foot traffic and investment.</p>
     
-            {_cossup_opioid_narrative_html}
-
             <p style="background:#f8f9fa;padding:15px;border-radius:8px;border:1px solid #eee;font-size:13px">
               <strong>Applicable Grant Funding Sources:</strong><br>
               <a href="https://bja.ojp.gov/program/jag/overview">DOJ Byrne JAG</a> — Technology and equipment procurement<br>
@@ -9049,6 +8861,7 @@ body{{background:transparent;overflow:hidden}}
           <div class="grant-body" id="grant-body-fire">
             <p><strong>Project Title:</strong> BRINC Drones Drone as a First Responder (DFR) Program — Fire Department Aerial Operations Enhancement — {prepared_for_city}, {prop_state}</p>
     
+            <p><strong>Executive Summary:</strong> The {jurisdiction_list} respectfully requests funding to extend its Drone as a First Responder (DFR) program to support fire department operations in {prepared_for_city}, {prop_state}. Deploying {actual_k_responder + actual_k_guardian} BRINC aerial units across {dept_summary}, the program is projected to assist an estimated <strong>{fire_calls_annual:,.0f} fire-related calls annually</strong> — delivering <strong>${fire_savings:,.0f} per year</strong> in fire department operational value through aerial scene size-up, avoided aerial ladder deployments, and thermal-guided overhaul support. The program reaches full capital cost recovery in <strong>{break_even_text.lower()}</strong> when combined with law enforcement operational savings.</p>
     
             <p><strong>Statement of Need — Fire Operations:</strong> {jurisdiction_list} fire personnel respond to an estimated {fire_calls_annual:,.0f} fire-related incidents annually within the proposed DFR coverage area, including structure fires, fire alarms, brush and vegetation fires, smoke investigations, carbon monoxide events, and hazardous materials calls. Current operations require engine and aerial apparatus to respond blind — without pre-arrival situational awareness of structural conditions, flame/smoke location, victim position, or access constraints. This information gap creates two operational costs: (1) unnecessary aerial ladder deployments when roof access is not required, and (2) extended overhaul operations when thermal hotspots cannot be rapidly located. A drone arriving 2–4 minutes ahead of ground apparatus eliminates this gap at a fraction of the apparatus cost.</p>
     

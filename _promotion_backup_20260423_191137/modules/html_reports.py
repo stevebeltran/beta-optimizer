@@ -2054,17 +2054,7 @@ def _build_cad_charts(df_calls, text_main, text_muted, card_bg, card_border, acc
 
             )
 
-            _report_chart_key = (
-                f"report_top_call_types_{state_abbr}_{len(top_types)}_{int(sum(top_types['count']))}"
-                if hasattr(top_types, "__len__") and len(top_types) > 0
-                else f"report_top_call_types_{state_abbr}_empty"
-            )
-            st.plotly_chart(
-                fig_types,
-                width="stretch",
-                config={'displayModeBar': False},
-                key=_report_chart_key,
-            )
+            st.plotly_chart(fig_types, width="stretch", config={'displayModeBar': False})
 
 
 
@@ -2603,7 +2593,7 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
 
             f'<div style="display:flex;justify-content:space-between;align-items:center;padding-top:5px;border-top:1px solid {card_border};font-size:0.65rem;">'
 
-            f'<span style="color:{text_muted};">CapEx<span class="tip" data-tip="One-time hardware cost for this unit. Responder: ${CONFIG["RESPONDER_COST"]:,}. Guardian: ${CONFIG["GUARDIAN_COST"]:,}.">?</span></span>'
+            f'<span style="color:{text_muted};">CapEx<span class="tip" data-tip="One-time hardware cost for this unit. Responder: $80,000. Guardian: $160,000.">?</span></span>'
 
             f'<span style="font-weight:700;color:{card_title};">${d_cost:,.0f}</span>'
 
@@ -2717,7 +2707,7 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
 
             f'<div style="border-top:1px solid {card_border}; padding-top:6px; display:grid; grid-template-columns:1fr 1fr; gap:4px 8px; font-size:0.68rem; margin-bottom:8px;">'
 
-            f'  <div style="color:{text_muted};">CapEx<span class="tip" data-tip="One-time hardware cost for this unit. Responder: ${CONFIG["RESPONDER_COST"]:,}. Guardian: ${CONFIG["GUARDIAN_COST"]:,}.">?</span></div>'
+            f'  <div style="color:{text_muted};">CapEx<span class="tip" data-tip="One-time hardware cost for this unit. Responder: $80,000. Guardian: $160,000.">?</span></div>'
 
             f'  <div style="text-align:right; font-weight:700; color:{card_title};">${d_cost:,.0f}</div>'
 
@@ -4891,7 +4881,7 @@ def generate_community_impact_dashboard_html(
 
       <div class="roi-line">
 
-        <span class="roi-line-label">Total Fleet CapEx <span class="tip-cid" data-tip="One-time hardware acquisition cost — Responder (${CONFIG['RESPONDER_COST']:,} each) + Guardian (${CONFIG['GUARDIAN_COST']:,} each). Does not include subscription, maintenance, insurance, or training costs.">?</span></span>
+        <span class="roi-line-label">Total Fleet CapEx <span class="tip-cid" data-tip="One-time hardware acquisition cost — Responder ($80K each) + Guardian ($160K each). Does not include subscription, maintenance, insurance, or training costs.">?</span></span>
 
         <span class="roi-line-val">${fleet_capex:,.0f}</span>
 

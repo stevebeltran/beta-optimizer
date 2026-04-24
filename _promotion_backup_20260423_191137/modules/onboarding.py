@@ -165,8 +165,6 @@ def restore_brinc_session(session_state, save_data):
 
     session_state['brinc_user'] = save_data.get('brinc_user', '')
     session_state['pricing_tier'] = save_data.get('pricing_tier', 'Safe Guard')
-    session_state['custom_responder_cost'] = int(save_data.get('custom_responder_cost', 79999) or 79999)
-    session_state['custom_guardian_cost'] = int(save_data.get('custom_guardian_cost', 159999) or 159999)
     session_state['data_source'] = 'brinc_file'
     session_state['demo_mode_used'] = False
     session_state['sim_mode_used'] = False

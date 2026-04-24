@@ -19,8 +19,6 @@ import uuid
 import pandas as pd
 
 from modules.config import STATE_FIPS, US_STATES_ABBR
-from modules.efficient_merge import merge_census_results_fast
-from modules.data_validation import validate_census_results, validate_merged_data
 
 
 _STATE_ABBRS = set(STATE_FIPS.keys())
@@ -588,39 +586,41 @@ def parse_census_result_files(uploaded_files) -> pd.DataFrame:
 
 
 def merge_census_results(partial_calls_df: pd.DataFrame, result_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """
-    Merge CAD data with Census batch geocoding results.
+    merged = partial_calls_df.copy().reset_index(drop=True)
+    if 'lat' not in merged.columns:
+        merged['lat'] = pd.NA
+    if 'lon' not in merged.columns:
+        merged['lon'] = pd.NA
+    merged['lat'] = pd.to_numeric(merged['lat'], errors='coerce')
+    merged['lon'] = pd.to_numeric(merged['lon'], errors='coerce')
 
-    This function now uses the optimized efficient_merge module which:
-    - Uses Polars for 5-10x speedup on large datasets (>50K rows)
-    - Falls back to pandas for compatibility
-    - Includes data validation at merge completion
-    - Provides better memory efficiency
+    matched = result_df[['source_id', 'lat', 'lon', 'match_status', 'match_type', 'matched_address']].copy()
+    matched = matched.rename(columns={'source_id': '_source_row_id'})
+    matched['lat'] = pd.to_numeric(matched['lat'], errors='coerce')
+    matched['lon'] = pd.to_numeric(matched['lon'], errors='coerce')
 
-    Args:
-        partial_calls_df: CAD DataFrame with _source_row_id
-        result_df: Census batch results with source_id, lat, lon, match_status
+    merged = merged.merge(matched, on='_source_row_id', how='left', suffixes=('', '_census'))
+    lat_missing = merged['lat'].isna()
+    lon_missing = merged['lon'].isna()
+    merged.loc[lat_missing, 'lat'] = merged.loc[lat_missing, 'lat_census']
+    merged.loc[lon_missing, 'lon'] = merged.loc[lon_missing, 'lon_census']
+    merged['geocode_source'] = merged.get('geocode_source', pd.Series(index=merged.index, dtype='object'))
+    census_filled = merged['lat_census'].notna() & merged['lon_census'].notna()
+    merged.loc[census_filled, 'geocode_source'] = 'census_batch'
+    merged = merged.drop(columns=[c for c in ['lat_census', 'lon_census'] if c in merged.columns])
 
-    Returns:
-        Tuple of (merged_df, ready_df, summary_dict)
-    """
-    # Use optimized merge (Polars if available, pandas fallback)
-    merged, ready_df, summary = merge_census_results_fast(
-        partial_calls_df,
-        result_df,
-        use_polars=True
-    )
+    ready_df = merged.dropna(subset=['lat', 'lon']).copy()
+    ready_df = ready_df[
+        ready_df['lat'].between(-90, 90) &
+        ready_df['lon'].between(-180, 180)
+    ].reset_index(drop=True)
 
-    # Validate Census results
-    if not result_df.empty:
-        validate_census_results(result_df, raise_exceptions=False)
-
-    # Validate merged data
-    validate_merged_data(merged, raise_exceptions=False)
-
-    # Maintain backward compatibility with old summary format
-    summary['rows_with_census_match'] = summary.pop('rows_geocoded', 0)
-
+    summary = {
+        'rows_total': int(len(merged)),
+        'rows_ready': int(len(ready_df)),
+        'rows_with_census_match': int(census_filled.sum()),
+        'rows_still_missing': int((merged['lat'].isna() | merged['lon'].isna()).sum()),
+    }
     return merged, ready_df, summary
 
 

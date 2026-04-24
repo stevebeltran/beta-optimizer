@@ -426,7 +426,7 @@ def render_display_options(st):
             key='simple_cards_b',
             help='Show a compact card with just the key numbers: name, type, response time, annual savings, and CapEx.',
         )
-        traffic_level = st.slider('Traffic Congestion', 0, 100, 40, help='Simulates road congestion intensity. Higher values extend ground response times and related financial estimates.') if simulate_traffic else 40
+        traffic_level = st.slider('Traffic Congestion', 0, 100, 40) if simulate_traffic else 40
 
     return {
         'show_satellite': show_satellite,
@@ -456,14 +456,12 @@ def render_deployment_strategy(st, session_state, config, text_muted):
         )
         pricing_tier = st.radio(
             'Pricing Plan',
-            ('Safe Guard', 'Safe Guard Lite', 'Custom Quote'),
-            index={'Safe Guard': 0, 'Safe Guard Lite': 1, 'Custom Quote': 2}.get(session_state.get('pricing_tier', 'Safe Guard'), 0),
+            ('Safe Guard', 'Safe Guard Lite'),
+            index=0 if session_state.get('pricing_tier', 'Safe Guard') == 'Safe Guard' else 1,
             label_visibility='collapsed',
-            help='Safe Guard (Responder $79,999 | Guardian $159,999): Advanced custom features and add-ons. Safe Guard Lite (Responder $59,999 | Guardian $119,999): Core functionality. Custom Quote: manual per-unit pricing override for sales scenarios.',
+            help='Safe Guard (Responder $79,999 | Guardian $159,999): Advanced custom features and add-ons. Safe Guard Lite (Responder $59,999 | Guardian $119,999): Core functionality. See DFR Safeguard Option Comparison Sheet for feature breakdown.',
         )
         session_state['pricing_tier'] = pricing_tier
-        session_state.setdefault('custom_responder_cost', 79999)
-        session_state.setdefault('custom_guardian_cost', 159999)
 
         if pricing_tier == 'Safe Guard':
             config['RESPONDER_COST'] = 79999
@@ -475,28 +473,6 @@ def render_deployment_strategy(st, session_state, config, text_muted):
             config['GUARDIAN_COST'] = 119999
             tier_badge = '🛡️ Safe Guard Lite'
             tier_desc = 'Core Functionality'
-
-        if pricing_tier == 'Custom Quote':
-            custom_responder_cost = int(st.number_input(
-                'Custom Responder Price',
-                min_value=0,
-                step=1000,
-                value=int(session_state.get('custom_responder_cost', 79999) or 79999),
-                help='Per-unit Responder price used for fleet CapEx, ROI, and report outputs.',
-            ))
-            custom_guardian_cost = int(st.number_input(
-                'Custom Guardian Price',
-                min_value=0,
-                step=1000,
-                value=int(session_state.get('custom_guardian_cost', 159999) or 159999),
-                help='Per-unit Guardian price used for fleet CapEx, ROI, and report outputs.',
-            ))
-            session_state['custom_responder_cost'] = custom_responder_cost
-            session_state['custom_guardian_cost'] = custom_guardian_cost
-            config['RESPONDER_COST'] = custom_responder_cost
-            config['GUARDIAN_COST'] = custom_guardian_cost
-            tier_badge = 'Custom Quote'
-            tier_desc = 'Sales-Entered Pricing'
 
         st.markdown('---')
 
@@ -573,7 +549,7 @@ def render_deployment_strategy(st, session_state, config, text_muted):
             f"<div style='font-size:0.7rem; color:{text_muted}; margin:10px 0 4px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px;'>Coverage Ranges</div>",
             unsafe_allow_html=True,
         )
-        resp_radius_mi = st.slider('🚁 Responder Range (mi)', 2.0, 3.0, float(session_state.get('r_resp', 2.0)), step=0.5, help='Flight radius for Responder drones. Smaller radius concentrates coverage; larger radius extends reach at the cost of density.')
+        resp_radius_mi = st.slider('🚁 Responder Range (mi)', 2.0, 3.0, float(session_state.get('r_resp', 2.0)), step=0.5)
         guard_radius_mi = st.slider(
             '🦅 Guardian Range (mi) [⚡ 5mi Rapid]',
             1,
@@ -1285,14 +1261,14 @@ def prepare_runtime_context(
         st.markdown('---')
         inferred_daily = session_state.get('inferred_daily_calls_override') or full_daily_calls or 1
         inferred_daily = max(1, int(inferred_daily))
-        calls_per_day = st.slider('Total Daily Calls (citywide)', 1, max(100, inferred_daily * 3), inferred_daily, help='Total 911 calls per day citywide used to project annual dispatch volume, officer hours saved, and ROI.')
+        calls_per_day = st.slider('Total Daily Calls (citywide)', 1, max(100, inferred_daily * 3), inferred_daily)
         st.caption(f'Derived from the full uploaded CAD total ({full_total_calls:,} incidents), not the optimization sample.')
         st.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>DFR Dispatch Rate (%)</div>", unsafe_allow_html=True)
         st.markdown("<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>What % of in-range calls will the drone be sent to?</div>", unsafe_allow_html=True)
-        dfr_dispatch_rate = st.slider('DFR Dispatch Rate', 1, 100, session_state.get('dfr_rate', 20), label_visibility='collapsed', help='Percentage of in-range calls the drone is dispatched to. Higher rates increase coverage and savings projections.') / 100.0
+        dfr_dispatch_rate = st.slider('DFR Dispatch Rate', 1, 100, session_state.get('dfr_rate', 20), label_visibility='collapsed') / 100.0
         st.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>Calls Resolved Without Officer Dispatch (%)</div>", unsafe_allow_html=True)
         st.markdown("<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>Of drone-attended calls, what % close without a patrol car?</div>", unsafe_allow_html=True)
-        deflection_rate = st.slider('Resolution Rate', 0, 100, session_state.get('deflect_rate', 25), label_visibility='collapsed', help='Of drone-attended calls, the percentage that close without requiring a patrol car dispatch. Higher values increase officer hours saved.') / 100.0
+        deflection_rate = st.slider('Resolution Rate', 0, 100, session_state.get('deflect_rate', 25), label_visibility='collapsed') / 100.0
         session_state['dfr_rate'] = int(dfr_dispatch_rate * 100)
         session_state['deflect_rate'] = int(deflection_rate * 100)
 
@@ -1346,49 +1322,9 @@ def optimize_fleet_selection(
     chrono_r, chrono_g = [], []
     best_combo = None
 
-    if n <= 0:
-        st.error(
-            '⚠️ No station candidates are available. Upload a stations file with known placement sites, '
-            'or switch to a mode that can generate station candidates.'
-        )
-        return {
-            'active_resp_names': active_resp_names,
-            'active_guard_names': active_guard_names,
-            'active_resp_idx': active_resp_idx,
-            'active_guard_idx': active_guard_idx,
-            'chrono_r': chrono_r,
-            'chrono_g': chrono_g,
-            'best_combo': best_combo,
-            'guard_claims_by_idx': {},
-        }
-
-    total_requested = int(k_responder or 0) + int(k_guardian or 0)
-    if total_requested > n:
-        if total_requested <= 0:
-            k_responder = 0
-            k_guardian = 0
-        else:
-            cap = n
-            resp_share = int(round(cap * (int(k_responder or 0) / total_requested))) if total_requested else 0
-            resp_share = max(0, min(resp_share, cap))
-            guard_share = cap - resp_share
-
-            if int(k_responder or 0) > 0 and resp_share == 0:
-                resp_share = 1
-                guard_share = max(0, cap - 1)
-            if int(k_guardian or 0) > 0 and guard_share == 0 and cap > 1:
-                guard_share = 1
-                resp_share = max(0, cap - 1)
-
-            k_responder = min(int(k_responder or 0), resp_share)
-            k_guardian = min(int(k_guardian or 0), guard_share)
-
-            st.warning(
-                f"Station file limits the fleet to {n} placement sites. "
-                f"Adjusted request to {k_responder} Responder and {k_guardian} Guardian drones."
-            )
-
-    if k_responder == 0 and k_guardian == 0:
+    if k_responder + k_guardian > n:
+        st.error('⚠️ Over-Deployment: Total drones exceed available stations.')
+    elif k_responder == 0 and k_guardian == 0:
         pass
     else:
         if session_state.get('_opt_cache_key') != opt_cache_key:
