@@ -3067,71 +3067,161 @@ def generate_kml(active_gdf, active_drones, calls_gdf):
 
     )
 
+    def _as_wgs84(gdf):
+
+        if gdf is None or not hasattr(gdf, "empty") or gdf.empty:
+
+            return None
+
+        try:
+
+            if getattr(gdf, "crs", None) is None:
+
+                return gdf.set_crs(epsg=4326, allow_override=True)
+
+            return gdf.to_crs(epsg=4326)
+
+        except Exception:
+
+            return gdf
+
+    def _iter_polygons(geom):
+
+        if geom is None or getattr(geom, "is_empty", True):
+
+            return []
+
+        geom_type = getattr(geom, "geom_type", "")
+
+        if geom_type == "Polygon":
+
+            return [geom]
+
+        if geom_type == "MultiPolygon":
+
+            return [g for g in geom.geoms if not getattr(g, "is_empty", True)]
+
+        if hasattr(geom, "geoms"):
+
+            polys = []
+
+            for sub_geom in geom.geoms:
+
+                polys.extend(_iter_polygons(sub_geom))
+
+            return polys
+
+        return []
+
     fol_bounds = kml.newfolder(name="Jurisdictions")
 
-    for _, row in active_gdf.iterrows():
+    active_export = _as_wgs84(active_gdf)
 
-        geoms = [row.geometry] if isinstance(row.geometry, Polygon) else row.geometry.geoms
+    if active_export is not None:
 
-        for geom in geoms:
+        for _, row in active_export.iterrows():
 
-            pol = fol_bounds.newpolygon(name=row.get('DISPLAY_NAME', 'Boundary'))
+            for geom in _iter_polygons(getattr(row, "geometry", None)):
 
-            pol.outerboundaryis = list(geom.exterior.coords)
+                coords = list(geom.exterior.coords)
 
-            pol.style.linestyle.color = simplekml.Color.red
+                if len(coords) < 4:
 
-            pol.style.linestyle.width = 3
+                    continue
 
-            pol.style.polystyle.color = simplekml.Color.changealphaint(30, simplekml.Color.red)
+                pol = fol_bounds.newpolygon(name=row.get('DISPLAY_NAME', 'Boundary'))
+
+                pol.outerboundaryis = coords
+
+                pol.style.linestyle.color = simplekml.Color.red
+
+                pol.style.linestyle.width = 3
+
+                pol.style.polystyle.color = simplekml.Color.changealphaint(30, simplekml.Color.red)
 
     fol_stations = kml.newfolder(name="Station Points")
 
     fol_rings = kml.newfolder(name="Coverage Rings")
 
-    for d in active_drones:
+    for d in active_drones or []:
 
-        kml_c = to_kml_color(d['color'])
+        try:
 
-        pnt = fol_stations.newpoint(name=f"[{d['type'][:3]}] {d['name']}")
+            lat = float(d.get('lat'))
 
-        pnt.coords = [(d['lon'], d['lat'])]
+            lon = float(d.get('lon'))
+
+        except Exception:
+
+            continue
+
+        if not (math.isfinite(lat) and math.isfinite(lon)):
+
+            continue
+
+        drone_type = str(d.get('type', 'DRONE') or 'DRONE')
+
+        drone_name = str(d.get('name', 'Station') or 'Station')
+
+        kml_c = to_kml_color(str(d.get('color', '#00D2FF') or '#00D2FF'))
+
+        pnt = fol_stations.newpoint(name=f"[{drone_type[:3]}] {drone_name}")
+
+        pnt.coords = [(lon, lat)]
 
         pnt.style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/paddle/blu-blank.png'
 
-        lats, lons = get_circle_coords(d['lat'], d['lon'], r_mi=d['radius_m']/1609.34)
+        try:
 
-        ring_coords = list(zip(lons, lats))
+            radius_m = float(d.get('radius_m', 0) or 0)
 
-        ring_coords.append(ring_coords[0])
+            lats, lons = get_circle_coords(lat, lon, r_mi=max(radius_m, 0.0) / 1609.34)
 
-        pol = fol_rings.newpolygon(name=f"Range: {d['name']}")
+            ring_coords = list(zip(lons, lats))
 
-        pol.outerboundaryis = ring_coords
+        except Exception:
 
-        pol.style.linestyle.color = kml_c
+            ring_coords = []
 
-        pol.style.linestyle.width = 2
+        if len(ring_coords) >= 3:
 
-        pol.style.polystyle.color = simplekml.Color.changealphaint(60, kml_c)
+            ring_coords.append(ring_coords[0])
+
+            pol = fol_rings.newpolygon(name=f"Range: {drone_name}")
+
+            pol.outerboundaryis = ring_coords
+
+            pol.style.linestyle.color = kml_c
+
+            pol.style.linestyle.width = 2
+
+            pol.style.polystyle.color = simplekml.Color.changealphaint(60, kml_c)
 
     fol_calls = kml.newfolder(name="Incident Data (Sample)")
 
-    calls_export = calls_gdf.to_crs(epsg=4326)
+    calls_export = _as_wgs84(calls_gdf)
 
-    if len(calls_export) > 2000:
+    if calls_export is not None:
 
-        calls_export = calls_export.sample(2000, random_state=42)
+        if len(calls_export) > 2000:
 
-    for _, row in calls_export.iterrows():
+            calls_export = calls_export.sample(2000, random_state=42)
 
-        pnt = fol_calls.newpoint()
+        for _, row in calls_export.iterrows():
 
-        pnt.coords = [(row.geometry.x, row.geometry.y)]
+            geom = getattr(row, "geometry", None)
 
-        pnt.style.iconstyle.scale = 0.5
+            if geom is None or getattr(geom, "is_empty", True) or getattr(geom, "geom_type", "") != "Point":
 
-        pnt.style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
+                continue
+
+            pnt = fol_calls.newpoint()
+
+            pnt.coords = [(geom.x, geom.y)]
+
+            pnt.style.iconstyle.scale = 0.5
+
+            pnt.style.iconstyle.icon.href = 'http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png'
 
     return kml.kml()
 

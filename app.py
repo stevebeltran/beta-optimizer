@@ -7748,9 +7748,43 @@ body{{background:transparent;overflow:hidden}}
         prop_name = user_clean
 
         # Always define these so download buttons work regardless of fleet_capex
+        def _safe_export_slug(value, fallback="Export"):
+            slug = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip())
+            slug = re.sub(r"_+", "_", slug).strip("._-")
+            return slug or fallback
+
+        def _json_safe_export_value(value):
+            if value is None or isinstance(value, (str, bool, int)):
+                return value
+            if isinstance(value, float):
+                return value if math.isfinite(value) else None
+            if isinstance(value, (np.integer,)):
+                return int(value)
+            if isinstance(value, (np.floating,)):
+                value = float(value)
+                return value if math.isfinite(value) else None
+            if isinstance(value, (np.bool_,)):
+                return bool(value)
+            if isinstance(value, (datetime.datetime, datetime.date, pd.Timestamp)):
+                return value.isoformat()
+            if isinstance(value, dict):
+                return {str(k): _json_safe_export_value(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple, set)):
+                return [_json_safe_export_value(v) for v in value]
+            try:
+                item = value.item()
+            except Exception:
+                item = None
+            if item is not None and item is not value:
+                return _json_safe_export_value(item)
+            return str(value)
+
+        def _json_export_download(payload):
+            return json.dumps(_json_safe_export_value(payload), ensure_ascii=False, allow_nan=False)
+
         prop_city  = _get_document_jurisdiction_name(st.session_state, selected_names, fallback='City')
         prop_state = st.session_state.get('active_state', 'FL')
-        _safe_city_base = prop_city.replace(" ", "_").replace("/", "_")
+        _safe_city_base = _safe_export_slug(prop_city, "City")
         export_details = {}
         export_html = None
         export_dict = {
@@ -7957,8 +7991,8 @@ body{{background:transparent;overflow:hidden}}
             export_dict = {
                 "city": prop_city, "state": prop_state,
                 "_disclaimer": (
-                    "SIMULATION TOOL: All figures in this file are model estimates based on user-provided inputs. ",
-                    "Real-world results will vary. This is not a legal recommendation, binding proposal, contract, ",
+                    "SIMULATION TOOL: All figures in this file are model estimates based on user-provided inputs. "
+                    "Real-world results will vary. This is not a legal recommendation, binding proposal, contract, "
                     "or guarantee of any product, service, or financial outcome."
                 ),
                 # Fleet counts and ranges
@@ -9818,17 +9852,18 @@ body{{background:transparent;overflow:hidden}}
         # ── Download buttons — always rendered so they're visible in the sidebar ──
         _safe_city   = _safe_city_base
         _ts          = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        _version_slug = __version__.replace(":", "-").replace("/", "-").replace(" ", "_")
+        _version_slug = _safe_export_slug(__version__, "version")
 
         # 1. Save Deployment Plan (.brinc) — always available
-        _brinc_data = json.dumps(export_dict) if fleet_capex > 0 else json.dumps({
+        _brinc_payload = export_dict if fleet_capex > 0 else {
             **export_dict,
             "k_resp": 0, "k_guard": 0,
             "_disclaimer": "No drones deployed yet.",
-        })
+        }
+        _brinc_data = _json_export_download(_brinc_payload)
         if st.sidebar.download_button("💾 Save Deployment Plan", data=_brinc_data,
                                       file_name=f"BRINC_Deployment_Plan_{_safe_city}_{_version_slug}_{_ts}.brinc",
-                                      mime="application/json", width="stretch"):
+                                      mime="application/octet-stream", width="stretch"):
             # ── Track export event ───────────────────────────────────────────────
             st.session_state['export_event_log'] = st.session_state.get('export_event_log', []) + ['BRINC']
             st.session_state['export_count'] = st.session_state.get('export_count', 0) + 1
@@ -9839,8 +9874,9 @@ body{{background:transparent;overflow:hidden}}
                            "BRINC", k_responder, k_guardian, calls_covered_perc,
                            prop_name, prop_email, details=export_details)
         # 2. Executive Summary / proposal HTML export
+        _export_html_ready = isinstance(export_html, str) and export_html.lstrip().lower().startswith("<!doctype html")
         if fleet_capex > 0:
-            if st.sidebar.download_button(f"📄 {prop_city}, {prop_state} — Executive Summary",
+            if _export_html_ready and st.sidebar.download_button(f"📄 {prop_city}, {prop_state} — Executive Summary",
                                           data=export_html,
                                           file_name=f"BRINC_Executive_Summary_{_safe_city}_{_version_slug}_{_ts}.html",
                                           mime="text/html",
@@ -9854,11 +9890,31 @@ body{{background:transparent;overflow:hidden}}
                 _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
                                "HTML", k_responder, k_guardian, calls_covered_perc,
                                prop_name, prop_email, details=export_details)
+            elif not _export_html_ready:
+                st.sidebar.button(f"📄 {prop_city}, {prop_state} — Executive Summary",
+                                  disabled=True,
+                                  width="stretch",
+                                  help="Executive summary data is not ready for this run.")
+        else:
+            st.sidebar.button(f"📄 {prop_city}, {prop_state} — Executive Summary",
+                              disabled=True,
+                              width="stretch",
+                              help="Deploy at least one drone to generate the executive summary.")
 
         # 3. Google Earth KML — only when drones are placed
+        _kml_data = None
+        _kml_error = ""
         if active_drones:
+            try:
+                _kml_data = html_reports.generate_kml(active_gdf, active_drones, calls_in_city)
+                if not isinstance(_kml_data, str) or not _kml_data.strip():
+                    raise ValueError("KML generator returned an empty file.")
+            except Exception as _kml_exc:
+                _kml_error = str(_kml_exc)[:140]
+
+        if active_drones and _kml_data:
             if st.sidebar.download_button("🌏 Google Earth Briefing File",
-                                          data=html_reports.generate_kml(active_gdf, active_drones, calls_in_city),
+                                          data=_kml_data,
                                           file_name=f"BRINC_Google_Earth_Briefing_{_safe_city}_{_version_slug}_{_ts}.kml",
                                           mime="application/vnd.google-earth.kml+xml",
                                           width="stretch"):
@@ -9871,6 +9927,12 @@ body{{background:transparent;overflow:hidden}}
                 _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
                                "KML", k_responder, k_guardian, calls_covered_perc,
                                prop_name, prop_email, details=export_details)
+        elif active_drones:
+            st.sidebar.button("🌏 Google Earth Briefing File", disabled=True,
+                              width="stretch",
+                              help="Google Earth export is unavailable for the current geometry.")
+            if _kml_error:
+                st.sidebar.caption(f"Google Earth export issue: {_kml_error}")
         else:
             st.sidebar.button("🌏 Google Earth Briefing File", disabled=True,
                               width="stretch",

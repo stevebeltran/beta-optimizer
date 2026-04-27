@@ -240,6 +240,24 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
         if not text_cols:
             return None
 
+        street_suffixes = {
+            'ALY', 'ALLEY', 'AVE', 'AVENUE', 'BLVD', 'BOULEVARD', 'BRG', 'BRIDGE',
+            'CIR', 'CIRCLE', 'CT', 'COURT', 'DR', 'DRIVE', 'EXPY', 'FWY', 'HWY',
+            'LANE', 'LN', 'LOOP', 'PKWY', 'PARKWAY', 'PL', 'PLACE', 'RD', 'ROAD',
+            'RTE', 'SQ', 'ST', 'STREET', 'TER', 'TERRACE', 'TRL', 'WAY', 'WY'
+        }
+
+        def _looks_like_street_or_intersection(text):
+            text = str(text or '').strip().upper()
+            if not text:
+                return True
+            if '/' in text or '&' in text or re.search(r'\b(?:AND|AT)\b', text):
+                return True
+            if any(ch.isdigit() for ch in text):
+                return True
+            tokens = [t for t in re.split(r'[^A-Z0-9]+', text) if t]
+            return bool(tokens and tokens[-1] in street_suffixes)
+
         s = raw_df[text_cols[0]].dropna().astype(str).str.upper().str.strip()
         if s.empty:
             return None
@@ -251,24 +269,23 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
 
         candidates = []
         for val in s:
-            padded = f' {val} '
-            if ' MOBILE ' in padded:
-                candidates.append('Mobile')
-                continue
-
             parts = [p.strip() for p in val.split(',') if p and p.strip()]
             if len(parts) >= 2:
-                locality = parts[-2] if re.match(r'^[A-Z]{2}$', parts[-1]) else parts[-1]
+                locality = None
+                if len(parts) >= 3 and re.match(r'^[A-Z]{2}$', parts[-2]) and re.match(r'^\d{5}(?:-\d{4})?$', parts[-1]):
+                    locality = parts[-3]
+                elif re.match(r'^[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?$', parts[-1]):
+                    locality = parts[-2]
+                if locality is None:
+                    continue
                 locality = locality.strip()
-                if locality and locality not in {'COUNTY', 'CITY', 'TOWN', 'VILLAGE', 'HAMLET'}:
+                if (
+                    locality and
+                    locality not in {'COUNTY', 'CITY', 'TOWN', 'VILLAGE', 'HAMLET'} and
+                    not _looks_like_street_or_intersection(locality)
+                ):
                     candidates.append(locality.title())
                     continue
-
-            m = re.search(r'\b([A-Z]{3,}(?:\s+[A-Z]{3,}){0,2})$', val)
-            if m:
-                city = m.group(1).title()
-                if city not in {'County', 'City', 'Town', 'Village', 'Hamlet'}:
-                    candidates.append(city)
 
         if not candidates:
             return None
