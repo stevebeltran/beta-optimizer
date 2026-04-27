@@ -6789,10 +6789,13 @@ body{{background:transparent;overflow:hidden}}
             st.markdown(f"<div style='font-size:0.82rem; color:{text_muted}; margin-bottom:10px;'>Temporal patterns derived from your uploaded CAD data — hourly volumes, day-of-week distribution, optimal DFR shift windows, and a higher-contrast 5-band call-volume calendar.</div>", unsafe_allow_html=True)
 
             _analytics_df = df_calls_full if (df_calls_full is not None and not df_calls_full.empty) else df_calls
-            analytics_html_block = html_reports.generate_command_center_html(
-                _analytics_df,
-                total_orig_calls=st.session_state.get('total_original_calls', full_total_calls or total_calls)
-            )
+            try:
+                analytics_html_block = html_reports.generate_command_center_html(
+                    _analytics_df,
+                    total_orig_calls=st.session_state.get('total_original_calls', full_total_calls or total_calls)
+                )
+            except Exception:
+                analytics_html_block = "<div style='color:gray; padding:20px;'>Analytics unavailable for this dataset.</div>"
             _analytics_unavailable = (
                 "Analytics unavailable." in analytics_html_block
                 or "No valid dates found in data." in analytics_html_block
@@ -8255,7 +8258,10 @@ body{{background:transparent;overflow:hidden}}
                 dept_summary = ", ".join(dept_summary_parts) if dept_summary_parts else f"{len(active_drones)} municipal stations"
                 police_names_str = (", ".join([n.replace('[Police] ','') for n in police_dept_names[:6]]) + ("..." if len(police_dept_names)>6 else "")) if police_dept_names else "municipal facilities"
                 total_fleet = actual_k_responder + actual_k_guardian
-                analytics_html_export = html_reports.generate_command_center_html(df_calls_full if df_calls_full is not None else df_calls, total_orig_calls=st.session_state.get('total_original_calls', full_total_calls or total_calls), export_mode=True)
+                try:
+                    analytics_html_export = html_reports.generate_command_center_html(df_calls_full if df_calls_full is not None else df_calls, total_orig_calls=st.session_state.get('total_original_calls', full_total_calls or total_calls), export_mode=True)
+                except Exception:
+                    analytics_html_export = "<div style='color:gray; padding:20px;'>Analytics unavailable for this dataset.</div>"
                 cad_charts_html_export = html_reports._build_cad_charts_html(df_calls_full if df_calls_full is not None else df_calls)
                 staffing_pressure_html_export = ""
     
