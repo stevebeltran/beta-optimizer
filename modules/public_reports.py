@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
 import tempfile
 import urllib.parse
@@ -14,6 +15,7 @@ import streamlit as st
 
 
 APP_DIR = Path(__file__).resolve().parent.parent
+_PUBLIC_REPORT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 def _resolve_public_reports_dir():
@@ -39,6 +41,13 @@ def _get_query_params_dict():
 
 def _slugify(value):
     return re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-") or "report"
+
+
+def _validate_public_report_id(report_id):
+    value = str(report_id or "").strip()
+    if not _PUBLIC_REPORT_ID_RE.fullmatch(value):
+        raise ValueError("Invalid public report ID.")
+    return value
 
 
 def _get_document_jurisdiction_name(session_state, selected_names=None, fallback="City"):
@@ -76,13 +85,21 @@ def _get_public_report_secret():
                 return str(_cookie_secret)
     except Exception:
         pass
-    return "brinc-public-report-dev-secret"
+    env_secret = os.environ.get("PUBLIC_REPORT_SECRET", "")
+    if env_secret:
+        return str(env_secret)
+
+    # Local/dev fallback: stable for this installation, but not a universal
+    # hardcoded signing secret shared by every checkout of the app.
+    fallback_material = f"{APP_DIR.resolve()}:{os.environ.get('USERNAME') or os.environ.get('USER') or 'local'}"
+    return hashlib.sha256(fallback_material.encode("utf-8")).hexdigest()
 
 
 def _sign_public_report_id(report_id):
+    safe_report_id = _validate_public_report_id(report_id)
     return hmac.new(
         _get_public_report_secret().encode("utf-8"),
-        str(report_id).encode("utf-8"),
+        safe_report_id.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
 
@@ -101,14 +118,28 @@ def _build_public_report_url(report_id):
 
 
 def _public_report_html_path(report_id):
-    return PUBLIC_REPORTS_DIR / f"{report_id}.html"
+    safe_report_id = _validate_public_report_id(report_id)
+    root = PUBLIC_REPORTS_DIR.resolve()
+    path = (root / f"{safe_report_id}.html").resolve()
+    if not path.is_relative_to(root):
+        raise ValueError("Invalid public report path.")
+    return path
+
+
+def _public_report_metadata_path(report_id):
+    safe_report_id = _validate_public_report_id(report_id)
+    root = PUBLIC_REPORTS_DIR.resolve()
+    path = (root / f"{safe_report_id}.json").resolve()
+    if not path.is_relative_to(root):
+        raise ValueError("Invalid public report metadata path.")
+    return path
 
 
 def _publish_public_report_html(report_id, html_text, metadata=None):
     _html_path = _public_report_html_path(report_id)
     _html_path.write_text(str(html_text or ""), encoding="utf-8")
     if metadata is not None:
-        (PUBLIC_REPORTS_DIR / f"{report_id}.json").write_text(
+        _public_report_metadata_path(report_id).write_text(
             json.dumps(metadata, ensure_ascii=True, indent=2),
             encoding="utf-8",
         )

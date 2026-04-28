@@ -31,6 +31,40 @@ def mean_covered_distance_miles(dist_matrix, cover_matrix, station_idx, fallback
     except Exception:
         return float(fallback_miles or 0.0)
 
+
+def bounded_station_avg_distance_miles(
+    dist_matrix,
+    cover_matrix,
+    station_idx,
+    fallback_miles=0.0,
+    max_radius_miles=None,
+):
+    """Return a stable average covered distance for one station.
+
+    In normal operation, the mean covered distance cannot exceed the station's
+    coverage radius. If the live matrix/index path drifts and produces an
+    impossible value, fall back to the precomputed station average instead of
+    collapsing station capacity to zero.
+    """
+    fallback = float(fallback_miles or 0.0)
+    radius = float(max_radius_miles or 0.0)
+    avg_miles = mean_covered_distance_miles(
+        dist_matrix,
+        cover_matrix,
+        station_idx,
+        fallback_miles=fallback,
+    )
+    if not np.isfinite(avg_miles) or avg_miles < 0:
+        avg_miles = fallback
+    if radius > 0:
+        if not np.isfinite(fallback) or fallback < 0:
+            fallback = min(max(avg_miles, 0.0), radius)
+        if avg_miles > (radius + 1e-6):
+            avg_miles = min(max(fallback, 0.0), radius)
+        else:
+            avg_miles = min(avg_miles, radius)
+    return float(max(avg_miles, 0.0))
+
 @st.cache_resource
 def precompute_spatial_data(df_calls, df_calls_full, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash):
     gdf_calls = gpd.GeoDataFrame(df_calls, geometry=gpd.points_from_xy(df_calls.lon, df_calls.lat), crs="EPSG:4326")

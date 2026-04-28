@@ -1340,6 +1340,7 @@ def optimize_fleet_selection(
     config,
     k_responder,
     k_guardian,
+    guard_radius_mi,
     allow_redundancy,
     complement_mode,
     shared_mode,
@@ -1438,16 +1439,34 @@ def optimize_fleet_selection(
                 min_scene_min = 10.0
                 guard_speed = max(float(config["GUARDIAN_SPEED"]), 1.0)
 
+                _stable_avg_distance = getattr(
+                    optimization_module,
+                    "bounded_station_avg_distance_miles",
+                    optimization_module.mean_covered_distance_miles,
+                )
                 for local_pos, guard_idx in enumerate(selected_guard_idx):
                     assigned_calls = covered_calls[nearest_guard_pos == local_pos]
                     if len(assigned_calls) == 0:
                         continue
-                    avg_dist = optimization_module.mean_covered_distance_miles(
-                        dist_matrix_g,
-                        guard_matrix,
-                        guard_idx,
-                        fallback_miles=float(station_metadata[guard_idx].get('avg_dist_g', 0) or 0),
-                    )
+                    _fallback_avg = float(station_metadata[guard_idx].get('avg_dist_g', 0) or 0)
+                    try:
+                        avg_dist = _stable_avg_distance(
+                            dist_matrix_g,
+                            guard_matrix,
+                            guard_idx,
+                            fallback_miles=_fallback_avg,
+                            max_radius_miles=guard_radius_mi,
+                        )
+                    except TypeError:
+                        avg_dist = min(
+                            _stable_avg_distance(
+                                dist_matrix_g,
+                                guard_matrix,
+                                guard_idx,
+                                fallback_miles=_fallback_avg,
+                            ),
+                            guard_radius_mi,
+                        )
                     avg_time_min = (avg_dist / guard_speed) * 60.0
                     response_cost = avg_time_min + min_scene_min
                     if response_cost <= 0:

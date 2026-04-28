@@ -720,9 +720,6 @@ def _rf_range_rings_3390(infra_height_m: float = 9.14,
 # â”€â”€ ADVANCED GEOGRAPHY-AWARE RF COVERAGE ENGINE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Coverage Probability model with terrain, clutter, building losses, uplink/downlink
 
-import scipy.interpolate as _sp_interp
-from scipy.spatial.distance import cdist as _cdist
-
 @st.cache_resource
 def _get_terrain_cache():
     """Global cache dict for DEM tiles to avoid re-downloading."""

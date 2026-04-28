@@ -806,7 +806,7 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
             # carry it through as a lowercase 'agency' column so the map
             # renderer can colour fire calls red and police calls the default colour.
             _agency_col = next(
-                (c for c in raw_df.columns if c.strip().lower() in ('agency', 'department', 'dept', 'agencyname', 'agency_name')),
+                (c for c in raw_df.columns if c.strip().lower() in ('agency', 'department', 'dept')),
                 None
             )
             if _agency_col:
@@ -910,7 +910,7 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
             _pq['error'] = str(_pq_e)[:300]
             _file_parse_quality.append(_pq)
             continue
-    
+
     try:
         st.session_state['parse_quality'] = _file_parse_quality
     except Exception:

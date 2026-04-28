@@ -611,9 +611,22 @@ def merge_census_results(partial_calls_df: pd.DataFrame, result_df: pd.DataFrame
         use_polars=True
     )
 
-    # Validate Census results
+    # Validate Census results. Parsed batch files keep source_id as text for
+    # stable joins, so coerce only the validation copy to match the schema.
     if not result_df.empty:
-        validate_census_results(result_df, raise_exceptions=False)
+        validation_result_df = result_df.copy()
+        if 'source_id' in validation_result_df.columns:
+            validation_result_df['source_id'] = pd.to_numeric(
+                validation_result_df['source_id'],
+                errors='coerce',
+            ).astype('Int64')
+        for coord_col in ('lat', 'lon'):
+            if coord_col in validation_result_df.columns:
+                validation_result_df[coord_col] = pd.to_numeric(
+                    validation_result_df[coord_col],
+                    errors='coerce',
+                )
+        validate_census_results(validation_result_df, raise_exceptions=False)
 
     # Validate merged data
     validate_merged_data(merged, raise_exceptions=False)
@@ -705,9 +718,23 @@ def submit_census_batch_chunk(
 
 def build_corrected_export(original_df: pd.DataFrame, result_df: pd.DataFrame) -> pd.DataFrame:
     export_df = original_df.copy().reset_index(drop=True)
-    matched = result_df[['source_id', 'lat', 'lon', 'match_status', 'match_type', 'matched_address']].copy()
-    matched = matched.rename(columns={'source_id': '_source_row_id'})
-    export_df = export_df.merge(matched, on='_source_row_id', how='left')
+    result = pd.DataFrame() if result_df is None else result_df.copy()
+    required = ['source_id', 'lat', 'lon', 'match_status', 'match_type', 'matched_address']
+    for column in required:
+        if column not in result.columns:
+            result[column] = pd.NA
+    if '_source_row_id' not in export_df.columns:
+        export_df['_source_row_id'] = range(len(export_df))
+    export_df['_census_merge_key'] = export_df['_source_row_id'].astype('string').str.strip().str.replace(r'\.0$', '', regex=True)
+    matched = result[required].copy()
+    matched['_census_merge_key'] = matched['source_id'].astype('string').str.strip().str.replace(r'\.0$', '', regex=True)
+    matched = matched.drop(columns=['source_id'])
+    matched = matched[
+        matched['_census_merge_key'].notna()
+        & (matched['_census_merge_key'].astype(str).str.strip() != '')
+    ].drop_duplicates(subset=['_census_merge_key'], keep='first')
+    export_df = export_df.merge(matched, on='_census_merge_key', how='left')
+    export_df = export_df.drop(columns=['_census_merge_key'], errors='ignore')
     if 'lat' in export_df.columns:
         export_df['lat'] = pd.to_numeric(export_df['lat'], errors='coerce')
     if 'lon' in export_df.columns:

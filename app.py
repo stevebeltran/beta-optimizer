@@ -35,6 +35,44 @@ from google.oauth2.service_account import Credentials
 import pyproj
 from PIL import Image
 
+APP_DIR = Path(__file__).resolve().parent
+MODULES_DIR = APP_DIR / "modules"
+
+
+def _load_local_module(module_name: str):
+    """Load a local modules.* file defensively for Streamlit/Python import edge cases."""
+    import importlib
+    import importlib.util as _importlib_util
+
+    package_name = "modules"
+    full_name = f"{package_name}.{module_name}"
+
+    try:
+        return importlib.import_module(full_name)
+    except KeyError:
+        package_path = MODULES_DIR / "__init__.py"
+        package_mod = sys.modules.get(package_name)
+        if package_mod is None or not getattr(package_mod, "__path__", None):
+            package_spec = _importlib_util.spec_from_file_location(
+                package_name,
+                package_path,
+                submodule_search_locations=[str(MODULES_DIR)],
+            )
+            if package_spec is None or package_spec.loader is None:
+                raise
+            package_mod = _importlib_util.module_from_spec(package_spec)
+            sys.modules[package_name] = package_mod
+            package_spec.loader.exec_module(package_mod)
+
+        module_path = MODULES_DIR / f"{module_name}.py"
+        module_spec = _importlib_util.spec_from_file_location(full_name, module_path)
+        if module_spec is None or module_spec.loader is None:
+            raise
+        module = _importlib_util.module_from_spec(module_spec)
+        sys.modules[full_name] = module
+        module_spec.loader.exec_module(module)
+        return module
+
 # ── Module imports ────────────────────────────────────────────────────────────
 from modules.config import (
     CONFIG, GUARDIAN_FLIGHT_HOURS_PER_DAY, SIMULATOR_DISCLAIMER_SHORT,
@@ -82,26 +120,24 @@ except ImportError:
                 remaining_flight = flight_minutes
         return float(flights)
 
-import modules.versioning as _versioning_mod
+_versioning_mod = _load_local_module("versioning")
 # No importlib.reload needed here — Streamlit restarts the process on every
 # app.py save, so versioning._compute_build_info() already runs fresh each time.
 # Reloading on every rerun forced a full re-read of the 8 000-line app.py file
 # on every user interaction, for no benefit.
-from modules.versioning import (
-    __version__,
-    __build_revision__,
-    __build_datetime__,
-    __build_line_count__,
-    _render_version_badge,
-)
+__version__ = _versioning_mod.__version__
+__build_revision__ = _versioning_mod.__build_revision__
+__build_datetime__ = _versioning_mod.__build_datetime__
+__build_line_count__ = _versioning_mod.__build_line_count__
+_render_version_badge = _versioning_mod._render_version_badge
 from modules.public_reports import (
-    PUBLIC_REPORTS_DIR,
     _build_public_report_url,
     _get_document_jurisdiction_name,
     _get_public_report_secret,
     _get_query_params_dict,
     _get_request_base_url,
     _publish_public_report_html,
+    _public_report_metadata_path,
     _public_report_html_path,
     _resolve_public_reports_dir,
     _sign_public_report_id,
@@ -116,29 +152,23 @@ from modules.notifications import (
 from modules.cad_parser import (
     aggressive_parse_calls, _extract_file_meta, _get_annualized_calls
 )
-from modules.census_batch import (
-    build_census_staging, make_census_batch_chunks, make_census_batch_zip,
-    make_sample_census_batch, parse_census_result_files, merge_census_results,
-    submit_census_batch_chunk, build_census_chunk_payload,
-    build_corrected_export,
-)
+_census_batch_mod = _load_local_module("census_batch")
+build_census_staging = _census_batch_mod.build_census_staging
+make_census_batch_chunks = _census_batch_mod.make_census_batch_chunks
+make_census_batch_zip = _census_batch_mod.make_census_batch_zip
+make_sample_census_batch = _census_batch_mod.make_sample_census_batch
+parse_census_result_files = _census_batch_mod.parse_census_result_files
+merge_census_results = _census_batch_mod.merge_census_results
+submit_census_batch_chunk = _census_batch_mod.submit_census_batch_chunk
+build_census_chunk_payload = _census_batch_mod.build_census_chunk_payload
+build_corrected_export = _census_batch_mod.build_corrected_export
 from modules.geospatial import (
     _load_uploaded_boundary_overlay, _boundary_overlay_status,
     _count_points_within_boundary, find_jurisdictions_by_coordinates
 )
 from modules import faa_rf, optimization, html_reports
-try:
-    from modules.session_state import init_session_state
-except KeyError:
-    import importlib.util as _importlib_util
-    _session_state_path = Path(__file__).resolve().parent / 'modules' / 'session_state.py'
-    _session_state_spec = _importlib_util.spec_from_file_location('modules.session_state', _session_state_path)
-    if _session_state_spec is None or _session_state_spec.loader is None:
-        raise
-    _session_state_mod = _importlib_util.module_from_spec(_session_state_spec)
-    sys.modules['modules.session_state'] = _session_state_mod
-    _session_state_spec.loader.exec_module(_session_state_mod)
-    init_session_state = _session_state_mod.init_session_state
+_session_state_mod = _load_local_module("session_state")
+init_session_state = _session_state_mod.init_session_state
 from modules.dashboard_helpers import log_map_build_event_once, resolve_master_boundary, render_sidebar_jurisdiction_selector, render_data_filters, render_display_options, render_deployment_strategy, prepare_station_candidates, manage_custom_stations, prepare_runtime_context, optimize_fleet_selection
 from modules import onboarding as _onboarding_mod
 from modules.highway_corridor import (
@@ -223,16 +253,22 @@ def _render_public_report_route():
     if not _report_id:
         return False
 
-    if not _sig or not hmac.compare_digest(_sig, _sign_public_report_id(_report_id)):
+    try:
+        _expected_sig = _sign_public_report_id(_report_id)
+        _html_path = _public_report_html_path(_report_id)
+        _meta_path = _public_report_metadata_path(_report_id)
+    except ValueError:
         st.error("Invalid public report link.")
         st.stop()
 
-    _html_path = _public_report_html_path(_report_id)
+    if not _sig or not hmac.compare_digest(_sig, _expected_sig):
+        st.error("Invalid public report link.")
+        st.stop()
+
     if not _html_path.exists():
         st.warning("This public report is not available yet.")
         st.stop()
 
-    _meta_path = PUBLIC_REPORTS_DIR / f"{_report_id}.json"
     _scan_meta = {}
     if _meta_path.exists():
         try:
@@ -5284,6 +5320,7 @@ body{{background:transparent;overflow:hidden}}
             CONFIG,
             k_responder,
             k_guardian,
+            guard_radius_mi,
             allow_redundancy,
             complement_mode,
             shared_mode,
@@ -5472,26 +5509,57 @@ body{{background:transparent;overflow:hidden}}
         active_drones = []
         cumulative_mask = np.zeros(total_calls, dtype=bool) if total_calls > 0 else None
         step = 1
+        _stable_avg_distance = getattr(
+            optimization,
+            "bounded_station_avg_distance_miles",
+            optimization.mean_covered_distance_miles,
+        )
         for idx, d_type in ordered_deployments_raw:
             if d_type == 'RESPONDER':
                 cov_array = resp_matrix[idx]; cost = CONFIG["RESPONDER_COST"]
                 speed_mph = CONFIG["RESPONDER_SPEED"]
-                avg_dist = optimization.mean_covered_distance_miles(
-                    dist_matrix_r,
-                    resp_matrix,
-                    idx,
-                    fallback_miles=float(station_metadata[idx].get('avg_dist_r', 0) or 0),
-                )
+                _fallback_avg = float(station_metadata[idx].get('avg_dist_r', 0) or 0)
+                try:
+                    avg_dist = _stable_avg_distance(
+                        dist_matrix_r,
+                        resp_matrix,
+                        idx,
+                        fallback_miles=_fallback_avg,
+                        max_radius_miles=resp_radius_mi,
+                    )
+                except TypeError:
+                    avg_dist = min(
+                        _stable_avg_distance(
+                            dist_matrix_r,
+                            resp_matrix,
+                            idx,
+                            fallback_miles=_fallback_avg,
+                        ),
+                        resp_radius_mi,
+                    )
                 radius_m  = resp_radius_mi * 1609.34
             else:
                 cov_array = guard_matrix[idx]; cost = CONFIG["GUARDIAN_COST"]
                 speed_mph = CONFIG["GUARDIAN_SPEED"]
-                avg_dist = optimization.mean_covered_distance_miles(
-                    dist_matrix_g,
-                    guard_matrix,
-                    idx,
-                    fallback_miles=float(station_metadata[idx].get('avg_dist_g', 0) or 0),
-                )
+                _fallback_avg = float(station_metadata[idx].get('avg_dist_g', 0) or 0)
+                try:
+                    avg_dist = _stable_avg_distance(
+                        dist_matrix_g,
+                        guard_matrix,
+                        idx,
+                        fallback_miles=_fallback_avg,
+                        max_radius_miles=guard_radius_mi,
+                    )
+                except TypeError:
+                    avg_dist = min(
+                        _stable_avg_distance(
+                            dist_matrix_g,
+                            guard_matrix,
+                            idx,
+                            fallback_miles=_fallback_avg,
+                        ),
+                        guard_radius_mi,
+                    )
                 radius_m  = guard_radius_mi * 1609.34
             map_color    = active_color_map[f"{idx}_{d_type}"]
             avg_time_min = (avg_dist / speed_mph) * 60
@@ -8303,7 +8371,11 @@ body{{background:transparent;overflow:hidden}}
                 police_names_str = (", ".join([n.replace('[Police] ','') for n in police_dept_names[:6]]) + ("..." if len(police_dept_names)>6 else "")) if police_dept_names else "municipal facilities"
                 total_fleet = actual_k_responder + actual_k_guardian
                 try:
-                    analytics_html_export = html_reports.generate_command_center_html(df_calls_full if df_calls_full is not None else df_calls, total_orig_calls=st.session_state.get('total_original_calls', full_total_calls or total_calls), export_mode=True)
+                    analytics_html_export = html_reports.generate_command_center_html(
+                        df_calls_full if df_calls_full is not None else df_calls,
+                        total_orig_calls=st.session_state.get('total_original_calls', full_total_calls or total_calls),
+                        export_mode=True
+                    )
                 except Exception:
                     analytics_html_export = "<div style='color:gray; padding:20px;'>Analytics unavailable for this dataset.</div>"
                 cad_charts_html_export = html_reports._build_cad_charts_html(df_calls_full if df_calls_full is not None else df_calls)
