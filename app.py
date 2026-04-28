@@ -6280,8 +6280,8 @@ body{{background:transparent;overflow:hidden}}
                     fig.add_trace(go.Scattermap(
                         lat=list(f_lats), lon=list(f_lons),
                         mode='lines',
-                        line=dict(color=d['color'], width=2.4, dash='dash'),
-                        opacity=0.72,
+                        line=dict(color=d['color'], width=2.0),
+                        opacity=0.62,
                         fill='toself',
                         fillcolor=f"rgba({int(d['color'][1:3],16)},{int(d['color'][3:5],16)},{int(d['color'][5:7],16)},0.06)",
                         name=f"Rapid Response 5mi · {d['name'].split(',')[0]}",
