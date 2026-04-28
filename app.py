@@ -4006,6 +4006,14 @@ def main():
                         )
                         with st.spinner("🔍 Detecting column types in CAD export…"):
                             df_c = aggressive_parse_calls(call_files)
+                        for _pq_item in st.session_state.get('parse_quality', []):
+                            _pq_in = _pq_item.get('input_rows', 0)
+                            _pq_out = _pq_item.get('output_rows', 0)
+                            if _pq_item.get('status') == 'error':
+                                _push_upload_log(f"⚠ {_pq_item['file']}: parse failed — {_pq_item.get('error', '')[:100]}")
+                            elif _pq_in > 0:
+                                _pq_yield = round(100 * _pq_out / _pq_in)
+                                _push_upload_log(f"{_pq_item['file']}: {_pq_in:,} rows in → {_pq_out:,} usable ({_pq_yield}%)")
 
                         if df_c is None or df_c.empty:
                             _push_upload_log("No usable coordinates found. Switching to automated Census batch geocoding.")
@@ -5040,6 +5048,42 @@ body{{background:transparent;overflow:hidden}}
                     help="Download the corrected calls file so the Census conversion does not need to run again in a future browser session.",
                 )
             st.sidebar.caption("This corrected data is only stored for the current browser session.")
+
+        # ── Import quality report ─────────────────────────────────────────────
+        _pq_report = st.session_state.get('parse_quality', [])
+        if _pq_report and st.session_state.get('data_source') == 'cad_upload':
+            _pq_errors = [f for f in _pq_report if f.get('status') == 'error']
+            _pq_low_yield = [
+                f for f in _pq_report
+                if f.get('status') == 'ok' and f.get('input_rows', 0) > 0
+                and f.get('output_rows', 0) / f['input_rows'] < 0.5
+            ]
+            _pq_missing = [
+                f for f in _pq_report
+                if f.get('status') == 'ok'
+                and not (f.get('has_lat') and f.get('has_lon') and f.get('has_date'))
+            ]
+            if _pq_errors or _pq_low_yield or _pq_missing:
+                with st.sidebar.expander("⚠️ Import Quality Issues", expanded=True):
+                    for _f in _pq_report:
+                        _fname = _f.get('file', 'unknown')
+                        _in = _f.get('input_rows', 0)
+                        _out = _f.get('output_rows', 0)
+                        _yield_pct = round(100 * _out / _in) if _in > 0 else 0
+                        if _f.get('status') == 'error':
+                            st.error(f"**{_fname}** — parse failed  \n_{_f.get('error', 'unknown error')}_")
+                        else:
+                            _warnings = []
+                            if not _f.get('has_lat') or not _f.get('has_lon'):
+                                _warnings.append("no lat/lon found")
+                            if not _f.get('has_date'):
+                                _warnings.append("no date column")
+                            if _in > 0 and _yield_pct < 50:
+                                _warnings.append(f"only {_yield_pct}% of rows kept")
+                            if _warnings:
+                                st.warning(f"**{_fname}**  \n{_in:,} in → {_out:,} kept ({_yield_pct}%)  \n" + " · ".join(_warnings))
+                            else:
+                                st.info(f"**{_fname}**  \n{_in:,} in → {_out:,} kept ({_yield_pct}%)")
 
         master_gdf, _boundary_kind_note, _boundary_src_note = resolve_master_boundary(
             st,

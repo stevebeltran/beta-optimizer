@@ -343,7 +343,15 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
         if m: return int(m.group(1))
         return 3
 
+    _file_parse_quality = []
     for file_idx, cfile in enumerate(uploaded_files):
+        _pq = {
+            'file': cfile.name, 'status': 'ok',
+            'input_rows': 0, 'output_rows': 0,
+            'has_lat': False, 'has_lon': False,
+            'has_date': False, 'has_priority_col': False,
+            'error': '',
+        }
         try:
             fname = cfile.name.lower()
             excel_exts = ('.xlsx', '.xls', '.xlsb', '.xlsm')
@@ -489,6 +497,7 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                 [f"{file_idx}:{cfile.name}:{row_idx}" for row_idx in range(len(raw_df))],
                 index=raw_df.index
             )
+            _pq['input_rows'] = len(raw_df)
 
             res = pd.DataFrame()
             exact_coord_names = {
@@ -889,9 +898,23 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
             except Exception:
                 pass
 
+            _pq['output_rows'] = len(res)
+            _pq['has_lat'] = 'lat' in res.columns and bool(res['lat'].notna().any())
+            _pq['has_lon'] = 'lon' in res.columns and bool(res['lon'].notna().any())
+            _pq['has_date'] = 'date' in res.columns and bool(res['date'].notna().any())
+            _pq['has_priority_col'] = bool(_p_col)
+            _file_parse_quality.append(_pq)
             all_calls_list.append(res)
-        except: continue
-        
+        except Exception as _pq_e:
+            _pq['status'] = 'error'
+            _pq['error'] = str(_pq_e)[:300]
+            _file_parse_quality.append(_pq)
+            continue
+    
+    try:
+        st.session_state['parse_quality'] = _file_parse_quality
+    except Exception:
+        pass
     if not all_calls_list: return pd.DataFrame()
     if require_valid_coordinates:
         # Only keep frames that actually have lat/lon columns — Excel sheets
