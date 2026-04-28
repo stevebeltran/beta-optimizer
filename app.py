@@ -6280,10 +6280,10 @@ body{{background:transparent;overflow:hidden}}
                     fig.add_trace(go.Scattermap(
                         lat=list(f_lats), lon=list(f_lons),
                         mode='lines',
-                        line=dict(color=d['color'], width=4.5),
-                        opacity=1.0,
+                        line=dict(color=d['color'], width=2.4, dash='dash'),
+                        opacity=0.72,
                         fill='toself',
-                        fillcolor=f"rgba({int(d['color'][1:3],16)},{int(d['color'][3:5],16)},{int(d['color'][5:7],16)},0.12)",
+                        fillcolor=f"rgba({int(d['color'][1:3],16)},{int(d['color'][3:5],16)},{int(d['color'][5:7],16)},0.06)",
                         name=f"Rapid Response 5mi · {d['name'].split(',')[0]}",
                         hoverinfo='text',
                         text=f"⚡ Rapid Response Focus Zone — 5mi<br>{d['name'].split(',')[0]}",
