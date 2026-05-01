@@ -6,3 +6,4 @@ regulatory_layers/*.parquet
 DOF_Public.csv
 DOF_Public.zip
 *.tmp
+.venv/
