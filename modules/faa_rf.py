@@ -25,6 +25,8 @@ def generate_mock_faa_grid(minx, miny, maxx, maxy):
     mock_airports = [{"lon": minx + 0.3 * (maxx - minx), "lat": miny + 0.3 * (maxy - miny), "radius": 0.15, "name": "Mock Intl (MCK)"}]
     for i in range(len(x_steps) - 1):
         for j in range(len(y_steps) - 1):
+            if (i + j) % 2:
+                continue
             cell_poly = [[x_steps[i], y_steps[j]], [x_steps[i+1], y_steps[j]], [x_steps[i+1], y_steps[j+1]], [x_steps[i], y_steps[j+1]], [x_steps[i], y_steps[j]]]
             cell_center = Point((x_steps[i] + x_steps[i+1]) / 2, (y_steps[j] + y_steps[j+1]) / 2)
             ceiling, arpt_name = None, ""
@@ -162,10 +164,14 @@ def add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=True):
     if not faa_geojson or not faa_geojson.get("features"):
         return
 
+    features = faa_geojson.get("features", [])
+    thin_checkerboard = len(features) >= 50
     text_lons, text_lats, text_strings, text_hovers = [], [], [], []
     trace_count = 0
 
-    for feature in faa_geojson.get("features", []):
+    for idx, feature in enumerate(features):
+        if thin_checkerboard and idx % 2:
+            continue
         geom = feature.get("geometry")
         props = feature.get("properties", {})
         # Try both old and new property names for backwards compatibility

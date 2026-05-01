@@ -50,12 +50,6 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-The advanced RF section imports `scipy`, but `scipy` is not currently listed in [`requirements.txt`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/requirements.txt). Install it manually if you use that section:
-
-```powershell
-pip install scipy
-```
-
 ### 3. Configure Streamlit secrets
 
 The app reads configuration from [`.streamlit/secrets.toml`](/G:/My%20Drive/PRIVATE%20NO%20ACCESS/Pyton/app/Beta/Frankenstein/.streamlit/secrets.toml).

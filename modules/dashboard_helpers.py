@@ -86,6 +86,15 @@ def resolve_master_boundary(
 ):
     use_county = session_state.get('use_county_boundary', False)
     master_override = session_state.get('master_gdf_override')
+    stage_box = st.empty()
+    stage_progress = st.progress(0, text="Resolving jurisdiction boundary…")
+
+    def set_stage(step_pct, message):
+        stage_box.info(message)
+        try:
+            stage_progress.progress(int(step_pct), text=message)
+        except Exception:
+            stage_progress.progress(int(step_pct))
 
     if use_county:
         active_state = session_state.get('active_state', '')
@@ -94,11 +103,14 @@ def resolve_master_boundary(
             session_state.get('_county_boundary_cache_key') == county_cache_key
             and session_state.get('_county_boundary_gdf') is not None
         ):
+            set_stage(100, "Using cached county boundary.")
             master_gdf = session_state['_county_boundary_gdf'].copy()
         else:
+            set_stage(20, "Checking county boundary cache and county lookup data…")
             with st.spinner("Loading county boundary…"):
                 ok, county_gdf = fetch_county_by_centroid(df_calls, active_state)
             if ok and county_gdf is not None:
+                set_stage(60, "County boundary found. Finalizing jurisdiction geometry…")
                 county_gdf = county_gdf.copy()
                 county_gdf['DISPLAY_NAME'] = county_gdf['NAME'].astype(str)
                 county_gdf['data_count'] = len(df_calls)
@@ -108,8 +120,10 @@ def resolve_master_boundary(
             else:
                 st.warning("County boundary not found — check that counties_lite.parquet is present.")
                 if master_override is not None and not master_override.empty:
+                    set_stage(70, "County boundary unavailable. Using the uploaded override boundary.")
                     master_gdf = master_override.copy()
                 else:
+                    set_stage(75, "County boundary unavailable. Resolving jurisdiction from uploaded calls…")
                     with st.spinner(get_jurisdiction_message()):
                         preferred_shp = session_state.get('boundary_source_path', '') or None
                         master_gdf = get_relevant_jurisdictions_cached(
@@ -118,8 +132,10 @@ def resolve_master_boundary(
                             preferred_shp=preferred_shp,
                         )
     elif master_override is not None and not master_override.empty:
+        set_stage(100, "Using uploaded boundary override.")
         master_gdf = master_override.copy()
     else:
+        set_stage(35, "Resolving jurisdiction from uploaded calls…")
         with st.spinner(get_jurisdiction_message()):
             preferred_shp = session_state.get('boundary_source_path', '') or None
             master_gdf = get_relevant_jurisdictions_cached(
@@ -135,6 +151,7 @@ def resolve_master_boundary(
         shp_files = glob.glob(os.path.join(shapefile_dir, '*.shp'))
         if shp_files:
             try:
+                set_stage(60, "Searching local shapefiles for the best matching boundary…")
                 preferred_kind = session_state.get('boundary_kind', 'place')
                 active_city = session_state.get('active_city', '')
                 active_state = session_state.get('active_state', '')
@@ -207,10 +224,12 @@ def resolve_master_boundary(
                 master_gdf = fallback_gdf[['DISPLAY_NAME', 'data_count', 'geometry']]
                 session_state['boundary_source_path'] = best
                 boundary_src_note = best
+                set_stage(90, "Boundary resolved from local shapefile cache.")
             except Exception:
                 master_gdf = None
 
     if master_gdf is None or master_gdf.empty:
+        set_stage(95, "No boundary cache matched. Generating a temporary boundary.")
         min_lon, min_lat = df_calls['lon'].min(), df_calls['lat'].min()
         max_lon, max_lat = df_calls['lon'].max(), df_calls['lat'].max()
         lon_pad = (max_lon - min_lon) * 0.1
@@ -222,6 +241,8 @@ def resolve_master_boundary(
             crs='EPSG:4326',
         )
 
+    stage_progress.empty()
+    stage_box.empty()
     return master_gdf, boundary_kind_note, boundary_src_note
 
 
@@ -754,11 +775,28 @@ def manage_custom_stations(
     df_curve,
     get_address_from_latlon,
     search_address_candidates,
+    search_public_facility_candidates=None,
 ):
     n = len(df_stations_all)
     max_resp_calc = min(n, int(math.ceil(area_sq_mi / (math.pi * (r_resp_est**2)))) + 5)
     # Guardian placements should be allowed at any uploaded in-boundary station.
     max_guard_calc = n
+    public_facility_types = {'Police', 'Fire', 'School', 'Government', 'Library'}
+
+    def _looks_like_street_address(text):
+        raw = str(text or '').strip().lower()
+        if not raw or not re.search(r'\d', raw):
+            return False
+        street_tokens = (
+            ' st', ' street', ' rd', ' road', ' ave', ' avenue', ' blvd', ' boulevard',
+            ' dr', ' drive', ' ln', ' lane', ' ct', ' court', ' pkwy', ' parkway',
+            ' hwy', ' highway', ' ter', ' terrace', ' cir', ' circle', ' way', ' pl',
+            ' place', ' n ', ' s ', ' e ', ' w ',
+        )
+        return any(token in raw for token in street_tokens)
+
+    def _use_public_facility_lookup():
+        return bool(search_public_facility_candidates) and str(custom_type).strip() in public_facility_types
 
     try:
         pin_r_count = len(session_state.get('pinned_resp_names', []))
@@ -1022,12 +1060,24 @@ def manage_custom_stations(
         preferred_city = session_state.get('active_city', '')
         preferred_state = session_state.get('active_state', '')
         locality_hint = ", ".join([v for v in [preferred_city, preferred_state] if v])
-        addr_matches = search_address_candidates(
-            addr_query,
-            limit=6,
-            preferred_city=preferred_city,
-            preferred_state=preferred_state,
-        ) if len(addr_query) >= 4 else []
+        if len(addr_query) >= 4:
+            if _use_public_facility_lookup():
+                addr_matches = search_public_facility_candidates(
+                    addr_query,
+                    custom_type,
+                    limit=6,
+                    preferred_city=preferred_city,
+                    preferred_state=preferred_state,
+                )
+            else:
+                addr_matches = search_address_candidates(
+                    addr_query,
+                    limit=6,
+                    preferred_city=preferred_city,
+                    preferred_state=preferred_state,
+                )
+        else:
+            addr_matches = []
 
         def _match_in_preferred_state(match):
             if not preferred_state:
@@ -1062,7 +1112,10 @@ def manage_custom_stations(
             })
 
         if locality_hint:
-            st.caption(f'Suggestions are biased to {locality_hint}.')
+            if _use_public_facility_lookup():
+                st.caption(f'Public facility suggestions are biased to {locality_hint}.')
+            else:
+                st.caption(f'Suggestions are biased to {locality_hint}.')
 
         _geo_trace = session_state.get('_last_geocode_trace') or {}
         _geo_providers = _geo_trace.get('providers') or []
@@ -1131,12 +1184,28 @@ def manage_custom_stations(
                 try:
                     match = selected_match
                     if not match:
-                        fallback_matches = search_address_candidates(
-                            addr_to_geocode,
-                            limit=1,
-                            preferred_city=preferred_city,
-                            preferred_state=preferred_state,
-                        )
+                        if _use_public_facility_lookup():
+                            fallback_matches = search_public_facility_candidates(
+                                addr_to_geocode,
+                                custom_type,
+                                limit=1,
+                                preferred_city=preferred_city,
+                                preferred_state=preferred_state,
+                            )
+                            if not fallback_matches and _looks_like_street_address(addr_to_geocode):
+                                fallback_matches = search_address_candidates(
+                                    addr_to_geocode,
+                                    limit=1,
+                                    preferred_city=preferred_city,
+                                    preferred_state=preferred_state,
+                                )
+                        else:
+                            fallback_matches = search_address_candidates(
+                                addr_to_geocode,
+                                limit=1,
+                                preferred_city=preferred_city,
+                                preferred_state=preferred_state,
+                            )
                         match = fallback_matches[0] if fallback_matches else None
                     if match:
                         geo_lat = float(match['lat'])
@@ -1159,7 +1228,10 @@ def manage_custom_stations(
                             session_state.pop(cache_key, None)
                         st.rerun()
                     else:
-                        st.warning('Address not found. Try selecting a suggested match or include city and state.')
+                        if _use_public_facility_lookup():
+                            st.warning('Public facility not found. Try the station name, a known facility address, or switch the type if this is not a civic building.')
+                        else:
+                            st.warning('Address not found. Try selecting a suggested match or include city and state.')
                 except Exception as ge_exc:
                     st.error(f'Geocoding failed: {ge_exc}')
             else:
@@ -1296,7 +1368,7 @@ def prepare_runtime_context(
         inferred_daily = session_state.get('inferred_daily_calls_override') or full_daily_calls or 1
         inferred_daily = max(1, int(inferred_daily))
         calls_per_day = st.slider('Total Daily Calls (citywide)', 1, max(100, inferred_daily * 3), inferred_daily, help='Total 911 calls per day citywide used to project annual dispatch volume, officer hours saved, and ROI.')
-        st.caption(f'Derived from the full uploaded CAD total ({full_total_calls:,} incidents), not the optimization sample.')
+        st.caption(f'Derived from the full uploaded CAD total ({full_total_calls:,} incidents).')
         st.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>DFR Dispatch Rate (%)</div>", unsafe_allow_html=True)
         st.markdown("<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>What % of in-range calls will the drone be sent to?</div>", unsafe_allow_html=True)
         dfr_dispatch_rate = st.slider('DFR Dispatch Rate', 1, 100, session_state.get('dfr_rate', 30), label_visibility='collapsed', help='Percentage of in-range calls the drone is dispatched to. Higher rates increase coverage and savings projections.') / 100.0
@@ -1381,6 +1453,14 @@ def optimize_fleet_selection(
     else:
         if session_state.get('_opt_cache_key') != opt_cache_key:
             stage_bar = st.empty()
+            stage_progress = st.progress(0, text="Preparing optimization…")
+
+            def set_stage(step_pct, message):
+                stage_bar.info(message)
+                try:
+                    stage_progress.progress(int(step_pct), text=message)
+                except Exception:
+                    stage_progress.progress(int(step_pct))
 
             def has_meaningful_overlap(geom_a, geom_b, tol=1e-9):
                 if geom_a is None or geom_b is None or geom_a.is_empty or geom_b.is_empty:
@@ -1527,7 +1607,7 @@ def optimize_fleet_selection(
             )
 
             if true_shared_call_mode:
-                stage_bar.info('🤝 Optimising shared call coverage…')
+                set_stage(20, 'Building overlap constraints and shared call coverage model…')
                 r_best, g_best, chrono_r, chrono_g = optimization_module.solve_mclp(
                     resp_matrix,
                     guard_matrix,
@@ -1543,9 +1623,10 @@ def optimize_fleet_selection(
                 r_best = list(r_best)
                 g_best = list(g_best)
             else:
-                stage_bar.info('🦅 Optimising Guardian fleet…')
+                set_stage(20, 'Building overlap constraints and optimising Guardian fleet…')
                 if k_guardian > 0:
                     if guard_strategy == 'Maximize Call Coverage':
+                        set_stage(45, 'Solving Guardian fleet placement…')
                         _, g_best, _, chrono_g = optimization_module.solve_mclp(
                             resp_matrix,
                             guard_matrix,
@@ -1560,6 +1641,7 @@ def optimize_fleet_selection(
                             incompatible_gg=guard_overlap_pairs,
                         )
                     else:
+                        set_stage(45, 'Selecting Guardian stations from coverage geometry…')
                         g_best, chrono_g = greedy_area(
                             guard_geos,
                             k_guardian,
@@ -1571,7 +1653,7 @@ def optimize_fleet_selection(
                 else:
                     g_best, chrono_g = [], []
 
-                stage_bar.info('🚁 Optimising Responder fleet…')
+                set_stage(70, 'Optimising Responder fleet…')
                 if k_responder > 0:
                     if complement_mode and g_best and total_calls > 0:
                         guard_claimed, guard_claims_by_idx = build_guard_serviceable_claims(g_best)
@@ -1586,6 +1668,7 @@ def optimize_fleet_selection(
                         forbidden_resp = set()
 
                     if resp_strategy == 'Maximize Call Coverage':
+                        set_stage(85, 'Solving Responder fleet placement…')
                         r_best, _, chrono_r, _ = optimization_module.solve_mclp(
                             resp_matrix_eff,
                             guard_matrix,
@@ -1603,6 +1686,7 @@ def optimize_fleet_selection(
                         if complement_mode:
                             r_best = [s for s in r_best if s not in set(g_best)]
                     else:
+                        set_stage(85, 'Selecting Responder stations from coverage geometry…')
                         excl_resp = set(g_best) if complement_mode else set()
                         cross_guard_geos = [guard_geos[i] for i in g_best] if complement_mode else None
                         r_best, chrono_r = greedy_area(
@@ -1618,8 +1702,10 @@ def optimize_fleet_selection(
 
             if not complement_mode:
                 guard_claims_by_idx = {}
+            set_stage(100, 'Finalizing optimization recommendations…')
             best_combo = (tuple(r_best), tuple(g_best))
             stage_bar.empty()
+            stage_progress.empty()
             if true_shared_call_mode:
                 st.toast('✅ Shared optimisation complete!', icon='✅')
             elif shared_mode:

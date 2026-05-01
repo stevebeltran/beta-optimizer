@@ -219,7 +219,7 @@ def estimate_corridor_calls(corridor_length_miles):
     Formula: corridor_miles x 0.33 calls/mile/day x 365 days
     0.33 is calibrated to match observed state highway patrol activity rates.
     """
-    return max(365, int(corridor_length_miles * 0.33 * 365))
+    return max(int(round(corridor_length_miles * 0.33 * 365)), 0)
 
 
 def _generate_corridor_calls(corridor_line, corridor_poly, num_calls, generate_random_points_in_polygon):
@@ -275,7 +275,7 @@ def build_corridor_demo(corridor_line, corridor_poly, annual_cfs, generate_rando
         (df_demo, annual_cfs, simulated_points_count)
         Mirrors the return signature of onboarding.build_demo_calls.
     """
-    simulated_points_count = min(max(annual_cfs, 365), 36500)
+    simulated_points_count = max(int(round(annual_cfs)), 0)
     np.random.seed(42)
     random.seed(42)
 

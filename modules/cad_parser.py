@@ -106,6 +106,21 @@ def _extract_file_meta(raw_df, res_df, filename=""):
     except Exception:
         pass
     return meta
+def _deduplicate_columns(df):
+    """Rename duplicate column names by appending _2, _3, etc."""
+    seen = {}
+    new_cols = []
+    for c in df.columns:
+        if c in seen:
+            seen[c] += 1
+            new_cols.append(f"{c}_{seen[c]}")
+        else:
+            seen[c] = 1
+            new_cols.append(c)
+    df.columns = new_cols
+    return df
+
+
 def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
     all_calls_list = []
     CV = {
@@ -411,6 +426,7 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                     raw_df = pd.DataFrame(_rows_data, columns=_real_headers)
                     raw_df = raw_df.dropna(how='all')
                     raw_df.columns = [str(c).lower().strip() for c in raw_df.columns]
+                    raw_df = _deduplicate_columns(raw_df)
                 except Exception as _xe:
                     raw_df = None
                     # Try all sheets with pandas and pick the one that looks most like CAD data
@@ -420,6 +436,7 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                         best_df = None
                         for _sn, _df in _all.items():
                             _df.columns = [str(c).lower().strip() for c in _df.columns]
+                            _df = _deduplicate_columns(_df)
                             _score = 0
                             for _c in _df.columns:
                                 if _c in ('latitude', 'longitude', 'priority', 'location'):
@@ -439,6 +456,7 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                     if raw_df is None:
                         raw_df = pd.read_excel(io.BytesIO(raw_bytes), engine=engine, dtype=str)
                         raw_df.columns = [str(c).lower().strip() for c in raw_df.columns]
+                        raw_df = _deduplicate_columns(raw_df)
             else:
                 # ── CSV / TXT path ────────────────────────────────────────────
                 content = cfile.getvalue().decode('utf-8', errors='ignore')

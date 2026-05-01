@@ -197,6 +197,21 @@ def _normalize_headerless_excel_frame(df: pd.DataFrame) -> pd.DataFrame:
     return norm
 
 
+def _deduplicate_columns(df):
+    """Rename duplicate column names by appending _2, _3, etc."""
+    seen = {}
+    new_cols = []
+    for c in df.columns:
+        if c in seen:
+            seen[c] += 1
+            new_cols.append(f"{c}_{seen[c]}")
+        else:
+            seen[c] = 1
+            new_cols.append(c)
+    df.columns = new_cols
+    return df
+
+
 def load_raw_call_table(uploaded_file) -> pd.DataFrame:
     fname = str(uploaded_file.name or '').lower()
     if fname.endswith(_EXCEL_EXTS):
@@ -234,6 +249,7 @@ def load_raw_call_table(uploaded_file) -> pd.DataFrame:
             raw_df = pd.DataFrame(rows_data, columns=real_headers)
             raw_df = raw_df.dropna(how='all')
             raw_df.columns = [str(c).lower().strip() for c in raw_df.columns]
+            raw_df = _deduplicate_columns(raw_df)
             if _looks_like_headerless_excel_columns(headers_raw) or _looks_like_headerless_cad_export_frame(raw_df):
                 raw_df = _normalize_headerless_excel_frame(raw_df)
             return raw_df.reset_index(drop=True)
@@ -243,6 +259,7 @@ def load_raw_call_table(uploaded_file) -> pd.DataFrame:
             best_df = None
             for _, sheet_df in all_sheets.items():
                 sheet_df.columns = [str(c).lower().strip() for c in sheet_df.columns]
+                sheet_df = _deduplicate_columns(sheet_df)
                 score = 0
                 for col in sheet_df.columns:
                     if col in ('latitude', 'longitude', 'priority', 'location', 'address'):
@@ -258,6 +275,7 @@ def load_raw_call_table(uploaded_file) -> pd.DataFrame:
             if best_df is None:
                 best_df = pd.read_excel(io.BytesIO(raw_bytes), engine=engine, dtype=str)
             best_df.columns = [str(c).lower().strip() for c in best_df.columns]
+            best_df = _deduplicate_columns(best_df)
             if _looks_like_headerless_cad_export_frame(best_df):
                 best_df = _normalize_headerless_excel_frame(best_df)
             return best_df.reset_index(drop=True)
@@ -587,7 +605,12 @@ def parse_census_result_files(uploaded_files) -> pd.DataFrame:
     return result_df
 
 
-def merge_census_results(partial_calls_df: pd.DataFrame, result_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+def merge_census_results(
+    partial_calls_df: pd.DataFrame,
+    result_df: pd.DataFrame,
+    *,
+    validate_outputs: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """
     Merge CAD data with Census batch geocoding results.
 
@@ -604,32 +627,35 @@ def merge_census_results(partial_calls_df: pd.DataFrame, result_df: pd.DataFrame
     Returns:
         Tuple of (merged_df, ready_df, summary_dict)
     """
-    # Use optimized merge (Polars if available, pandas fallback)
+    # Use pandas merge — Polars' internal Rayon thread pool can deadlock
+    # on Windows during Streamlit reruns, and pandas is fast enough for
+    # the typical Census batch sizes (~10-25K rows).
     merged, ready_df, summary = merge_census_results_fast(
         partial_calls_df,
         result_df,
-        use_polars=True
+        use_polars=False
     )
 
-    # Validate Census results. Parsed batch files keep source_id as text for
-    # stable joins, so coerce only the validation copy to match the schema.
-    if not result_df.empty:
-        validation_result_df = result_df.copy()
-        if 'source_id' in validation_result_df.columns:
-            validation_result_df['source_id'] = pd.to_numeric(
-                validation_result_df['source_id'],
-                errors='coerce',
-            ).astype('Int64')
-        for coord_col in ('lat', 'lon'):
-            if coord_col in validation_result_df.columns:
-                validation_result_df[coord_col] = pd.to_numeric(
-                    validation_result_df[coord_col],
+    if validate_outputs:
+        # Validate Census results. Parsed batch files keep source_id as text for
+        # stable joins, so coerce only the validation copy to match the schema.
+        if not result_df.empty:
+            validation_result_df = result_df.copy()
+            if 'source_id' in validation_result_df.columns:
+                validation_result_df['source_id'] = pd.to_numeric(
+                    validation_result_df['source_id'],
                     errors='coerce',
-                )
-        validate_census_results(validation_result_df, raise_exceptions=False)
+                ).astype('Int64')
+            for coord_col in ('lat', 'lon'):
+                if coord_col in validation_result_df.columns:
+                    validation_result_df[coord_col] = pd.to_numeric(
+                        validation_result_df[coord_col],
+                        errors='coerce',
+                    )
+            validate_census_results(validation_result_df, raise_exceptions=False)
 
-    # Validate merged data
-    validate_merged_data(merged, raise_exceptions=False)
+        # Validate merged data
+        validate_merged_data(merged, raise_exceptions=False)
 
     # Maintain backward compatibility with old summary format
     summary['rows_with_census_match'] = summary.pop('rows_geocoded', 0)
@@ -664,12 +690,18 @@ def submit_census_batch_chunk(
     timeout: int = 180,
     returntype: str = 'locations',
     retries: int = 3,
+    attempt_logger=None,
 ) -> tuple[pd.DataFrame, bytes]:
     fields = {'benchmark': benchmark}
     url = f'https://geocoding.geo.census.gov/geocoder/{returntype}/addressbatch'
     body, content_type = _encode_multipart_formdata(fields, 'addressFile', filename, csv_bytes)
     last_error = None
     for attempt in range(1, max(1, retries) + 1):
+        if attempt_logger is not None:
+            attempt_logger(
+                f"Census chunk request attempt {attempt}/{max(1, retries)} for {filename} "
+                f"(timeout {timeout}s)."
+            )
         req = urllib.request.Request(
             url,
             data=body,
@@ -688,17 +720,29 @@ def submit_census_batch_chunk(
             break
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode('utf-8', errors='ignore')
+            if attempt_logger is not None:
+                attempt_logger(f"Census HTTP {exc.code} for {filename}: {detail[:160] or exc.reason}")
             raise RuntimeError(f'Census HTTP {exc.code}: {detail[:400] or exc.reason}') from exc
         except (urllib.error.URLError, http.client.RemoteDisconnected, TimeoutError, ConnectionResetError) as exc:
             last_error = exc
             if attempt >= max(1, retries):
                 raise RuntimeError(f'Census connection failed after {attempt} attempt(s): {exc}') from exc
+            if attempt_logger is not None:
+                attempt_logger(
+                    f"Census chunk attempt {attempt}/{max(1, retries)} for {filename} failed: {exc}. "
+                    f"Retrying in {min(6, attempt * 2)}s."
+                )
             time.sleep(min(6, attempt * 2))
             continue
         except Exception as exc:
             last_error = exc
             if attempt >= max(1, retries):
                 raise RuntimeError(f'Census request failed after {attempt} attempt(s): {exc}') from exc
+            if attempt_logger is not None:
+                attempt_logger(
+                    f"Census chunk attempt {attempt}/{max(1, retries)} for {filename} failed: {exc}. "
+                    f"Retrying in {min(6, attempt * 2)}s."
+                )
             time.sleep(min(6, attempt * 2))
             continue
     else:
@@ -735,6 +779,22 @@ def build_corrected_export(original_df: pd.DataFrame, result_df: pd.DataFrame) -
     ].drop_duplicates(subset=['_census_merge_key'], keep='first')
     export_df = export_df.merge(matched, on='_census_merge_key', how='left')
     export_df = export_df.drop(columns=['_census_merge_key'], errors='ignore')
+    if 'lat' in export_df.columns:
+        export_df['lat'] = pd.to_numeric(export_df['lat'], errors='coerce')
+    if 'lon' in export_df.columns:
+        export_df['lon'] = pd.to_numeric(export_df['lon'], errors='coerce')
+    return export_df
+
+
+def build_corrected_export_from_merged(merged_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build the corrected Census export from an already merged dataframe.
+
+    This avoids repeating the merge work when the app already has the merged
+    output in memory.
+    """
+    export_df = pd.DataFrame() if merged_df is None else merged_df.copy().reset_index(drop=True)
+    export_df = export_df.drop(columns=['_census_merge_key', '_census_filled'], errors='ignore')
     if 'lat' in export_df.columns:
         export_df['lat'] = pd.to_numeric(export_df['lat'], errors='coerce')
     if 'lon' in export_df.columns:

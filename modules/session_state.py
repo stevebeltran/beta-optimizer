@@ -44,6 +44,7 @@ DEFAULTS = {
     "file_meta": {},
     "export_event_log": [],
     "export_count": 0,
+    "report_build_seconds": None,
     "show_rapid_response_ring_b": True,
     "demo_mode_used": False,
     "sim_mode_used": False,
