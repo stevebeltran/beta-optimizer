@@ -161,7 +161,23 @@ parse_census_result_files = _census_batch_mod.parse_census_result_files
 merge_census_results = _census_batch_mod.merge_census_results
 submit_census_batch_chunk = _census_batch_mod.submit_census_batch_chunk
 build_census_chunk_payload = _census_batch_mod.build_census_chunk_payload
-build_corrected_export_from_merged = _census_batch_mod.build_corrected_export_from_merged
+
+
+def _build_corrected_export_from_merged_fallback(merged_df: pd.DataFrame) -> pd.DataFrame:
+    export_df = pd.DataFrame() if merged_df is None else merged_df.copy().reset_index(drop=True)
+    export_df = export_df.drop(columns=['_census_merge_key', '_census_filled'], errors='ignore')
+    if 'lat' in export_df.columns:
+        export_df['lat'] = pd.to_numeric(export_df['lat'], errors='coerce')
+    if 'lon' in export_df.columns:
+        export_df['lon'] = pd.to_numeric(export_df['lon'], errors='coerce')
+    return export_df
+
+
+build_corrected_export_from_merged = getattr(
+    _census_batch_mod,
+    "build_corrected_export_from_merged",
+    _build_corrected_export_from_merged_fallback,
+)
 from modules.geospatial import (
     _load_uploaded_boundary_overlay, _boundary_overlay_status,
     _count_points_within_boundary, find_jurisdictions_by_coordinates
