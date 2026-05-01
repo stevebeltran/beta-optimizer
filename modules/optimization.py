@@ -7,6 +7,7 @@ import heapq
 from concurrent.futures import ThreadPoolExecutor
 import pulp
 import streamlit as st
+from pyproj import Transformer
 from modules.config import CONFIG
 from modules.geospatial import build_display_calls
 
@@ -65,10 +66,35 @@ def bounded_station_avg_distance_miles(
             avg_miles = min(avg_miles, radius)
     return float(max(avg_miles, 0.0))
 
+
+def _project_lonlat_dataframe(df: pd.DataFrame, epsg_code) -> gpd.GeoDataFrame:
+    work = pd.DataFrame() if df is None else df.copy()
+    if work.empty or 'lat' not in work.columns or 'lon' not in work.columns:
+        return gpd.GeoDataFrame(work, geometry=[], crs="EPSG:4326")
+
+    work['lat'] = pd.to_numeric(work['lat'], errors='coerce')
+    work['lon'] = pd.to_numeric(work['lon'], errors='coerce')
+    work = work.replace([np.inf, -np.inf], np.nan).dropna(subset=['lat', 'lon']).reset_index(drop=True)
+    if work.empty:
+        return gpd.GeoDataFrame(work, geometry=[], crs="EPSG:4326")
+
+    transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{int(epsg_code)}", always_xy=True)
+    xs, ys = transformer.transform(work['lon'].to_numpy(dtype=float), work['lat'].to_numpy(dtype=float))
+    return gpd.GeoDataFrame(
+        work,
+        geometry=gpd.points_from_xy(xs, ys),
+        crs=f"EPSG:{int(epsg_code)}",
+    )
+
+
+def _project_point_to_epsg(lon, lat, epsg_code):
+    transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{int(epsg_code)}", always_xy=True)
+    x, y = transformer.transform(float(lon), float(lat))
+    return Point(x, y)
+
 @st.cache_resource
 def precompute_spatial_data(df_calls, df_calls_full, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash):
-    gdf_calls = gpd.GeoDataFrame(df_calls, geometry=gpd.points_from_xy(df_calls.lon, df_calls.lat), crs="EPSG:4326")
-    gdf_calls_utm = gdf_calls.to_crs(epsg=int(epsg_code))
+    gdf_calls_utm = _project_lonlat_dataframe(df_calls, epsg_code)
     try:
         # Use same 300 m buffer as build_display_calls so coverage denominator
         # matches the call dots shown on the map (avoids false 100% when fringe
@@ -108,7 +134,7 @@ def precompute_spatial_data(df_calls, df_calls_full, df_stations_all, _city_m, e
         return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
     for idx_pos, (_, row) in enumerate(df_stations_all.iterrows()):
-        s_pt_m = gpd.GeoSeries([Point(row['lon'], row['lat'])], crs="EPSG:4326").to_crs(epsg=int(epsg_code)).iloc[0]
+        s_pt_m = _project_point_to_epsg(row['lon'], row['lat'], epsg_code)
 
         if calls_array is not None:
             dists = np.sqrt((calls_array[:, 0] - s_pt_m.x) ** 2 + (calls_array[:, 1] - s_pt_m.y) ** 2)
