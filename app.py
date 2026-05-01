@@ -161,7 +161,7 @@ parse_census_result_files = _census_batch_mod.parse_census_result_files
 merge_census_results = _census_batch_mod.merge_census_results
 submit_census_batch_chunk = _census_batch_mod.submit_census_batch_chunk
 build_census_chunk_payload = _census_batch_mod.build_census_chunk_payload
-build_corrected_export = _census_batch_mod.build_corrected_export
+build_corrected_export_from_merged = _census_batch_mod.build_corrected_export_from_merged
 from modules.geospatial import (
     _load_uploaded_boundary_overlay, _boundary_overlay_status,
     _count_points_within_boundary, find_jurisdictions_by_coordinates
@@ -234,6 +234,7 @@ def _reset_census_state(session_state):
     session_state['census_stage_df'] = None
     session_state['census_original_df'] = None
     session_state['census_partial_calls_df'] = None
+    session_state['_census_batch_started_at'] = None
     session_state['census_batch_zip_bytes'] = b""
     session_state['census_batch_zip_name'] = ""
     session_state['census_sample_bytes'] = b""
@@ -339,6 +340,10 @@ def _render_public_report_route():
             [data-testid="stGithubButton"],
             [data-testid="stActionButton"],
             [data-testid="stBaseButton-header"],
+            [data-testid="stHeaderActionElements"],
+            [data-testid="stHeaderActions"],
+            [data-testid="stDeployButton"],
+            [data-testid="stAppDeployButton"],
             [data-testid*="github"],
             [data-testid*="Github"],
             .stDeployButton,
@@ -346,13 +351,11 @@ def _render_public_report_route():
             .viewerBadge_link__,
             .viewerBadge_text__,
             #stDecoration,
-            a[href*="github.com"],
-            a[href*="streamlit.io"],
-            [aria-label*="GitHub"],
-            [aria-label*="github"],
-            [title*="GitHub"],
-            [title*="github"],
-            iframe[title="streamlit_analytics"] { display: none !important; }
+            iframe[title="streamlit_analytics"] {
+                display: none !important;
+                visibility: hidden !important;
+                pointer-events: none !important;
+            }
             .main .block-container { padding: 0 !important; max-width: 100% !important; }
             .stApp { background: #07101c !important; }
         </style>
@@ -369,18 +372,27 @@ def _render_public_report_route():
                     '[data-testid="stGithubButton"]',
                     '[data-testid="stActionButton"]',
                     '[data-testid="stBaseButton-header"]',
+                    '[data-testid="stHeaderActionElements"]',
+                    '[data-testid="stHeaderActions"]',
+                    '[data-testid="stDeployButton"]',
+                    '[data-testid="stAppDeployButton"]',
                     '[data-testid*="github"]',
                     '[data-testid*="Github"]',
                     '.stDeployButton',
                     '.viewerBadge_container__',
                     '.viewerBadge_link__',
                     '.viewerBadge_text__',
-                    'a[href*="github.com"]',
-                    'a[href*="streamlit.io"]',
-                    '[aria-label*="GitHub"]',
-                    '[aria-label*="github"]',
-                    '[title*="GitHub"]',
-                    '[title*="github"]'
+                    'iframe[title="streamlit_analytics"]',
+                    'header a[href*="github.com"]',
+                    'header a[href*="streamlit.io"]',
+                    'header [aria-label*="GitHub"]',
+                    'header [aria-label*="github"]',
+                    'header [aria-label*="Streamlit"]',
+                    'header [title*="GitHub"]',
+                    'header [title*="github"]',
+                    'header [title*="Streamlit"]',
+                    'button[title*="GitHub"]',
+                    'button[title*="github"]'
                 ];
 
                 function stripChrome(root) {
@@ -391,11 +403,23 @@ def _render_public_report_route():
                     });
                 }
 
+                function walk(root) {
+                    if (!root) return;
+                    stripChrome(root);
+                    try {
+                        root.querySelectorAll('*').forEach(function (el) {
+                            if (el.shadowRoot) {
+                                walk(el.shadowRoot);
+                            }
+                        });
+                    } catch (e) {}
+                }
+
                 function run() {
-                    stripChrome(document);
+                    walk(document);
                     if (window.parent && window.parent !== window) {
                         try {
-                            stripChrome(window.parent.document);
+                            walk(window.parent.document);
                         } catch (e) {}
                     }
                 }
@@ -403,6 +427,7 @@ def _render_public_report_route():
                 run();
                 new MutationObserver(run).observe(document.documentElement, { childList: true, subtree: true });
                 window.addEventListener('load', run);
+                window.addEventListener('DOMContentLoaded', run);
                 setInterval(run, 1000);
             })();
         </script>
@@ -976,10 +1001,14 @@ def _make_random_stations(df_calls, n=40, boundary_geom=None, epsg_code=None):
     })
 
 @st.cache_data(show_spinner=False)
-def _fetch_osm_stations_cached(cen_lat_r: float, cen_lon_r: float, max_stations: int = 200):
+def _fetch_osm_stations_cached(cen_lat_r: float, cen_lon_r: float, max_stations: int = 200,
+                                bbox_min_lat: float = None, bbox_min_lon: float = None,
+                                bbox_max_lat: float = None, bbox_max_lon: float = None):
     """Cache-friendly OSM query keyed on rounded centroid (2 dp ≈ 1 km grid).
     Returns (list_of_dicts | None, note_str).  All three Overpass mirrors are
     queried in parallel — total wait = fastest mirror, not sum of all mirrors.
+    When explicit bbox bounds are provided they are used instead of the fixed
+    radii so the search covers the entire city/jurisdiction.
     """
     osm_urls = [
         'https://overpass-api.de/api/interpreter',
@@ -998,8 +1027,18 @@ def _fetch_osm_stations_cached(cen_lat_r: float, cen_lon_r: float, max_stations:
         except Exception:
             return None
 
-    for R in [0.25, 0.45]:
-        bbox = f"{cen_lat_r - R},{cen_lon_r - R},{cen_lat_r + R},{cen_lon_r + R}"
+    # When explicit bounds are provided, use a single pass with the full bbox;
+    # otherwise fall back to the legacy expanding-radius approach.
+    if bbox_min_lat is not None:
+        _radii = [None]  # single pass using explicit bounds
+    else:
+        _radii = [0.25, 0.45]
+
+    for R in _radii:
+        if R is None:
+            bbox = f"{bbox_min_lat},{bbox_min_lon},{bbox_max_lat},{bbox_max_lon}"
+        else:
+            bbox = f"{cen_lat_r - R},{cen_lon_r - R},{cen_lat_r + R},{cen_lon_r + R}"
         query = (
             f'[out:json][timeout:20];'
             f'(node["amenity"="fire_station"]({bbox});'
@@ -1032,15 +1071,20 @@ def _fetch_osm_stations_cached(cen_lat_r: float, cen_lon_r: float, max_stations:
             f'way["amenity"="social_facility"]({bbox});'
             f');out center;'
         )
-        # Fire all three mirrors in parallel — first successful response wins
+        # Fire all three mirrors in parallel — first successful response wins.
+        # Use an explicit shutdown so slow mirrors do not block the caller once
+        # we already have a usable response.
         data = None
-        with cf.ThreadPoolExecutor(max_workers=3) as _pool:
+        _pool = cf.ThreadPoolExecutor(max_workers=3)
+        try:
             futs = {_pool.submit(_try_mirror, url, query): url for url in osm_urls}
             for fut in cf.as_completed(futs):
                 result = fut.result()
                 if result is not None:
                     data = result
-                    break  # cancel remaining mirrors implicitly (they finish but are ignored)
+                    break
+        finally:
+            _pool.shutdown(wait=False, cancel_futures=True)
 
         if data is None:
             continue
@@ -1147,12 +1191,17 @@ def _fetch_hifld_stations_cached(min_lat: float, min_lon: float, max_lat: float,
         except Exception:
             return []
 
-    # Fetch fire + police in parallel — total wait = max(fire, police), not sum
+    # Fetch fire + police in parallel — total wait = max(fire, police), not sum.
+    # Shutdown explicitly so one slow service cannot hold the UI open after a
+    # usable answer has already been gathered.
     all_rows = []
-    with cf.ThreadPoolExecutor(max_workers=2) as _pool:
+    _pool = cf.ThreadPoolExecutor(max_workers=2)
+    try:
         futs = [_pool.submit(_fetch_one, url, lbl, fld) for url, lbl, fld in _HIFLD_SOURCES]
         for fut in cf.as_completed(futs):
             all_rows.extend(fut.result())
+    finally:
+        _pool.shutdown(wait=False, cancel_futures=True)
 
     if all_rows:
         return all_rows, f"Found {len(all_rows)} stations from HIFLD (US Federal)."
@@ -1178,18 +1227,22 @@ def generate_stations_from_calls(df_calls, max_stations=100):
     cen_lat_r = round(float(lats[mask].mean()), 2)
     cen_lon_r = round(float(lons[mask].mean()), 2)
 
-    _pad = 0.45
-    min_lat_r = round(cen_lat_r - _pad, 2)
-    max_lat_r = round(cen_lat_r + _pad, 2)
-    min_lon_r = round(cen_lon_r - _pad, 2)
-    max_lon_r = round(cen_lon_r + _pad, 2)
+    # Derive bbox from the actual data spread so the search covers the entire
+    # city/jurisdiction instead of a fixed radius around the centroid.
+    _pad = 0.05  # small buffer (~5.5 km) beyond the outermost calls
+    min_lat_r = round(float(lats[mask].min()) - _pad, 2)
+    max_lat_r = round(float(lats[mask].max()) + _pad, 2)
+    min_lon_r = round(float(lons[mask].min()) - _pad, 2)
+    max_lon_r = round(float(lons[mask].max()) + _pad, 2)
 
     osm_rows, osm_note = None, "OSM unavailable"
     hifld_rows, hifld_note = None, "HIFLD unavailable"
 
-    with cf.ThreadPoolExecutor(max_workers=2) as pool:
+    pool = cf.ThreadPoolExecutor(max_workers=2)
+    try:
         futures = {
-            'OSM': pool.submit(_fetch_osm_stations_cached, cen_lat_r, cen_lon_r, max_stations),
+            'OSM': pool.submit(_fetch_osm_stations_cached, cen_lat_r, cen_lon_r, max_stations,
+                               min_lat_r, min_lon_r, max_lat_r, max_lon_r),
             'HIFLD': pool.submit(_fetch_hifld_stations_cached, min_lat_r, min_lon_r, max_lat_r, max_lon_r),
         }
         _, not_done = cf.wait(futures.values(), timeout=12)
@@ -1208,6 +1261,8 @@ def generate_stations_from_calls(df_calls, max_stations=100):
                 osm_rows, osm_note = rows, note
             else:
                 hifld_rows, hifld_note = rows, note
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     combined = []
     if osm_rows:
@@ -1637,6 +1692,346 @@ def search_address_candidates(address_str, limit=6, preferred_city="", preferred
         preferred_state=preferred_state,
         provider_signature=_get_geocoder_provider_signature(),
     )
+
+_PUBLIC_FACILITY_QUERY_TERMS = {
+    'Police': ['police department', 'police station', 'sheriff office', 'public safety'],
+    'Fire': ['fire station', 'fire department', 'fire hall', 'rescue station'],
+    'School': ['school', 'elementary school', 'middle school', 'high school', 'academy'],
+    'Government': ['city hall', 'town hall', 'public works', 'municipal building', 'municipal services', 'government center', 'civic center'],
+    'Library': ['library', 'public library', 'library branch'],
+}
+
+def _normalize_public_facility_type(facility_type):
+    raw = str(facility_type or '').strip().lower()
+    if not raw:
+        return ''
+    if 'police' in raw or 'law enforcement' in raw or 'sheriff' in raw:
+        return 'Police'
+    if 'fire' in raw or 'ems' in raw or 'ambulance' in raw or 'rescue' in raw:
+        return 'Fire'
+    if 'school' in raw or 'academy' in raw:
+        return 'School'
+    if 'library' in raw:
+        return 'Library'
+    if 'government' in raw or 'public works' in raw or 'city hall' in raw or 'town hall' in raw or 'municipal' in raw or 'civic' in raw:
+        return 'Government'
+    return ''
+
+
+def _looks_like_street_address(text):
+    raw = str(text or '').strip().lower()
+    if not raw:
+        return False
+    if not re.search(r'\d', raw):
+        return False
+    street_tokens = (
+        ' st', ' street', ' rd', ' road', ' ave', ' avenue', ' blvd', ' boulevard',
+        ' dr', ' drive', ' ln', ' lane', ' ct', ' court', ' pkwy', ' parkway',
+        ' hwy', ' highway', ' ter', ' terrace', ' cir', ' circle', ' way', ' pl',
+        ' place', ' n ', ' s ', ' e ', ' w ',
+    )
+    return any(token in raw for token in street_tokens)
+
+
+def _public_facility_query_variants(query_str, facility_type, preferred_city="", preferred_state=""):
+    query_str = str(query_str or '').strip()
+    if not query_str:
+        return []
+
+    facility_key = _normalize_public_facility_type(facility_type)
+    terms = _PUBLIC_FACILITY_QUERY_TERMS.get(facility_key, [])
+    if not terms:
+        return []
+
+    preferred_city = str(preferred_city or '').strip()
+    preferred_state = str(preferred_state or '').strip().upper()
+    variants = []
+
+    base_queries = [query_str]
+    _lower_query = query_str.lower()
+    if preferred_city and preferred_state and preferred_city.lower() not in _lower_query and preferred_state.lower() not in _lower_query:
+        base_queries.append(f"{query_str}, {preferred_city}, {preferred_state}")
+
+    for base_query in base_queries:
+        for term in terms:
+            variants.append(f"{base_query}, {term}")
+            variants.append(f"{base_query} {term}")
+
+    ordered = []
+    seen = set()
+    for variant in variants:
+        clean = re.sub(r'\s+', ' ', str(variant or '').strip())
+        key = clean.lower()
+        if clean and key not in seen:
+            seen.add(key)
+            ordered.append(clean)
+    return ordered
+
+
+def _public_facility_type_is_plausible(feature_type, facility_key):
+    feature_type = str(feature_type or '').strip().lower()
+    if not feature_type:
+        return False
+    if facility_key == 'Fire':
+        return feature_type == 'fire_station'
+    if facility_key == 'Police':
+        return feature_type in {'police', 'police_station', 'public_bldg'}
+    if facility_key == 'School':
+        return feature_type in {'school', 'college', 'university'}
+    if facility_key == 'Library':
+        return feature_type == 'library'
+    if facility_key == 'Government':
+        return feature_type in {'townhall', 'city_hall', 'public_bldg', 'government', 'civic'}
+    return False
+
+
+def _public_facility_label_is_plausible(label, facility_key):
+    label = str(label or '').strip().lower()
+    if not label:
+        return False
+    if facility_key == 'Fire':
+        return any(token in label for token in ('fire station', 'fire department', 'fire hall', 'rescue station', 'fire rescue', 'station'))
+    if facility_key == 'Police':
+        return any(token in label for token in ('police', 'sheriff', 'public safety', 'law enforcement', 'precinct', 'marshal'))
+    if facility_key == 'School':
+        return any(token in label for token in ('school', 'academy', 'elementary', 'middle school', 'high school', 'campus'))
+    if facility_key == 'Library':
+        return 'library' in label
+    if facility_key == 'Government':
+        return any(token in label for token in ('city hall', 'town hall', 'public works', 'municipal', 'government', 'civic center', 'administration'))
+    return False
+
+
+@st.cache_data(show_spinner=False)
+def _reverse_geocode_public_facility_meta(lat, lon):
+    try:
+        url = f"https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat={lat}&lon={lon}&zoom=18&addressdetails=1&namedetails=1"
+        req = urllib.request.Request(url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _public_facility_candidate_is_plausible(candidate, facility_key):
+    try:
+        lat = float(candidate.get('lat'))
+        lon = float(candidate.get('lon'))
+    except Exception:
+        return False
+
+    reverse_meta = _reverse_geocode_public_facility_meta(lat, lon) or {}
+    reverse_type = str(reverse_meta.get('type') or '').strip().lower()
+    reverse_class = str(reverse_meta.get('class') or '').strip().lower()
+    display_name = str(reverse_meta.get('display_name') or '').strip().lower()
+    address_blob = ' '.join(
+        str(value).strip().lower()
+        for value in (reverse_meta.get('address') or {}).values()
+        if value
+    )
+    combined = ' '.join([reverse_type, reverse_class, display_name, address_blob]).strip()
+
+    if any(bad in combined for bad in ('golf course', 'golf_course', 'house', 'residential', 'apartment', 'apartments')):
+        return False
+    return True
+
+
+def _public_facility_candidate_score(candidate, facility_type, preferred_city="", preferred_state=""):
+    facility_key = _normalize_public_facility_type(facility_type)
+    label = str(candidate.get('matched_address') or candidate.get('label') or '').strip().lower()
+    feature_type = str(candidate.get('feature_type') or '').strip().lower()
+    score = 100
+
+    if facility_key == 'Police':
+        if any(token in label for token in ('police', 'sheriff', 'public safety', 'law enforcement', 'precinct', 'marshal')):
+            score += 200
+        else:
+            score -= 500
+    elif facility_key == 'Fire':
+        if any(token in label for token in ('fire station', 'fire department', 'fire hall', 'rescue')):
+            score += 200
+        else:
+            score -= 500
+    elif facility_key == 'School':
+        if any(token in label for token in ('school', 'academy', 'elementary', 'middle school', 'high school')):
+            score += 180
+        else:
+            score -= 500
+    elif facility_key == 'Library':
+        if 'library' in label:
+            score += 200
+        else:
+            score -= 500
+    elif facility_key == 'Government':
+        if any(token in label for token in ('city hall', 'town hall', 'public works', 'municipal', 'government', 'civic center', 'administration')):
+            score += 180
+        else:
+            score -= 500
+
+    if _public_facility_type_is_plausible(feature_type, facility_key):
+        score += 250
+    else:
+        score -= 600
+
+    if preferred_state:
+        _state = preferred_state.lower()
+        _abbr_to_full = {v: k for k, v in US_STATES_ABBR.items()}
+        _full = _abbr_to_full.get(preferred_state.upper(), '').lower()
+        if f", {_state}" in label or label.endswith(f" {_state}") or (_full and _full in label):
+            score += 35
+        else:
+            score -= 20
+    if preferred_city:
+        if preferred_city.lower() in label:
+            score += 25
+        else:
+            score -= 10
+    return score
+
+
+@st.cache_data(show_spinner=False)
+def search_public_facility_candidates(query_str, facility_type, limit=6, preferred_city="", preferred_state=""):
+    query_str = str(query_str or '').strip()
+    if not query_str:
+        return []
+
+    facility_key = _normalize_public_facility_type(facility_type)
+    if not facility_key:
+        return []
+
+    limit = max(1, min(int(limit or 6), 10))
+    preferred_city = str(preferred_city or '').strip()
+    preferred_state = str(preferred_state or '').strip().upper()
+    queries = _public_facility_query_variants(query_str, facility_key, preferred_city, preferred_state)
+    if not queries:
+        return []
+
+    candidates = []
+    seen = set()
+    provider_trace = []
+    address_search_hits = 0
+
+    def _add_candidate(label, lat, lon, raw_match=''):
+        try:
+            lat_f = float(lat)
+            lon_f = float(lon)
+        except Exception:
+            return None
+        dedupe_key = (round(lat_f, 6), round(lon_f, 6), str(label).strip().lower())
+        if dedupe_key in seen:
+            return None
+        seen.add(dedupe_key)
+        candidate = {
+            'label': str(label).strip() or str(raw_match).strip() or query_str,
+            'matched_address': str(raw_match).strip() or str(label).strip() or query_str,
+            'lat': lat_f,
+            'lon': lon_f,
+            'source': 'OSM',
+            'feature_type': '',
+            'feature_class': '',
+            '_score': 0,
+        }
+        candidates.append(candidate)
+        return candidate
+
+    def _ingest_address_matches(matches, source_name, query_text):
+        nonlocal address_search_hits
+        kept = 0
+        for _match in matches or []:
+            _label = str(_match.get('matched_address') or _match.get('label') or '').strip()
+            if not _public_facility_label_is_plausible(_label, facility_key):
+                continue
+            _candidate = _add_candidate(
+                _label,
+                _match.get('lat'),
+                _match.get('lon'),
+                raw_match=_label,
+            )
+            if _candidate is not None:
+                _candidate['source'] = str(_match.get('source') or source_name or 'lookup')
+                _candidate['feature_type'] = str(_match.get('feature_type') or '').strip().lower()
+                _candidate['feature_class'] = str(_match.get('feature_class') or '').strip().lower()
+                if not _public_facility_candidate_is_plausible(_candidate, facility_key):
+                    candidates.pop()
+                    continue
+                kept += 1
+        address_search_hits += kept
+        provider_trace.append({
+            'provider': source_name,
+            'query': query_text,
+            'used': True,
+            'match_count': kept,
+            'status': 'ok',
+        })
+
+    for _query in queries:
+        try:
+            addr_matches = search_address_candidates(
+                _query,
+                limit=limit,
+                preferred_city=preferred_city,
+                preferred_state=preferred_state,
+            )
+            _ingest_address_matches(addr_matches, 'validated_address_search', _query)
+        except Exception:
+            provider_trace.append({'provider': 'validated_address_search', 'query': _query, 'used': True, 'match_count': 0, 'status': 'error'})
+
+    if not candidates:
+        for _query in queries:
+            try:
+                _params = urllib.parse.urlencode({
+                    'format': 'jsonv2',
+                    'q': _query,
+                    'limit': str(limit),
+                    'countrycodes': 'us',
+                    'addressdetails': '1',
+                })
+                _url = f"https://nominatim.openstreetmap.org/search?{_params}"
+                _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
+                with urllib.request.urlopen(_req, timeout=8) as _resp:
+                    _data = json.loads(_resp.read().decode('utf-8'))
+                _matches = _data[:limit]
+                provider_trace.append({'provider': 'OSM_POI', 'query': _query, 'used': True, 'match_count': len(_matches), 'status': 'ok'})
+                for _match in _matches:
+                    _label = _match.get('display_name', _query)
+                    _feature_type = str(_match.get('type') or '').strip().lower()
+                    _feature_class = str(_match.get('class') or '').strip().lower()
+                    if not (_public_facility_type_is_plausible(_feature_type, facility_key) or _public_facility_label_is_plausible(_label, facility_key)):
+                        continue
+                    _candidate = _add_candidate(_label, _match.get('lat'), _match.get('lon'), raw_match=_label)
+                    if _candidate is not None:
+                        _candidate['source'] = 'OSM'
+                        _candidate['feature_type'] = _feature_type
+                        _candidate['feature_class'] = _feature_class
+                        if not _public_facility_candidate_is_plausible(_candidate, facility_key):
+                            candidates.pop()
+                            continue
+            except Exception:
+                provider_trace.append({'provider': 'OSM_POI', 'query': _query, 'used': True, 'match_count': 0, 'status': 'error'})
+
+    for _candidate in candidates:
+        _candidate['_score'] = _public_facility_candidate_score(_candidate, facility_key, preferred_city=preferred_city, preferred_state=preferred_state)
+
+    candidates = [c for c in candidates if c.get('_score', -999) > 0]
+    candidates.sort(key=lambda item: (-item.get('_score', 0), item.get('matched_address', '')))
+
+    try:
+        st.session_state['_last_geocode_trace'] = {
+            'input': query_str,
+            'facility_type': facility_key,
+            'preferred_city': preferred_city,
+            'preferred_state': preferred_state,
+            'queries': queries,
+            'providers': provider_trace,
+            'candidate_count': len(candidates),
+            'top_candidate': candidates[0]['matched_address'] if candidates else '',
+            'public_facility_lookup': True,
+        }
+    except Exception:
+        pass
+
+    return [{k: v for k, v in _candidate.items() if k != '_score'} for _candidate in candidates[:limit]]
 
 @st.cache_data(show_spinner=False)
 def forward_geocode(address_str):
@@ -2959,21 +3354,44 @@ try:
     var sel = [
         'header', '[data-testid="stHeader"]', '[data-testid="stToolbar"]',
         '[data-testid="stDecoration"]', '[data-testid="stStatusWidget"]',
-        '#MainMenu', 'footer', '.stDeployButton'
+        '[data-testid="stGithubButton"]', '[data-testid="stActionButton"]',
+        '[data-testid="stBaseButton-header"]', '[data-testid="stHeaderActionElements"]',
+        '[data-testid="stHeaderActions"]', '[data-testid="stDeployButton"]',
+        '[data-testid="stAppDeployButton"]', '.stDeployButton',
+        '.viewerBadge_container__', '.viewerBadge_link__', '.viewerBadge_text__',
+        '#MainMenu', 'footer', 'iframe[title="streamlit_analytics"]',
+        'header a[href*="github.com"]', 'header a[href*="streamlit.io"]',
+        'header [aria-label*="GitHub"]', 'header [aria-label*="github"]',
+        'header [aria-label*="Streamlit"]', 'header [title*="GitHub"]',
+        'header [title*="github"]', 'header [title*="Streamlit"]',
+        'button[title*="GitHub"]', 'button[title*="github"]'
     ];
-    function hide() {
+    function sweep(root) {
+        if (!root) return;
         try {
-            var doc = window.parent.document;
             sel.forEach(function(s) {
-                doc.querySelectorAll(s).forEach(function(el) {
-                    el.style.setProperty('display', 'none', 'important');
+                root.querySelectorAll(s).forEach(function(el) {
+                    el.remove();
                 });
             });
+            root.querySelectorAll('*').forEach(function(el) {
+                if (el.shadowRoot) {
+                    sweep(el.shadowRoot);
+                }
+            });
+        } catch(e) {}
+    }
+    function hide() {
+        try {
+            sweep(window.parent.document);
         } catch(e) {}
     }
     hide();
     try {
         new MutationObserver(hide).observe(window.parent.document.body, {childList:true, subtree:true});
+    } catch(e) {}
+    try {
+        setInterval(hide, 1000);
     } catch(e) {}
 })();
 </script>
@@ -3743,13 +4161,21 @@ def main():
                             st.error("❌ Census result upload failed: missing prepared session data or no valid result rows were found.")
                             st.stop()
 
-                        merged_full_df, merged_ready_df, merge_summary = merge_census_results(partial_calls_df, result_df)
+                        merged_full_df, merged_ready_df, merge_summary = merge_census_results(
+                            partial_calls_df,
+                            result_df,
+                            validate_outputs=False,
+                        )
                         if merged_ready_df is None or merged_ready_df.empty:
                             st.error("❌ Census result upload failed: no valid coordinates were recovered from the returned result files.")
                             st.stop()
 
-                        corrected_export_df = build_corrected_export(original_df, result_df)
+                        _export_started_at = time.perf_counter()
+                        corrected_export_df = build_corrected_export_from_merged(merged_full_df)
                         corrected_csv = corrected_export_df.to_csv(index=False).encode('utf-8')
+                        _push_upload_log(
+                            f"Census corrected export built in {_format_wait(time.perf_counter() - _export_started_at)}."
+                        )
                         st.session_state['census_corrected_bytes'] = corrected_csv
                         st.session_state['census_corrected_name'] = "cad_calls_census_corrected.csv"
                         st.session_state['census_conversion_summary'] = merge_summary
@@ -3780,7 +4206,7 @@ def main():
                                 st.stop()
                         else:
                             st.session_state['stations_user_uploaded'] = False
-                            with st.spinner("🌐 No stations file detected — querying OpenStreetMap for police, fire & schools…"):
+                            with st.spinner("🌐 No stations file detected — querying OpenStreetMap for police, fire & schools; this can take 10-20 seconds…"):
                                 df_s, osm_note = generate_stations_from_calls(df_c)
                             if df_s is None or df_s.empty:
                                 df_s = _make_random_stations(df_c, n=40)
@@ -3816,6 +4242,7 @@ def main():
 
                         with st.spinner(get_jurisdiction_message()):
                             resolve_uploaded_boundaries(
+                                st,
                                 st.session_state,
                                 df_c,
                                 df_c_full,
@@ -4060,7 +4487,7 @@ def main():
                                 progress=18,
                                 logs=_upload_logs,
                             )
-                            with st.spinner("🛰 No recoverable coordinates found — preparing Census batch conversion…"):
+                            with st.spinner("🛰 No recoverable coordinates found — preparing Census batch conversion; this usually takes a few seconds…"):
                                 _push_upload_log("Building partial call frame for merge-back.")
                                 _set_upload_overlay_status(
                                     title="CENSUS REQUIRED",
@@ -4133,16 +4560,58 @@ def main():
                                 )
 
                                 census_chunks = make_census_batch_chunks(census_stage_df, chunk_size=5000)
+                                census_timeout_sec = 180
+                                census_retries = 3
+                                census_stall_warn_sec = 600
+                                census_started_at = st.session_state.get('_census_batch_started_at')
+                                if not isinstance(census_started_at, (int, float)):
+                                    census_started_at = time.time()
+                                    st.session_state['_census_batch_started_at'] = census_started_at
+
+                                def _format_wait(seconds):
+                                    seconds = max(0, int(seconds))
+                                    mins, secs = divmod(seconds, 60)
+                                    return f"{mins}m {secs:02d}s" if mins else f"{secs}s"
+
+                                theoretical_max_wait = (
+                                    census_timeout_sec * census_retries
+                                    + sum(min(6, attempt * 2) for attempt in range(1, census_retries))
+                                )
                                 _push_upload_log(
                                     f"Prepared {int(census_summary.get('rows_ready', 0) or 0):,} Census-ready rows across {len(census_chunks)} Census chunk(s)."
+                                )
+                                _push_upload_log(
+                                    "Census wait guidance: each POST waits up to "
+                                    f"{census_timeout_sec}s, total worst-case per chunk is about "
+                                    f"{_format_wait(theoretical_max_wait)}, and a chunk that still has not completed after "
+                                    f"{_format_wait(census_stall_warn_sec)} should be treated as stalled."
                                 )
                                 _set_upload_overlay_status(
                                     title="CENSUS AUTOMATION",
                                     status="SUBMITTING BATCHES",
-                                    copy="Sending chunked address batches directly to the Census geocoder and waiting for returned coordinates.",
+                                    copy=(
+                                        "Sending chunked address batches directly to the Census geocoder. "
+                                        f"Elapsed since Census submit started: {_format_wait(time.time() - census_started_at)}. "
+                                        f"Each attempt can wait up to {_format_wait(census_timeout_sec)}; a healthy worst-case per chunk is about {_format_wait(theoretical_max_wait)}. "
+                                        f"If the same chunk is still waiting after {_format_wait(census_stall_warn_sec)}, treat it as stalled and cancel/retry."
+                                    ),
                                     progress=42,
                                     logs=_upload_logs,
                                 )
+
+                                def _save_census_state_for_manual():
+                                    st.session_state['census_pending'] = True
+                                    st.session_state['census_source_signature'] = current_upload_signature
+                                    st.session_state['census_partial_calls_df'] = df_c_partial
+                                    st.session_state['census_original_df'] = census_original_df
+                                    st.session_state['census_summary'] = census_summary
+                                    _zip = make_census_batch_zip(census_chunks)
+                                    st.session_state['census_batch_zip_bytes'] = _zip
+                                    st.session_state['census_batch_zip_name'] = 'census_batches.zip'
+                                    _samp = make_sample_census_batch(census_stage_df)
+                                    if _samp:
+                                        st.session_state['census_sample_bytes'] = _samp['csv_bytes']
+                                        st.session_state['census_sample_name'] = _samp['filename']
 
                                 census_result_parts = []
                                 chunk_queue = list(census_chunks)
@@ -4157,16 +4626,88 @@ def main():
                                     _set_upload_overlay_status(
                                         title="CENSUS AUTOMATION",
                                         status=f"SUBMITTING CHUNK {chunk_idx} OF {total_chunks}",
-                                        copy="Waiting for the Census batch endpoint to return the geocoded CSV for this chunk.",
+                                        copy=(
+                                            f"Waiting for the Census batch endpoint to return the geocoded CSV for chunk {chunk_idx} of {total_chunks}. "
+                                            f"Elapsed since Census submit started: {_format_wait(time.time() - census_started_at)}. "
+                                            f"If nothing returns after {_format_wait(census_stall_warn_sec)}, it is probably stalled."
+                                        ),
                                         progress=42 + int(completed_chunks / max(1, total_chunks) * 34),
                                         logs=_upload_logs,
                                     )
+                                    def _submit_census_chunk():
+                                        try:
+                                            return submit_census_batch_chunk(
+                                                chunk['csv_bytes'],
+                                                chunk['filename'],
+                                                timeout=census_timeout_sec,
+                                                retries=census_retries,
+                                                attempt_logger=_push_upload_log,
+                                            )
+                                        except TypeError as exc:
+                                            if "unexpected keyword argument 'attempt_logger'" in str(exc):
+                                                _push_upload_log(
+                                                    "Live Census module is still using the older submit_census_batch_chunk signature; "
+                                                    "retrying without per-attempt logs."
+                                                )
+                                                return submit_census_batch_chunk(
+                                                    chunk['csv_bytes'],
+                                                    chunk['filename'],
+                                                    timeout=census_timeout_sec,
+                                                    retries=census_retries,
+                                                )
+                                            raise
+
+                                    _census_pool = ThreadPoolExecutor(max_workers=1)
                                     try:
-                                        chunk_result_df, _chunk_resp = submit_census_batch_chunk(
-                                            chunk['csv_bytes'],
-                                            chunk['filename'],
-                                        )
+                                        _chunk_future = _census_pool.submit(_submit_census_chunk)
+                                        _chunk_wait_started_at = time.time()
+                                        _chunk_last_heartbeat_at = _chunk_wait_started_at
+                                        while True:
+                                            try:
+                                                chunk_result_df, _chunk_resp = _chunk_future.result(timeout=5)
+                                                break
+                                            except cf.TimeoutError:
+                                                _chunk_elapsed = time.time() - _chunk_wait_started_at
+                                                if _chunk_elapsed > census_stall_warn_sec:
+                                                    _push_upload_log(
+                                                        f"Chunk {chunk_idx}/{total_chunks} stalled after {_format_wait(_chunk_elapsed)}."
+                                                        " Switching to manual Census batch workflow."
+                                                    )
+                                                    _census_pool.shutdown(wait=False)
+                                                    _save_census_state_for_manual()
+                                                    _clear_upload_overlay()
+                                                    st.warning(
+                                                        "⚠️ The Census geocoder did not respond in time. "
+                                                        "Download the batch files below, submit them at "
+                                                        "geocoding.geo.census.gov/geocoder, and upload the returned CSVs here to continue."
+                                                    )
+                                                    st.rerun()
+                                                if _chunk_elapsed - _chunk_last_heartbeat_at >= 15:
+                                                    _chunk_last_heartbeat_at = _chunk_elapsed
+                                                    _push_upload_log(
+                                                        f"Chunk {chunk_idx}/{total_chunks} is still waiting after {_format_wait(_chunk_elapsed)}."
+                                                    )
+                                                _set_upload_overlay_status(
+                                                    title="CENSUS AUTOMATION",
+                                                    status=f"SUBMITTING CHUNK {chunk_idx} OF {total_chunks}",
+                                                    copy=(
+                                                        f"Waiting for the Census batch endpoint to return the geocoded CSV for chunk {chunk_idx} of {total_chunks}. "
+                                                        f"Elapsed since this chunk started: {_format_wait(_chunk_elapsed)}. "
+                                                        f"If the same chunk is still waiting after {_format_wait(census_stall_warn_sec)}, it is probably stalled."
+                                                    ),
+                                                    progress=min(
+                                                        76,
+                                                        42 + int(
+                                                            min(_chunk_elapsed, census_stall_warn_sec)
+                                                            / max(1, census_stall_warn_sec)
+                                                            * 34
+                                                        ),
+                                                    ),
+                                                    logs=_upload_logs,
+                                                )
+                                                continue
                                     except Exception as exc:
+                                        _census_pool.shutdown(wait=False)
                                         if chunk['rows'] > 1000 and chunk.get('frame') is not None:
                                             _push_upload_log(
                                                 f"Chunk {chunk_idx}/{total_chunks} failed: {exc}. Splitting into smaller batches and retrying."
@@ -4199,16 +4740,16 @@ def main():
                                             continue
 
                                         _push_upload_log(f"Chunk {chunk_idx}/{total_chunks} failed: {exc}")
-                                        _set_upload_overlay_status(
-                                            title="CENSUS ERROR",
-                                            status=f"CHUNK {chunk_idx} FAILED",
-                                            copy="The Census batch request failed. Review the error log below and share it with Steven if needed.",
-                                            progress=42 + int(completed_chunks / max(1, total_chunks) * 34),
-                                            logs=_upload_logs,
-                                            error=True,
+                                        _save_census_state_for_manual()
+                                        _clear_upload_overlay()
+                                        st.warning(
+                                            f"⚠️ Automated Census geocoding failed on chunk {chunk_idx} of {total_chunks}. "
+                                            "Download the batch files below, submit them at "
+                                            "geocoding.geo.census.gov/geocoder, and upload the returned CSVs here to continue."
                                         )
-                                        st.error(f"❌ Automated Census geocoding failed on chunk {chunk_idx} of {total_chunks}: {exc}")
-                                        st.stop()
+                                        st.rerun()
+                                    else:
+                                        _census_pool.shutdown(wait=False)
 
                                     _matched_rows = int((chunk_result_df['lat'].notna() & chunk_result_df['lon'].notna()).sum())
                                     _push_upload_log(
@@ -4230,12 +4771,50 @@ def main():
                                 _set_upload_overlay_status(
                                     title="CENSUS AUTOMATION",
                                     status="MERGING RESULTS",
-                                    copy="Combining all Census chunk responses and restoring coordinates into the original dataset.",
+                                    copy=(
+                                        f"Combining all Census chunk responses and restoring coordinates into the original dataset. "
+                                        f"Total Census wait so far: {_format_wait(time.time() - census_started_at)}."
+                                    ),
                                     progress=80,
                                     logs=_upload_logs,
                                 )
 
-                                merged_full_df, merged_ready_df, merge_summary = merge_census_results(df_c_partial, result_df)
+                                def _merge_census_outputs():
+                                    _merge_export_started_at = time.perf_counter()
+                                    merged_full_df, merged_ready_df, merge_summary = merge_census_results(
+                                        df_c_partial,
+                                        result_df,
+                                        validate_outputs=False,
+                                    )
+                                    _push_upload_log(
+                                        f"Census merge helper finished in {_format_wait(time.perf_counter() - _merge_export_started_at)} "
+                                        f"using {merge_summary.get('merge_backend', 'unknown')}."
+                                    )
+                                    if merged_ready_df is None or merged_ready_df.empty:
+                                        return merged_full_df, merged_ready_df, merge_summary, None
+                                    _corrected_export_started_at = time.perf_counter()
+                                    corrected_export_df = build_corrected_export_from_merged(merged_full_df)
+                                    corrected_csv = corrected_export_df.to_csv(index=False).encode('utf-8')
+                                    _push_upload_log(
+                                        f"Census corrected export built in {_format_wait(time.perf_counter() - _corrected_export_started_at)}."
+                                    )
+                                    return merged_full_df, merged_ready_df, merge_summary, corrected_csv
+
+                                _push_upload_log("Merging Census coordinates back into the source calls file.")
+                                _set_upload_overlay_status(
+                                    title="CENSUS AUTOMATION",
+                                    status="MERGING RESULTS",
+                                    copy=(
+                                        f"Combining all Census chunk responses and restoring coordinates into the original dataset. "
+                                        f"Elapsed since Census submit started: {_format_wait(time.time() - census_started_at)}."
+                                    ),
+                                    progress=80,
+                                    logs=_upload_logs,
+                                )
+                                merged_full_df, merged_ready_df, merge_summary, corrected_csv = _merge_census_outputs()
+
+                                _push_upload_log("Census merge completed. Restoring coordinates into the working dataset.")
+
                                 if merged_ready_df is None or merged_ready_df.empty:
                                     _push_upload_log("Census returned no valid coordinates after chunk processing.")
                                     _set_upload_overlay_status(
@@ -4249,8 +4828,6 @@ def main():
                                     st.error("❌ Automated Census geocoding completed, but no valid coordinates were returned.")
                                     st.stop()
 
-                                corrected_export_df = build_corrected_export(census_original_df, result_df)
-                                corrected_csv = corrected_export_df.to_csv(index=False).encode('utf-8')
                                 st.session_state['census_corrected_bytes'] = corrected_csv
                                 st.session_state['census_corrected_name'] = "cad_calls_census_corrected.csv"
                                 st.session_state['census_conversion_summary'] = merge_summary
@@ -4269,7 +4846,10 @@ def main():
                                 _set_upload_overlay_status(
                                     title="CENSUS AUTOMATION",
                                     status="GEOCODING COMPLETE",
-                                    copy="Coordinates restored. Finalizing station discovery and jurisdiction setup now.",
+                                    copy=(
+                                        f"Coordinates restored. Finalizing station discovery and jurisdiction setup now. "
+                                        f"Total Census time: {_format_wait(time.time() - census_started_at)}."
+                                    ),
                                     progress=88,
                                     logs=_upload_logs,
                                 )
@@ -4320,7 +4900,7 @@ def main():
                                 logs=_upload_logs,
                             )
                             st.session_state['stations_user_uploaded'] = False
-                            with st.spinner("🌐 No stations file detected — querying OpenStreetMap for police, fire & schools…"):
+                            with st.spinner("🌐 No stations file detected — querying OpenStreetMap for police, fire & schools; this can take 10-20 seconds…"):
                                 df_s, osm_note = generate_stations_from_calls(df_c)
                             if df_s is None or df_s.empty:
                                 # Final safety net: scatter stations across call bounding box
@@ -4378,6 +4958,7 @@ def main():
                         )
                         with st.spinner(get_jurisdiction_message()):
                             resolve_uploaded_boundaries(
+                                st,
                                 st.session_state,
                                 df_c,
                                 df_c_full,
@@ -4997,6 +5578,7 @@ body{{background:transparent;overflow:hidden}}
                 _sim_station_file,
                 active_targets,
                 forward_geocode,
+                search_public_facility_candidates,
                 generate_stations_from_calls,
                 generate_random_points_in_polygon,
             )
@@ -5241,6 +5823,7 @@ body{{background:transparent;overflow:hidden}}
             df_curve,
             get_address_from_latlon,
             search_address_candidates,
+            search_public_facility_candidates,
         )
         k_responder = _custom_station_state['k_responder']
         k_guardian = _custom_station_state['k_guardian']
@@ -5514,6 +6097,35 @@ body{{background:transparent;overflow:hidden}}
             "bounded_station_avg_distance_miles",
             optimization.mean_covered_distance_miles,
         )
+        def _station_avg_dist_and_cap(idx, d_type):
+            if d_type == 'RESPONDER':
+                avg_dist_local = float(station_metadata[idx].get('avg_dist_r', 0) or 0)
+                speed_local = CONFIG["RESPONDER_SPEED"]
+                flight_min_local = CONFIG["RESPONDER_FLIGHT_MIN"]
+                charge_min_local = CONFIG["RESPONDER_CHARGE_MIN"]
+                cov_local = resp_matrix[idx]
+            else:
+                avg_dist_local = float(station_metadata[idx].get('avg_dist_g', 0) or 0)
+                speed_local = CONFIG["GUARDIAN_SPEED"]
+                flight_min_local = CONFIG["GUARDIAN_FLIGHT_MIN"]
+                charge_min_local = CONFIG["GUARDIAN_CHARGE_MIN"]
+                cov_local = guard_matrix[idx]
+            avg_time_local = (avg_dist_local / speed_local) * 60 if speed_local > 0 else 0.0
+            max_cap_local = calculate_max_flights_per_day(
+                avg_time_local + 10.0,
+                flight_minutes=flight_min_local,
+                downtime_minutes=charge_min_local,
+            )
+            return cov_local, avg_dist_local, avg_time_local, max_cap_local
+
+        _station_cov_cache = {}
+        _station_cap_cache = {}
+        _selected_keys = []
+        for _idx, _d_type in ordered_deployments_raw:
+            _cov_local, _avg_dist_local, _avg_time_local, _max_cap_local = _station_avg_dist_and_cap(_idx, _d_type)
+            _station_cov_cache[(_idx, _d_type)] = _cov_local
+            _station_cap_cache[(_idx, _d_type)] = float(_max_cap_local) * 365.0
+            _selected_keys.append((_idx, _d_type))
         for idx, d_type in ordered_deployments_raw:
             if d_type == 'RESPONDER':
                 cov_array = resp_matrix[idx]; cost = CONFIG["RESPONDER_COST"]
@@ -5611,6 +6223,20 @@ body{{background:transparent;overflow:hidden}}
                 _weighted_zone_calls = float(np.sum(d['cov_array'] / np.maximum(_cover_counts, 1)))
                 _concurrent_weighted_zone_calls = max(0.0, _weighted_zone_calls - _exclusive_weighted_zone_calls)
                 _weighted_zone_perc  = (_weighted_zone_calls / total_calls) if total_calls > 0 else 0.0
+                _ring_capacity_yr = 0.0
+                if _raw_zone_calls > 0:
+                    for _peer_idx, _peer_type in _selected_keys:
+                        _peer_cov = _station_cov_cache.get((_peer_idx, _peer_type))
+                        if _peer_cov is None:
+                            continue
+                        _overlap_calls = float(np.sum(d['cov_array'] & _peer_cov))
+                        if _overlap_calls <= 0:
+                            continue
+                        _ring_capacity_yr += _station_cap_cache.get((_peer_idx, _peer_type), 0.0) * (_overlap_calls / _raw_zone_calls)
+                _calls_unanswered_yr = max(0.0, float(_raw_zone_calls) - _ring_capacity_yr)
+                _calls_unanswered_day = _calls_unanswered_yr / 365.0
+                _handled_calls_yr = max(0.0, float(_raw_zone_calls) - _calls_unanswered_yr)
+                _handled_calls_day = _handled_calls_yr / 365.0
 
                 # ── UTILIZATION: based on overlap-adjusted station load ───────────
                 # Shared calls are split across overlapping active drones so adding
@@ -5644,8 +6270,11 @@ body{{background:transparent;overflow:hidden}}
                     downtime_minutes=CONFIG["GUARDIAN_CHARGE_MIN"] if _is_guard else CONFIG["RESPONDER_CHARGE_MIN"],
                 )
                 # Alternate type cap (for cross-type deficit recommendation)
-                _alt_travel_cost = avg_time_min
+                _alt_avg_dist    = float(station_metadata[idx].get('avg_dist_g' if d_type == 'RESPONDER' else 'avg_dist_r', 0) or 0)
+                _alt_speed       = CONFIG["GUARDIAN_SPEED"] if _alt_is_guard else CONFIG["RESPONDER_SPEED"]
+                _alt_travel_cost = (_alt_avg_dist / _alt_speed) * 60 if _alt_speed > 0 else 0.0
                 _alt_response_cost = _alt_travel_cost + _MIN_SCENE_MIN
+                _alt_avg_time_min = _alt_travel_cost
                 _alt_max_flights  = calculate_max_flights_per_day(
                     _alt_response_cost,
                     flight_minutes=CONFIG["GUARDIAN_FLIGHT_MIN"] if _alt_is_guard else CONFIG["RESPONDER_FLIGHT_MIN"],
@@ -5672,6 +6301,12 @@ body{{background:transparent;overflow:hidden}}
                     (_budget_min / max(_zone_flights, 0.001)) - _travel_cost if _zone_flights > 0 else _max_on_scene,
                     _max_on_scene,
                 )
+                _alt_flight_endurance = CONFIG["GUARDIAN_FLIGHT_MIN"] if _alt_is_guard else CONFIG["RESPONDER_FLIGHT_MIN"]
+                _alt_max_on_scene = max(0.0, _alt_flight_endurance - _alt_travel_cost)
+                _alt_on_scene_min = min(
+                    (_alt_budget / max(_zone_flights, 0.001)) - _alt_travel_cost if _zone_flights > 0 else _alt_max_on_scene,
+                    _alt_max_on_scene,
+                )
 
                 _raw_calls_in_range_day = _raw_zone_calls / 365.0
                 _dispatchable_calls_day = _raw_calls_in_range_day * _effective_dfr
@@ -5692,11 +6327,16 @@ body{{background:transparent;overflow:hidden}}
                 _true_util = _call_capacity_util
                 _util = min(1.0, _true_util)
 
+                # ── ANNUAL CAPACITY VALUE: directly tied to handled calls ────────
+                _cost_delta        = CONFIG["OFFICER_COST_PER_CALL"] - CONFIG["DRONE_COST_PER_CALL"]
+                _unserv_calls_day = _calls_unanswered_day
+                _unserv_calls_yr  = _calls_unanswered_yr
+                _deflected_calls_day = _handled_calls_day * deflection_rate
+                _deflected_calls_yr  = _handled_calls_yr * deflection_rate
+
                 # Deficit: overlap-weighted dispatchable calls demanded beyond physical capacity
                 _deficit_flights  = max(0.0, _weighted_dispatchable_calls_day - _max_flights_cap)
                 _has_deficit      = _deficit_flights > 0.01
-                _unserv_calls_day = _deficit_flights if _has_deficit else 0.0
-                _unserv_calls_yr  = _unserv_calls_day * 365
 
                 # Extra stations needed to clear deficit (same type and alternate type)
                 _extra_same = int(math.ceil(_deficit_flights / _max_flights_cap)) if (_has_deficit and _max_flights_cap > 0) else 0
@@ -5709,13 +6349,6 @@ body{{background:transparent;overflow:hidden}}
                 _extra_alt_capex  = _extra_alt  * _alt_type_cost
                 _same_type_label  = "Guardian"  if _is_guard else "Responder"
                 _alt_type_label   = "Responder" if _is_guard else "Guardian"
-
-                # ── ANNUAL CAPACITY VALUE: directly tied to handled calls ────────
-                _cost_delta        = CONFIG["OFFICER_COST_PER_CALL"] - CONFIG["DRONE_COST_PER_CALL"]
-                _handled_calls_day = min(_weighted_dispatchable_calls_day, _max_flights_cap)
-                _handled_calls_yr  = _handled_calls_day * 365.0
-                _deflected_calls_day = _handled_calls_day * deflection_rate
-                _deflected_calls_yr  = _handled_calls_yr * deflection_rate
                 # Exclusive share derived from zone call counts (stable under any
                 # capacity cap — both numerator and denominator scale identically).
                 if _weighted_zone_calls > 0:
@@ -5748,8 +6381,8 @@ body{{background:transparent;overflow:hidden}}
                 d['dispatchable_calls_yr']  = _dispatchable_calls_yr
                 d['weighted_dispatchable_calls_day'] = _weighted_dispatchable_calls_day
                 d['weighted_dispatchable_calls_yr']  = _weighted_dispatchable_calls_yr
-                d['calls_handle_day']    = min(_dispatchable_calls_day, _max_flights_cap)
-                d['calls_handle_yr']     = min(_dispatchable_calls_yr, _max_flights_cap * 365.0)
+                d['calls_handle_day']    = _handled_calls_day
+                d['calls_handle_yr']     = _handled_calls_yr
                 d['calls_unanswered_day']= _unserv_calls_day
                 d['calls_unanswered_yr'] = _unserv_calls_yr
                 d['marginal_flights']    = _excl_flights
@@ -5764,6 +6397,9 @@ body{{background:transparent;overflow:hidden}}
                 d['utilization']         = _util
                 d['true_util']           = _true_util
                 d['on_scene_min']        = _on_scene_min
+                d['alt_on_scene_min']    = _alt_on_scene_min
+                d['alt_avg_time_min']    = _alt_avg_time_min
+                d['loiter_vs_other_min'] = _on_scene_min - _alt_on_scene_min
                 d['max_flights_cap']     = _max_flights_cap
                 d['effective_dfr_rate']  = _effective_dfr
                 d['has_deficit']         = _has_deficit
@@ -6221,6 +6857,8 @@ body{{background:transparent;overflow:hidden}}
             if show_faa and faa_geojson and faa_geojson.get("features"):
                 try:
                     faa_rf.add_faa_laanc_layer_to_plotly(fig, faa_geojson, is_dark=not show_satellite)
+                    if len(faa_geojson.get("features", [])) >= 50:
+                        st.sidebar.caption("FAA overlap boxes are thinned to a checkerboard pattern for faster loading.")
                 except Exception as e:
                     st.sidebar.error(f"🔴 FAA render error: {str(e)[:100]}")
 
@@ -6265,7 +6903,6 @@ body{{background:transparent;overflow:hidden}}
                         fill='toself', fillcolor='rgba(0,0,0,0)',
                         name=lbl, hoverinfo='skip', showlegend=False
                     ))
-
                 fig.add_trace(go.Scattermap(
                     lat=list(clats)+[None,d['lat']], lon=list(clons)+[None,d['lon']],
                     mode='lines+markers',
@@ -7912,6 +8549,62 @@ body{{background:transparent;overflow:hidden}}
         _safe_city_base = _safe_export_slug(prop_city, "City")
         export_details = {}
         export_html = None
+        _report_build_started = time.perf_counter()
+
+        def _report_wait_message():
+            _call_count = int(
+                st.session_state.get(
+                    'total_original_calls',
+                    full_total_calls if 'full_total_calls' in locals() else (len(calls_in_city) if calls_in_city is not None else 0),
+                )
+                or 0
+            )
+            _drone_count = len(active_drones) if active_drones else 0
+            _last_seconds = st.session_state.get('report_build_seconds')
+            if isinstance(_last_seconds, (int, float)) and _last_seconds > 0:
+                return (
+                    f"Creating a custom report takes time, please wait. "
+                    f"Last build took {_last_seconds:.1f}s for {_call_count:,} calls and {_drone_count} drones."
+                )
+            _estimated_seconds = 4.0 + min(20.0, (_call_count / 180.0) + (_drone_count * 1.5))
+            return (
+                f"Creating a custom report takes time, please wait. "
+                f"Estimated wait is about {_estimated_seconds:.0f} seconds for {_call_count:,} calls and {_drone_count} drones."
+            )
+
+        _report_wait_note = _report_wait_message()
+        _report_notice_slot = st.sidebar.empty()
+        _brinc_export_slot = st.sidebar.empty()
+        _html_export_slot = st.sidebar.empty()
+        _kml_export_slot = st.sidebar.empty()
+
+        _report_notice_slot.info(_report_wait_note)
+        _brinc_export_slot.button(
+            "💾 Save Deployment Plan",
+            disabled=True,
+            width="stretch",
+            help=_report_wait_note,
+        )
+        _html_export_slot.button(
+            f"📄 {prop_city}, {prop_state} — Executive Summary",
+            disabled=True,
+            width="stretch",
+            help=(
+                "Deploy at least one drone to generate the executive summary."
+                if fleet_capex <= 0
+                else _report_wait_note
+            ),
+        )
+        _kml_export_slot.button(
+            "🌏 Google Earth Briefing File",
+            disabled=True,
+            width="stretch",
+            help=(
+                "Deploy at least one drone to generate the KML file."
+                if not active_drones
+                else _report_wait_note
+            ),
+        )
         export_dict = {
             "city": prop_city,
             "state": prop_state,
@@ -8747,7 +9440,7 @@ body{{background:transparent;overflow:hidden}}
                   <div id="grant-body-opioid" style="font-size:13px;color:#334155;line-height:1.7;">
                     <p><strong>Project Title:</strong> BRINC Drones Overdose-Response and Multi-Agency Coordination Initiative — {_get_document_jurisdiction_name(st.session_state, selected_names, fallback=prop_city)}, {prop_state}</p>
                     <p><strong>Program Fit and Funding Opportunity Alignment:</strong> The FY25 COSSUP site-based solicitation is designed to help eligible state, local, and tribal governments develop, implement, or expand coordinated responses that identify, respond to, treat, and support people impacted by illicit opioids, stimulants, and other substances [1][2]. BJA’s current overview and webinar materials emphasize cross-system collaboration among public safety, behavioral health, treatment, and community partners; law-enforcement-related activities tied to overdose response and prevention; stronger access to prevention tools and overdose reversal medications; and expanded treatment and recovery pathways in the community and, where applicable, correctional settings [1][3]. This proposal is written to match that frame directly.</p>
-                    <p><strong>Statement of Need:</strong> {_get_document_jurisdiction_name(st.session_state, selected_names, fallback=prop_city)} currently generates approximately <strong>{st.session_state.get('total_original_calls', total_calls):,} calls for service annually</strong>, or about <strong>{max(1,int(st.session_state.get('total_original_calls', total_calls)/365)):,} calls per day</strong>. Within that operating tempo, overdose calls, unconscious-person calls, welfare checks, narcotics-related incidents, and co-occurring behavioral-health events place responders into fast-moving scenes where delayed situational awareness increases risk to the patient, the public, and first responders. The proposed BRINC deployment closes that gap by moving eyes-on-scene forward to the first minutes of the event, giving dispatch, law enforcement, fire/EMS, and partner agencies a common operating picture before personnel commit to the address.</p>
+                    <p><strong>Statement of Need:</strong> {_get_document_jurisdiction_name(st.session_state, selected_names, fallback=prop_city)} currently generates approximately <strong>{st.session_state.get('total_original_calls', total_calls):,} calls for service annually</strong>. Within that operating tempo, overdose calls, unconscious-person calls, welfare checks, narcotics-related incidents, and co-occurring behavioral-health events place responders into fast-moving scenes where delayed situational awareness increases risk to the patient, the public, and first responders. The proposed BRINC deployment closes that gap by moving eyes-on-scene forward to the first minutes of the event, giving dispatch, law enforcement, fire/EMS, and partner agencies a common operating picture before personnel commit to the address.</p>
                     <p><strong>Proposed COSSUP-Supported Response Model:</strong> The applicant proposes to deploy a BRINC Drone as a First Responder network consisting of <strong>{actual_k_responder} Responder units</strong> and <strong>{actual_k_guardian} Guardian units</strong> across <strong>{jurisdiction_list}</strong>. In the modeled configuration, the network reaches <strong>{calls_covered_perc:.1f}% of historical incidents</strong>, improves average arrival speed by <strong>{avg_time_saved:.1f} minutes</strong> versus patrol response, and gives dispatchers and field supervisors live HD and thermal intelligence during suspected overdose, unsafe-entry, and multi-agency scenes. BRINC’s launch-on-dispatch workflow, live-streaming video, chain-of-custody flight logging, and integrated operational analytics allow the applicant to present the system not as a stand-alone aircraft purchase, but as overdose-scene intelligence infrastructure that supports public safety decision-making, responder protection, and coordinated care pathways.</p>
                     <p><strong>How BRINC Advances COSSUP Priorities:</strong> First, the platform strengthens the public-safety response by letting dispatch and field commanders verify scene conditions, assess ingress/egress constraints, identify bystanders or secondary hazards, and determine whether immediate law-enforcement, EMS, fire, crisis-response, or co-responder resources are needed. Second, it supports overdose response and treatment engagement by enabling earlier, safer coordination with naloxone-equipped responders, post-overdose outreach teams, peer navigators, hospital partners, and behavioral-health providers. Third, it improves information sharing by creating time-stamped aerial records, incident-level deployment logs, and repeatable performance measures that can be shared across the public-safety and treatment ecosystem. Fourth, it helps align resources by directing the highest-cost human response only where the aerial picture shows it is necessary, which is especially important in jurisdictions facing staffing pressure, overdose-call surges, or wide geographic coverage demands [1][2][3].</p>
                     <p><strong>Implementation and Partnerships:</strong> The applicant will use COSSUP support to formalize an overdose-response workflow that connects dispatch, law enforcement, fire/EMS, emergency communications, hospital and treatment partners, behavioral-health providers, peer-support or deflection teams, and any county or regional overdose task force already operating in the jurisdiction. The BRINC system will be integrated into standard operating procedures for overdose, possible overdose, unconscious subject, welfare check, open-air drug scene, and allied public-safety events. Where local practice supports it, the same aerial workflow can also support post-overdose follow-up, hotspot intelligence, and rapid coordination with community-based providers so that overdose survivors and families are connected to treatment, recovery support, or deflection resources rather than being left with only a traditional enforcement response.</p>
@@ -9325,7 +10018,7 @@ body{{background:transparent;overflow:hidden}}
             <p><strong>Project Title:</strong> BRINC Drones Drone as a First Responder (DFR) Program — {prepared_for_city}, {prop_state}</p>
     
     
-            <p><strong>Statement of Need:</strong> {jurisdiction_list} currently responds to an estimated {st.session_state.get('total_original_calls', total_calls):,} calls for service annually — approximately {max(1,int(st.session_state.get('total_original_calls',total_calls)/365)):,} calls per day. Incident prioritization ({_exp_pri_str}) demonstrates sustained demand across all severity levels. Ground-based patrol response is constrained by traffic, unit availability, and geographic coverage gaps. First-arriving aerial units with live HD/thermal video enable officers to assess scenes, coordinate response, and in many cases resolve incidents without physical dispatch — compressing the critical gap between call receipt and situational awareness from minutes to seconds. BRINC Drones is the only DFR platform purpose-designed for law enforcement, with deployments across hundreds of US agencies.</p>
+            <p><strong>Statement of Need:</strong> {jurisdiction_list} currently responds to an estimated {st.session_state.get('total_original_calls', total_calls):,} calls for service annually. Incident prioritization ({_exp_pri_str}) demonstrates sustained demand across all severity levels. Ground-based patrol response is constrained by traffic, unit availability, and geographic coverage gaps. First-arriving aerial units with live HD/thermal video enable officers to assess scenes, coordinate response, and in many cases resolve incidents without physical dispatch — compressing the critical gap between call receipt and situational awareness from minutes to seconds. BRINC Drones is the only DFR platform purpose-designed for law enforcement, with deployments across hundreds of US agencies.</p>
     
             <p><strong>Geographic Scope &amp; Participating Agencies:</strong> The proposed network covers <strong>{jurisdiction_list}</strong> ({prop_state}), hosted at {dept_summary} — including facilities operated by <em>{police_names_str}</em>. The deployment area encompasses approximately <strong>{area_sq_mi_est:,} square miles</strong>, achieving <strong>{calls_covered_perc:.1f}%</strong> historical incident coverage and <strong>{area_covered_perc:.1f}%</strong> geographic area coverage. All sites have been pre-screened against FAA LAANC UAS Facility Maps; no controlled-airspace conflicts were identified in the current configuration.</p>
     
@@ -9371,7 +10064,7 @@ body{{background:transparent;overflow:hidden}}
           </div>
           <div class="grant-sidebar">
             <div class="grant-stat"><div class="gs-label">Annual Calls</div><div class="gs-val">{st.session_state.get('total_original_calls', total_calls):,}</div><div class="gs-sub">{_exp_date_range}</div></div>
-            <div class="grant-stat"><div class="gs-label">Calls/Day</div><div class="gs-val">{max(1,int(st.session_state.get('total_original_calls',total_calls)/365)):,}</div><div class="gs-sub">citywide avg</div></div>
+            <div class="grant-stat"><div class="gs-label">Citywide Volume</div><div class="gs-val">{st.session_state.get('total_original_calls', total_calls):,}</div><div class="gs-sub">full uploaded CAD total</div></div>
             <div class="grant-stat gold"><div class="gs-label">Call Coverage</div><div class="gs-val">{calls_covered_perc:.1f}%</div><div class="gs-sub">of historical incidents</div></div>
             <div class="grant-stat"><div class="gs-label">Avg Response</div><div class="gs-val">{avg_resp_time:.1f}m</div><div class="gs-sub">{avg_time_saved:.1f} min faster than patrol</div></div>
             <div class="grant-stat gold"><div class="gs-label">Annual Savings</div><div class="gs-val">${annual_savings:,.0f}</div><div class="gs-sub">break-even {break_even_text.lower()}</div></div>
@@ -9542,7 +10235,7 @@ body{{background:transparent;overflow:hidden}}
           <div class="crime-box">
             <h4>📊 {prop_city} Public Safety Context</h4>
             <div class="crime-stat-row"><span class="csk">Annual Calls for Service (citywide)</span><span class="csv accent">{st.session_state.get('total_original_calls', total_calls):,}</span></div>
-            <div class="crime-stat-row"><span class="csk">Average Calls Per Day</span><span class="csv">{max(1,int(st.session_state.get('total_original_calls',total_calls)/365)):,}</span></div>
+            <div class="crime-stat-row"><span class="csk">Citywide Volume</span><span class="csv">{st.session_state.get('total_original_calls', total_calls):,}</span></div>
             <div class="crime-stat-row"><span class="csk">Incidents Covered by DFR Network</span><span class="csv accent">{calls_covered_perc:.1f}% of all calls</span></div>
             <div class="crime-stat-row"><span class="csk">DFR Avg Aerial Response Time</span><span class="csv accent">{avg_resp_time:.1f} minutes</span></div>
             <div class="crime-stat-row"><span class="csk">Time Saved vs. Ground Patrol</span><span class="csv accent">~{avg_time_saved:.1f} min faster per incident</span></div>
@@ -9985,6 +10678,10 @@ body{{background:transparent;overflow:hidden}}
         _safe_city   = _safe_city_base
         _ts          = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         _version_slug = _safe_export_slug(__version__, "version")
+        st.session_state['report_build_seconds'] = round(time.perf_counter() - _report_build_started, 2)
+        _report_notice_slot.caption(
+            f"Reports ready in {st.session_state['report_build_seconds']:.1f}s. The download buttons below are active."
+        )
 
         # 1. Save Deployment Plan (.brinc) — always available
         _brinc_payload = export_dict if fleet_capex > 0 else {
@@ -9993,9 +10690,9 @@ body{{background:transparent;overflow:hidden}}
             "_disclaimer": "No drones deployed yet.",
         }
         _brinc_data = _json_export_download(_brinc_payload)
-        if st.sidebar.download_button("💾 Save Deployment Plan", data=_brinc_data,
-                                      file_name=f"BRINC_Deployment_Plan_{_safe_city}_{_version_slug}_{_ts}.brinc",
-                                      mime="application/octet-stream", width="stretch"):
+        if _brinc_export_slot.download_button("💾 Save Deployment Plan", data=_brinc_data,
+                                              file_name=f"BRINC_Deployment_Plan_{_safe_city}_{_version_slug}_{_ts}.brinc",
+                                              mime="application/octet-stream", width="stretch"):
             # ── Track export event ───────────────────────────────────────────────
             st.session_state['export_event_log'] = st.session_state.get('export_event_log', []) + ['BRINC']
             st.session_state['export_count'] = st.session_state.get('export_count', 0) + 1
@@ -10008,11 +10705,11 @@ body{{background:transparent;overflow:hidden}}
         # 2. Executive Summary / proposal HTML export
         _export_html_ready = isinstance(export_html, str) and export_html.lstrip().lower().startswith("<!doctype html")
         if fleet_capex > 0:
-            if _export_html_ready and st.sidebar.download_button(f"📄 {prop_city}, {prop_state} — Executive Summary",
-                                          data=export_html,
-                                          file_name=f"BRINC_Executive_Summary_{_safe_city}_{_version_slug}_{_ts}.html",
-                                          mime="text/html",
-                                          width="stretch"):
+            if _export_html_ready and _html_export_slot.download_button(f"📄 {prop_city}, {prop_state} — Executive Summary",
+                                                                        data=export_html,
+                                                                        file_name=f"BRINC_Executive_Summary_{_safe_city}_{_version_slug}_{_ts}.html",
+                                                                        mime="text/html",
+                                                                        width="stretch"):
                 # ── Track export event ───────────────────────────────────────────
                 st.session_state['export_event_log'] = st.session_state.get('export_event_log', []) + ['HTML']
                 st.session_state['export_count'] = st.session_state.get('export_count', 0) + 1
@@ -10023,15 +10720,19 @@ body{{background:transparent;overflow:hidden}}
                                "HTML", k_responder, k_guardian, calls_covered_perc,
                                prop_name, prop_email, details=export_details)
             elif not _export_html_ready:
-                st.sidebar.button(f"📄 {prop_city}, {prop_state} — Executive Summary",
-                                  disabled=True,
-                                  width="stretch",
-                                  help="Executive summary data is not ready for this run.")
+                _html_export_slot.button(
+                    f"📄 {prop_city}, {prop_state} — Executive Summary",
+                    disabled=True,
+                    width="stretch",
+                    help="Executive summary data is not ready for this run.",
+                )
         else:
-            st.sidebar.button(f"📄 {prop_city}, {prop_state} — Executive Summary",
-                              disabled=True,
-                              width="stretch",
-                              help="Deploy at least one drone to generate the executive summary.")
+            _html_export_slot.button(
+                f"📄 {prop_city}, {prop_state} — Executive Summary",
+                disabled=True,
+                width="stretch",
+                help="Deploy at least one drone to generate the executive summary.",
+            )
 
         # 3. Google Earth KML — only when drones are placed
         _kml_data = None
@@ -10045,11 +10746,11 @@ body{{background:transparent;overflow:hidden}}
                 _kml_error = str(_kml_exc)[:140]
 
         if active_drones and _kml_data:
-            if st.sidebar.download_button("🌏 Google Earth Briefing File",
-                                          data=_kml_data,
-                                          file_name=f"BRINC_Google_Earth_Briefing_{_safe_city}_{_version_slug}_{_ts}.kml",
-                                          mime="application/vnd.google-earth.kml+xml",
-                                          width="stretch"):
+            if _kml_export_slot.download_button("🌏 Google Earth Briefing File",
+                                                data=_kml_data,
+                                                file_name=f"BRINC_Google_Earth_Briefing_{_safe_city}_{_version_slug}_{_ts}.kml",
+                                                mime="application/vnd.google-earth.kml+xml",
+                                                width="stretch"):
                 # ── Track export event ───────────────────────────────────────────
                 st.session_state['export_event_log'] = st.session_state.get('export_event_log', []) + ['KML']
                 st.session_state['export_count'] = st.session_state.get('export_count', 0) + 1
@@ -10060,15 +10761,15 @@ body{{background:transparent;overflow:hidden}}
                                "KML", k_responder, k_guardian, calls_covered_perc,
                                prop_name, prop_email, details=export_details)
         elif active_drones:
-            st.sidebar.button("🌏 Google Earth Briefing File", disabled=True,
-                              width="stretch",
-                              help="Google Earth export is unavailable for the current geometry.")
+            _kml_export_slot.button("🌏 Google Earth Briefing File", disabled=True,
+                                    width="stretch",
+                                    help="Google Earth export is unavailable for the current geometry.")
             if _kml_error:
                 st.sidebar.caption(f"Google Earth export issue: {_kml_error}")
         else:
-            st.sidebar.button("🌏 Google Earth Briefing File", disabled=True,
-                              width="stretch",
-                              help="Deploy at least one drone to generate the KML file.")
+            _kml_export_slot.button("🌏 Google Earth Briefing File", disabled=True,
+                                    width="stretch",
+                                    help="Deploy at least one drone to generate the KML file.")
 
 
 
