@@ -1,4 +1,5 @@
 .streamlit/secrets.toml
+.venv/
 *.pyc
 __pycache__/
 cell_coverage/raw/
@@ -6,4 +7,3 @@ regulatory_layers/*.parquet
 DOF_Public.csv
 DOF_Public.zip
 *.tmp
-.venv/

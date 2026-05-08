@@ -1396,7 +1396,7 @@ def _build_cad_charts_html(df_calls):
 
         import streamlit as _st
 
-        dfr_rate        = float(_st.session_state.get('dfr_rate', 30)) / 100.0
+        dfr_rate        = float(_st.session_state.get('dfr_rate', 25)) / 100.0
 
         pursuit_rate    = 0.18
 
@@ -1706,7 +1706,7 @@ def _build_apprehension_table(df_calls, text_main, text_muted, card_bg, card_bor
 
     total_calls      = int(st.session_state.get('total_original_calls', len(df_calls)) or len(df_calls))
 
-    dfr_rate         = float(st.session_state.get('dfr_rate', 30)) / 100.0   # fraction dispatched by drone
+    dfr_rate         = float(st.session_state.get('dfr_rate', 25)) / 100.0   # fraction dispatched by drone
 
     calls_per_year   = _get_annualized_calls(total_calls)
 
@@ -2299,21 +2299,20 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
         max_patrol_hours = _GUARDIAN_DAILY_HOURS if is_guardian else _RESPONDER_DAILY_HOURS
         max_single_flight = CONFIG["GUARDIAN_FLIGHT_MIN"] if is_guardian else CONFIG["RESPONDER_FLIGHT_MIN"]
         d_alt_time = float(d.get("alt_avg_time_min", 0) or 0)
-        travel_delta_min = abs(d_time - d_alt_time)
-        current_label = "Guardian" if is_guardian else "Responder"
-        other_label = "Responder" if is_guardian else "Guardian"
-        if d_alt_time > 0 and travel_delta_min > 0.05:
-            if d_time <= d_alt_time:
-                travel_compare_text = f"{current_label} faster by {travel_delta_min:.1f} min"
-                travel_detail_text = f"{current_label} {d_time:.1f} min vs {other_label} {d_alt_time:.1f} min"
+        guardian_time = d_time if is_guardian else d_alt_time
+        responder_time = d_alt_time if is_guardian else d_time
+        travel_delta_min = abs(guardian_time - responder_time)
+        if guardian_time > 0 and responder_time > 0 and travel_delta_min > 0.05:
+            if guardian_time <= responder_time:
+                travel_compare_text = f"Guardian faster by {travel_delta_min:.1f} min"
                 travel_color = "#2ecc71"
             else:
-                travel_compare_text = f"{other_label} faster by {travel_delta_min:.1f} min"
-                travel_detail_text = f"{current_label} {d_time:.1f} min vs {other_label} {d_alt_time:.1f} min"
+                travel_compare_text = f"Responder faster by {travel_delta_min:.1f} min"
                 travel_color = "#F0B429"
+            travel_detail_text = f"Guardian {guardian_time:.1f} min vs Responder {responder_time:.1f} min"
         else:
-            travel_compare_text = f"{current_label} arrival time"
-            travel_detail_text = f"{current_label} {d_time:.1f} min"
+            travel_compare_text = "Arrival time"
+            travel_detail_text = f"Guardian {guardian_time:.1f} min vs Responder {responder_time:.1f} min"
             travel_color = "#00D2FF"
 
 
@@ -2491,6 +2490,7 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
 
         _display_flights_label = "calls/day capacity" if d_max_cap > 0 else "zone flights/day"
 
+        mins_per_flight = 0.0
         patrol_time_line = ""
 
         if _display_flights_day > 0:
@@ -2613,9 +2613,9 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
 
             f'  <div style="background:{status_bg};border:1px solid {status_border};border-radius:6px;padding:8px 10px;">'
 
-            f'    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;">'
+            f'    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:nowrap;">'
 
-            f'      <div>'
+            f'      <div style="flex:1;background:rgba(255,255,255,0.04);border:1px solid {card_border};border-radius:6px;padding:8px 10px;text-align:center;">'
 
             f'        <div style="font-size:0.58rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.3px;margin-bottom:3px;">Attributed Dispatchable Calls<span class="tip" data-tip="Overlap-shared annual dispatchable demand credited to this unit. This is the demand share used for utilization and value calculations.">?</span></div>'
 
@@ -2623,27 +2623,23 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
 
             f'      </div>'
 
-            f'      <div style="min-width:138px;">'
+            f'      <div style="flex:1;background:rgba(255,255,255,0.04);border:1px solid {card_border};border-radius:6px;padding:8px 10px;text-align:center;">'
 
-            f'        <div style="background:rgba(255,255,255,0.04);border:1px solid {card_border};border-radius:6px;padding:6px 8px;">'
+            f'        <div style="font-size:0.58rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.3px;margin-bottom:3px;">Capacity<span class="tip" data-tip="This unit is at its modeled call-handling ceiling for the current profile.">?</span></div>'
 
-            f'          <div style="font-size:0.56rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.3px;margin-bottom:3px;">Capacity<span class="tip" data-tip="This unit is at its modeled call-handling ceiling for the current profile.">?</span></div>'
+            f'        <div style="font-size:0.85rem;color:{text_muted};margin-top:2px;">{d_max_cap:.1f} calls/day<br>{int(d_total_flights_possible_yr):,}/yr</div>'
 
-            f'          <div style="font-size:0.70rem;color:{text_muted};margin-top:2px;">{d_max_cap:.1f} calls/day capacity ({int(d_total_flights_possible_yr):,}/yr)</div>'
+            f'        <div style="font-size:0.70rem;color:{text_muted};margin-top:4px;">{mins_per_flight:.1f} min/flight</div>'
 
-            f'          <div style="font-size:0.70rem;color:{text_muted};margin-top:2px;">{mins_per_flight:.1f} min/flight</div>'
+            f'      </div>'
 
-            f'        </div>'
+            f'      <div style="flex:1;background:rgba(255,255,255,0.04);border:1px solid {card_border};border-radius:6px;padding:8px 10px;text-align:center;">'
 
-            f'        <div style="background:rgba(255,255,255,0.04);border:1px solid {card_border};border-radius:6px;padding:6px 8px;margin-top:6px;">'
+            f'        <div style="font-size:0.58rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.3px;margin-bottom:3px;">Arrival advantage<span class="tip" data-tip="Average station-to-call travel time compared between Guardian and Responder at the same station. The faster unit arrives first.">?</span></div>'
 
-            f'          <div style="font-size:0.56rem;color:{text_muted};text-transform:uppercase;letter-spacing:0.3px;margin-bottom:3px;">Arrival advantage<span class="tip" data-tip="Average station-to-call travel time compared between Guardian and Responder at the same station. The faster unit arrives first.">?</span></div>'
+            f'        <div style="font-size:0.82rem;font-weight:900;color:{travel_color};line-height:1.1;margin-top:2px;">{travel_compare_text}</div>'
 
-            f'          <div style="font-size:0.82rem;font-weight:900;color:{travel_color};line-height:1.1;">{travel_compare_text}</div>'
-
-            f'          <div style="font-size:0.56rem;color:{text_muted};margin-top:2px;">{travel_detail_text}</div>'
-
-            f'        </div>'
+            f'        <div style="font-size:0.65rem;color:{text_muted};margin-top:4px;">{travel_detail_text}</div>'
 
             f'      </div>'
 
@@ -2747,9 +2743,9 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
 
             f'  <div style="background:{status_bg}; border:1px solid {status_border}; border-radius:6px; padding:8px 10px;">'
 
-            f'    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:wrap;">'
+            f'    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:nowrap;">'
 
-            f'      <div>'
+            f'      <div style="flex:1; background:rgba(255,255,255,0.04); border:1px solid {card_border}; border-radius:6px; padding:8px 10px; text-align:center;">'
 
             f'        <div style="font-size:0.68rem; color:{text_muted}; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">Attributed Dispatchable Calls<span class="tip" data-tip="Overlap-shared annual dispatchable demand credited to this unit. This is the demand share used for utilization and value calculations.">?</span></div>'
 
@@ -2757,29 +2753,25 @@ def _build_unit_cards_html(active_drones, text_main, text_muted, card_bg, card_b
 
             f'      </div>'
 
-            f'      <div style="min-width:138px;">'
+            f'      <div style="flex:1; background:rgba(255,255,255,0.04); border:1px solid {card_border}; border-radius:6px; padding:8px 10px; text-align:center;">'
 
-            f'        <div style="background:rgba(255,255,255,0.04); border:1px solid {card_border}; border-radius:6px; padding:6px 8px;">'
+            f'        <div style="font-size:0.68rem; color:{text_muted}; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">Capacity<span class="tip" data-tip="This unit is at its modeled call-handling ceiling for the current profile.">?</span></div>'
 
-            f'          <div style="font-size:0.56rem; color:{text_muted}; text-transform:uppercase; letter-spacing:0.3px; margin-bottom:3px;">Capacity<span class="tip" data-tip="This unit is at its modeled call-handling ceiling for the current profile.">?</span></div>'
+            f'        <div style="font-size:0.72rem; font-weight:800; color:{card_title}; line-height:1.2; margin-top:3px;">{int(d_calls_unanswered_yr):,} calls unanswered</div>'
 
-            f'          <div style="font-size:0.72rem; font-weight:800; color:{card_title}; line-height:1.2; margin-top:3px;">{int(d_calls_unanswered_yr):,} calls unanswered</div>'
+            f'        <div style="font-size:0.70rem; color:{text_muted}; margin-top:2px;">{d_max_cap:.1f} calls/day capacity ({int(d_total_flights_possible_yr):,}/yr)</div>'
 
-            f'          <div style="font-size:0.70rem; color:{text_muted}; margin-top:2px;">{d_max_cap:.1f} calls/day capacity ({int(d_total_flights_possible_yr):,}/yr)</div>'
+            f'        <div style="font-size:0.70rem; color:{text_muted}; margin-top:2px;">{mins_per_flight:.1f} min/flight</div>'
 
-            f'          <div style="font-size:0.70rem; color:{text_muted}; margin-top:2px;">{mins_per_flight:.1f} min/flight</div>'
+            f'      </div>'
 
-            f'        </div>'
+            f'      <div style="flex:1; background:rgba(255,255,255,0.04); border:1px solid {card_border}; border-radius:6px; padding:8px 10px; text-align:center;">'
 
-            f'        <div style="background:rgba(255,255,255,0.04); border:1px solid {card_border}; border-radius:6px; padding:6px 8px; margin-top:6px;">'
+            f'        <div style="font-size:0.68rem; color:{text_muted}; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">Arrival advantage<span class="tip" data-tip="Average station-to-call travel time compared between Guardian and Responder at the same station. The faster unit arrives first.">?</span></div>'
 
-            f'          <div style="font-size:0.56rem; color:{text_muted}; text-transform:uppercase; letter-spacing:0.3px; margin-bottom:3px;">Arrival advantage<span class="tip" data-tip="Average station-to-call travel time compared between Guardian and Responder at the same station. The faster unit arrives first.">?</span></div>'
+            f'        <div style="font-size:0.82rem; font-weight:900; color:{travel_color}; line-height:1.1;">{travel_compare_text}</div>'
 
-            f'          <div style="font-size:0.82rem; font-weight:900; color:{travel_color}; line-height:1.1;">{travel_compare_text}</div>'
-
-            f'          <div style="font-size:0.56rem; color:{text_muted}; margin-top:2px;">{travel_detail_text}</div>'
-
-            f'        </div>'
+            f'        <div style="font-size:0.65rem; color:{text_muted}; margin-top:4px;">{travel_detail_text}</div>'
 
             f'      </div>'
 
@@ -3369,7 +3361,8 @@ def generate_community_impact_dashboard_html(
 
     saved_min  = float(avg_time_saved_min or 0)
 
-    ground_min = drone_min + saved_min
+    # Ensure ground responder is never faster than drone (responder cannot be faster than drone arrival)
+    ground_min = max(drone_min, drone_min + saved_min)
 
     drone_wins_pct = min(99, max(CONFIG['DRONE_WINS_FLOOR'], round(calls_covered_perc * CONFIG['DRONE_WINS_MULTIPLIER']))) if calls_covered_perc > 0 else 0
 
@@ -3895,7 +3888,7 @@ def generate_community_impact_dashboard_html(
 
     background: {_body_bg};
 
-    padding: 28px 24px 40px;
+    padding: 28px 24px 10px;
 
   }}
 
@@ -5339,7 +5332,7 @@ if (stations.length === 0) {{
 
     const icon = s.type === 'GUARDIAN' ? '🦅' : '🚁';
 
-    const color = s.type === 'GUARDIAN' ? '#b45309' : '#1a56db';
+    const color = s.type === 'GUARDIAN' ? '#FFD700' : '#00D2FF';
 
     sl.innerHTML += `<div>${{icon}} <span style="color:${{color}};font-weight:600;">${{s.type.charAt(0)+s.type.slice(1).toLowerCase()}}</span> — ${{s.name}}</div>`;
 

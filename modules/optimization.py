@@ -94,7 +94,8 @@ def _project_point_to_epsg(lon, lat, epsg_code):
 
 @st.cache_resource
 def precompute_spatial_data(df_calls, df_calls_full, df_stations_all, _city_m, epsg_code, resp_radius_mi, guard_radius_mi, center_lat, center_lon, bounds_hash):
-    gdf_calls_utm = _project_lonlat_dataframe(df_calls, epsg_code)
+    gdf_calls = _project_lonlat_dataframe(df_calls, epsg_code)
+    gdf_calls_utm = gdf_calls
     try:
         # Use same 300 m buffer as build_display_calls so coverage denominator
         # matches the call dots shown on the map (avoids false 100% when fringe
@@ -171,6 +172,7 @@ def precompute_spatial_data(df_calls, df_calls_full, df_stations_all, _city_m, e
         dist_c = ((row['lon'] - center_lon) ** 2 + (row['lat'] - center_lat) ** 2) ** 0.5
         station_metadata.append({
             'name': row['name'], 'lat': row['lat'], 'lon': row['lon'],
+            'address': row.get('address', ''),
             'clipped_2m': clipped_2m, 'clipped_guard': clipped_guard,
             'avg_dist_r': avg_dist_r,
             'avg_dist_g': avg_dist_g,
@@ -383,4 +385,3 @@ def compute_all_elbow_curves(n_calls, _resp_matrix, _guard_matrix, _geos_r, _geo
         'Guardian (Calls)':  pad(c_g),
         'Guardian (Area)':   pad(a_g)
     })
-

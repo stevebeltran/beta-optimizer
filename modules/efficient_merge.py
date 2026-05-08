@@ -160,6 +160,14 @@ def _merge_with_polars(
     if matched.empty:
         return _finish_merge(merged_base, pd.Series(False, index=merged_base.index))
 
+    # Deduplicate column names – pandas allows duplicates but Polars does not.
+    # Keep the *last* occurrence so that columns added by _prepare_calls_for_merge
+    # (lat, lon, _census_merge_key) win over stale originals.
+    if merged_base.columns.duplicated().any():
+        merged_base = merged_base.loc[:, ~merged_base.columns.duplicated(keep="last")]
+    if matched.columns.duplicated().any():
+        matched = matched.loc[:, ~matched.columns.duplicated(keep="last")]
+
     # Convert to Polars (lazy evaluation)
     pl_cad = pl.from_pandas(merged_base)
     pl_census = pl.from_pandas(matched)

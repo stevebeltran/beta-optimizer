@@ -17,6 +17,188 @@ from pathlib import Path
 
 import pyproj
 from modules.config import STATE_FIPS, US_STATES_ABBR, KNOWN_POPULATIONS
+from modules.numbers_adapter import load_numbers_dataframe
+
+
+def _normalize_jacksonville_cfs_report(raw_bytes, filename=""):
+    """Flatten the Jacksonville PD CFS workbook layout into one row per incident.
+
+    The workbook is a formatted report rather than a table: the header sits several
+    rows down, incidents begin on rows where column A contains the CFS number, and
+    wrapped text continues onto the next rows with the same incident context.
+    """
+    try:
+        df = pd.read_excel(io.BytesIO(raw_bytes), header=None, dtype=object, engine='openpyxl')
+    except Exception:
+        return None
+
+    try:
+        header_row_idx = None
+        for row_idx in range(min(len(df), 20)):
+            values = [str(v).strip().lower() for v in df.iloc[row_idx].tolist() if v is not None and str(v).strip()]
+            if (
+                'cfs #' in values
+                and 'create when' in values
+                and 'location' in values
+                and any('calltype' in v for v in values)
+            ):
+                header_row_idx = row_idx
+                break
+
+        if header_row_idx is None:
+            return None
+
+        def _cell_text(value) -> str:
+            if value is None:
+                return ''
+            if hasattr(value, 'strftime'):
+                try:
+                    if isinstance(value, datetime.datetime):
+                        return value.strftime('%Y-%m-%d %H:%M:%S')
+                    if isinstance(value, datetime.time):
+                        return value.strftime('%H:%M:%S')
+                    if isinstance(value, datetime.date):
+                        return value.strftime('%Y-%m-%d')
+                except Exception:
+                    pass
+            text = str(value).strip()
+            if text.lower() in {'nan', 'none', 'nat'}:
+                return ''
+            return re.sub(r'\s+', ' ', text)
+
+        def _append_text(current: str, extra: str) -> str:
+            current = _cell_text(current)
+            extra = _cell_text(extra)
+            if not current:
+                return extra
+            if not extra:
+                return current
+            return re.sub(r'\s+', ' ', f"{current} {extra}").strip()
+
+        def _infer_city_state_zip():
+            dept_name = _cell_text(df.iat[0, 4] if df.shape[1] > 4 else '') or _cell_text(df.iat[1, 4] if df.shape[0] > 1 and df.shape[1] > 4 else '')
+            dept_name = re.sub(r'\s+', ' ', dept_name).strip()
+            city = ''
+            if dept_name:
+                city = re.sub(r'\s+police department$', '', dept_name, flags=re.I).strip()
+                city = re.sub(r'\s+fire department$', '', city, flags=re.I).strip()
+                city = city.title()
+            header_text = ' '.join(
+                _cell_text(df.iat[r, c])
+                for r in range(min(df.shape[0], 4))
+                for c in range(min(df.shape[1], 8))
+            )
+            state = ''
+            zip_code = ''
+            m = re.search(r'\b([A-Z]{2})\s+(\d{5})(?:-\d{4})?\b', header_text)
+            if m:
+                state = m.group(1).upper()
+                zip_code = m.group(2)
+            return city, state, zip_code
+
+        def _pick_location_segment(text: str) -> str:
+            text = _cell_text(text)
+            if not text:
+                return ''
+            if '|' in text:
+                parts = [p.strip() for p in text.split('|') if p.strip()]
+                for part in reversed(parts):
+                    if re.search(r'\d', part) or re.search(r'\b(?:AVE|AVENUE|BLVD|BOULEVARD|CIR|COURT|CT|DR|DRIVE|HWY|HIGHWAY|LN|LANE|PKWY|RD|ROAD|ST|STREET|TRL|TRAIL|WAY)\b', part, re.I):
+                        text = part
+                        break
+                else:
+                    text = parts[-1] if parts else text
+            text = re.sub(r',\s*[^,]+$', '', text).strip()
+            return re.sub(r'\s+', ' ', text)
+
+        city, state, zip_code = _infer_city_state_zip()
+        rows = []
+        current = None
+        relevant = df.iloc[header_row_idx + 1 :, [0, 2, 5, 13, 15, 18, 20]].copy()
+        relevant.columns = ['cfs_number', 'create_when', 'location', 'caller', 'call_type_desc', 'user', 'primary_unit']
+        relevant = relevant.fillna('')
+
+        for row_idx, row in relevant.iterrows():
+            a_val = _cell_text(row['cfs_number'])
+            c_val = row['create_when']
+            f_val = _cell_text(row['location'])
+            n_val = _cell_text(row['caller'])
+            p_val = _cell_text(row['call_type_desc'])
+            s_val = _cell_text(row['user'])
+            u_val = _cell_text(row['primary_unit'])
+
+            row_has_content = any([a_val, _cell_text(c_val), f_val, n_val, p_val, s_val, u_val])
+            if not row_has_content:
+                continue
+
+            is_new_record = bool(a_val and re.fullmatch(r'\d+(?:\.0+)?', a_val))
+            if is_new_record:
+                if current is not None:
+                    rows.append(current)
+                current_row_start = row_idx
+                current = {
+                    'cfs_number': a_val,
+                    'create_when': _cell_text(c_val),
+                    'location': '',
+                    'caller': '',
+                    'call_type_desc': '',
+                    'user': '',
+                    'primary_unit': '',
+                    'agency': 'police',
+                    'department_name': _cell_text(df.iat[0, 4] if df.shape[1] > 4 else '') or _cell_text(df.iat[1, 4] if df.shape[0] > 1 and df.shape[1] > 4 else ''),
+                    'city': city,
+                    'state': state,
+                    'zip': zip_code,
+                    '_csv_city': city,
+                    '_csv_state': state,
+                }
+                if f_val:
+                    current['location'] = f_val
+                if n_val:
+                    current['caller'] = n_val
+                if p_val:
+                    current['call_type_desc'] = p_val
+                if s_val:
+                    current['user'] = s_val
+                if u_val:
+                    current['primary_unit'] = u_val
+                continue
+
+            if current is None:
+                continue
+
+            if f_val:
+                current['location'] = _append_text(current.get('location', ''), f_val)
+            if n_val:
+                current['caller'] = _append_text(current.get('caller', ''), n_val)
+            if p_val:
+                current['call_type_desc'] = _append_text(current.get('call_type_desc', ''), p_val)
+            if s_val:
+                current['user'] = _append_text(current.get('user', ''), s_val)
+            if u_val:
+                current['primary_unit'] = _append_text(current.get('primary_unit', ''), u_val)
+
+        if current is not None:
+            rows.append(current)
+
+        if not rows:
+            return None
+
+        out = pd.DataFrame(rows)
+        out['_source_row_id'] = [f"{filename}:{i}" if filename else str(i) for i in range(len(out))]
+        out['_source_file'] = filename
+        out['create_when'] = pd.to_datetime(out['create_when'], errors='coerce', format='mixed')
+        out['date'] = out['create_when'].dt.strftime('%Y-%m-%d')
+        out['time'] = out['create_when'].dt.strftime('%H:%M:%S')
+        out['location'] = out['location'].map(_cell_text)
+        out['street'] = out['location'].map(_pick_location_segment)
+        out['street'] = out['street'].str.replace(r'\s*,\s*$', '', regex=True).str.strip()
+        out['priority'] = out['call_type_desc'].map(lambda v: 3 if not _cell_text(v) else 3)
+        out['_special_layout'] = 'jacksonville_cfs'
+        out = out.drop(columns=['create_when'], errors='ignore')
+        return out.reset_index(drop=True)
+    except Exception:
+        return None
 
 def _safe_notna_ratio(values) -> float:
     """Return a stable non-null ratio for possibly empty parse results."""
@@ -244,10 +426,19 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
 
     def _extract_lonlat_pair(series):
         s = series.astype(str).str.strip()
-        pair = s.str.extract(r'^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$')
-        lon = pd.to_numeric(pair[0], errors='coerce')
-        lat = pd.to_numeric(pair[1], errors='coerce')
-        valid = ((lat.between(-90, 90)) & (lon.between(-180, 180))).mean()
+        pair = s.str.extract(r'^\s*[\(\[]?\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*[\)\]]?\s*$')
+        first = pd.to_numeric(pair[0], errors='coerce')
+        second = pd.to_numeric(pair[1], errors='coerce')
+        first_first_valid = ((first.between(-180, 180)) & (second.between(-90, 90))).mean()
+        second_first_valid = ((first.between(-90, 90)) & (second.between(-180, 180))).mean()
+        if second_first_valid >= first_first_valid:
+            lon = second
+            lat = first
+            valid = second_first_valid
+        else:
+            lon = first
+            lat = second
+            valid = first_first_valid
         return lon, lat, float(valid)
 
     def _infer_city_from_location_text(raw_df):
@@ -371,7 +562,11 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
             fname = cfile.name.lower()
             excel_exts = ('.xlsx', '.xls', '.xlsb', '.xlsm')
 
-            if fname.endswith(excel_exts):
+            if fname.endswith('.numbers'):
+                raw_df = load_numbers_dataframe(cfile.getvalue(), cfile.name)
+                raw_df.columns = [str(c).lower().strip() for c in raw_df.columns]
+                raw_df = _deduplicate_columns(raw_df)
+            elif fname.endswith(excel_exts):
                 # ── Excel path ────────────────────────────────────────────────
                 raw_bytes = cfile.getvalue()
                 engine = 'openpyxl'
@@ -457,6 +652,9 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                         raw_df = pd.read_excel(io.BytesIO(raw_bytes), engine=engine, dtype=str)
                         raw_df.columns = [str(c).lower().strip() for c in raw_df.columns]
                         raw_df = _deduplicate_columns(raw_df)
+                _jacksonville_df = _normalize_jacksonville_cfs_report(raw_bytes, filename=cfile.name)
+                if _jacksonville_df is not None and not _jacksonville_df.empty:
+                    raw_df = _jacksonville_df
             else:
                 # ── CSV / TXT path ────────────────────────────────────────────
                 content = cfile.getvalue().decode('utf-8', errors='ignore')
@@ -516,6 +714,36 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                 index=raw_df.index
             )
             _pq['input_rows'] = len(raw_df)
+
+            if '_special_layout' in raw_df.columns and raw_df['_special_layout'].astype(str).eq('jacksonville_cfs').any():
+                res = raw_df.copy().reset_index(drop=True)
+                if '_special_layout' in res.columns:
+                    res = res.drop(columns=['_special_layout'], errors='ignore')
+                if 'priority' in res.columns:
+                    res['priority'] = pd.to_numeric(res['priority'], errors='coerce').fillna(3).astype(int)
+                else:
+                    res['priority'] = 3
+                if 'agency' not in res.columns:
+                    res['agency'] = 'police'
+                res['_source_row_id'] = source_ids.values
+                res['_source_file'] = cfile.name
+                try:
+                    _meta = _extract_file_meta(raw_df, res, filename=cfile.name)
+                    _existing = st.session_state.get('file_meta', {})
+                    _existing_names = _existing.get('uploaded_filename', '')
+                    if _existing_names and _meta.get('uploaded_filename', '') and _meta['uploaded_filename'] not in _existing_names:
+                        _meta['uploaded_filename'] = _existing_names + ' | ' + _meta['uploaded_filename']
+                    st.session_state['file_meta'] = {**_existing, **_meta}
+                except Exception:
+                    pass
+                _pq['output_rows'] = len(res)
+                _pq['has_lat'] = False
+                _pq['has_lon'] = False
+                _pq['has_date'] = 'date' in res.columns and bool(pd.Series(res['date']).notna().any())
+                _pq['has_priority_col'] = True
+                _file_parse_quality.append(_pq)
+                all_calls_list.append(res)
+                continue
 
             res = pd.DataFrame()
             exact_coord_names = {

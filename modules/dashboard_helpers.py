@@ -12,7 +12,7 @@ import pandas as pd
 from shapely.geometry import box
 from shapely.ops import unary_union
 
-from modules.config import calculate_max_flights_per_day, US_STATES_ABBR
+from modules.config import calculate_max_flights_per_day, US_STATES_ABBR, text_muted
 from modules.versioning import __version__ as _app_version
 
 
@@ -361,7 +361,15 @@ def render_data_filters(st, df_stations_all, df_calls, df_calls_full):
 
 def render_display_options(st):
     disp_expander = st.sidebar.expander('👁️ Display Options', expanded=False)
+    
+    def section_header(label):
+        st.markdown(
+            f"<div style='font-size:0.7rem; color:{text_muted}; margin:10px 0 4px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px;'>{label}</div>",
+            unsafe_allow_html=True,
+        )
+
     with disp_expander:
+        section_header('🗺️ Map & Boundaries')
         show_satellite = st.toggle(
             'Satellite Imagery',
             value=False,
@@ -380,6 +388,8 @@ def render_display_options(st):
             key='use_county_boundary',
             help='Redraw the map using the county boundary instead of the city/place boundary.',
         )
+
+        section_header('✈️ Safety & Airspace')
         show_faa = st.toggle(
             'FAA LAANC Airspace',
             value=False,
@@ -398,6 +408,8 @@ def render_display_options(st):
             key='show_obstacles_b',
             help='FAA Digital Obstacle File: obstacles > 200 ft AGL. Diamond markers.',
         )
+
+        section_header('📶 Infrastructure')
         show_coverage = st.toggle(
             '4G LTE Coverage',
             value=False,
@@ -410,6 +422,8 @@ def render_display_options(st):
             key='show_cell_towers_b',
             help='OpenCelliD cell tower locations. Useful for data-link RF validation.',
         )
+
+        section_header('🚨 Incident Analysis')
         show_heatmap = st.toggle(
             '911 Call Heatmap',
             value=False,
@@ -421,6 +435,14 @@ def render_display_options(st):
             value=True,
             key='show_dots_b',
             help='Show individual 911 call locations as dots on the map.',
+        )
+
+        section_header('🛠️ Deployment Tools')
+        show_station_suggestions = st.toggle(
+            'Suggested Station Placements',
+            value=True,
+            key='show_station_suggestions_b',
+            help='Show or hide the suggested station placement workflow and its map markers.',
         )
         if 'show_rapid_response_ring_b' not in st.session_state:
             st.session_state['show_rapid_response_ring_b'] = True
@@ -436,6 +458,9 @@ def render_display_options(st):
             key='simulate_traffic_b',
             help='Apply traffic-based travel delays to ground response estimates and related metrics.',
         )
+        traffic_level = st.slider('Traffic Congestion', 0, 100, 40, help='Simulates road congestion intensity. Higher values extend ground response times and related financial estimates.') if simulate_traffic else 40
+
+        section_header('📊 Interface & Privacy')
         show_health = st.toggle(
             'Health Score',
             value=False,
@@ -455,7 +480,6 @@ def render_display_options(st):
             key='simple_cards_b',
             help='Show a compact card with just the key numbers: name, type, response time, annual savings, and CapEx.',
         )
-        traffic_level = st.slider('Traffic Congestion', 0, 100, 40, help='Simulates road congestion intensity. Higher values extend ground response times and related financial estimates.') if simulate_traffic else 40
 
     return {
         'show_satellite': show_satellite,
@@ -467,6 +491,7 @@ def render_display_options(st):
         'show_cell_towers': show_cell_towers,
         'show_heatmap': show_heatmap,
         'show_dots': show_dots,
+        'show_station_suggestions': show_station_suggestions,
         'show_rapid_response_ring': show_rapid_response_ring,
         'simulate_traffic': simulate_traffic,
         'show_health': show_health,
@@ -778,9 +803,24 @@ def manage_custom_stations(
     search_public_facility_candidates=None,
 ):
     n = len(df_stations_all)
-    max_resp_calc = min(n, int(math.ceil(area_sq_mi / (math.pi * (r_resp_est**2)))) + 5)
-    # Guardian placements should be allowed at any uploaded in-boundary station.
-    max_guard_calc = n
+
+    # Count selected stations from Suggested Station Placements (Guardian and Responder only)
+    suggestion_modes = session_state.get('suggestion_modes', {})
+    n_selected_responder = sum(1 for mode in suggestion_modes.values() if mode == 'Responder')
+    n_selected_guardian = sum(1 for mode in suggestion_modes.values() if mode == 'Guardian')
+    n_selected_total = sum(1 for mode in suggestion_modes.values() if mode != 'Off')
+
+    # Count custom stations by type
+    custom_stations = session_state.get('custom_stations', pd.DataFrame())
+    n_custom_responder = len(custom_stations[custom_stations.get('type', '') == 'Responder']) if not custom_stations.empty else 0
+    n_custom_guardian = len(custom_stations[custom_stations.get('type', '') == 'Guardian']) if not custom_stations.empty else 0
+
+    # Slider max = suggested stations + custom stations for each type (independent)
+    # Guardian can use any uploaded station + custom stations
+    max_guard_calc = n + n_custom_guardian
+    # Responder can use any uploaded station + custom stations
+    max_resp_calc = n + n_custom_responder
+
     public_facility_types = {'Police', 'Fire', 'School', 'Government', 'Library'}
 
     def _looks_like_street_address(text):
@@ -830,8 +870,13 @@ def manage_custom_stations(
     except Exception:
         pass
 
-    val_r = min(session_state.get('k_resp', 2), max_resp_calc)
-    val_g = min(session_state.get('k_guard', 0), max_guard_calc)
+    # For auto-sync with card toggles, use the selected card count as the slider value
+    # But allow user to manually adjust beyond that
+    sync_val_r = max(session_state.get('k_resp', 2), n_selected_responder)
+    sync_val_g = max(session_state.get('k_guard', 0), n_selected_guardian)
+
+    val_r = min(sync_val_r, max_resp_calc)
+    val_g = min(sync_val_g, max_guard_calc)
 
     k_responder = st.sidebar.slider('🚁 Responder Count', 0, max(1, max_resp_calc), val_r, help='Short-range tactical drones (2-3mi radius).')
     k_guardian = st.sidebar.slider('🦅 Guardian Count', 0, max(1, max_guard_calc), val_g, help='Long-range overwatch drones (5-8mi radius).')
@@ -1371,7 +1416,7 @@ def prepare_runtime_context(
         st.caption(f'Derived from the full uploaded CAD total ({full_total_calls:,} incidents).')
         st.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>DFR Dispatch Rate (%)</div>", unsafe_allow_html=True)
         st.markdown("<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>What % of in-range calls will the drone be sent to?</div>", unsafe_allow_html=True)
-        dfr_dispatch_rate = st.slider('DFR Dispatch Rate', 1, 100, session_state.get('dfr_rate', 30), label_visibility='collapsed', help='Percentage of in-range calls the drone is dispatched to. Higher rates increase coverage and savings projections.') / 100.0
+        dfr_dispatch_rate = st.slider('DFR Dispatch Rate', 1, 100, session_state.get('dfr_rate', 25), label_visibility='collapsed', help='Percentage of in-range calls the drone is dispatched to. Higher rates increase coverage and savings projections.') / 100.0
         st.markdown(f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:8px; margin-bottom:2px;'>Calls Resolved Without Officer Dispatch (%)</div>", unsafe_allow_html=True)
         st.markdown("<div style='font-size:0.65rem; color:#666; margin-bottom:4px;'>Of drone-attended calls, what % close without a patrol car?</div>", unsafe_allow_html=True)
         deflection_rate = st.slider('Resolution Rate', 0, 100, session_state.get('deflect_rate', 30), label_visibility='collapsed', help='Of drone-attended calls, the percentage that close without requiring a patrol car dispatch. Higher values increase officer hours saved.') / 100.0
@@ -1738,3 +1783,174 @@ def optimize_fleet_selection(
         'best_combo': best_combo,
         'guard_claims_by_idx': guard_claims_by_idx if complement_mode else {},
     }
+
+
+# ── STATION SUGGESTION ENGINE ────────────────────────────────────────────────
+
+def compute_station_suggestions(
+    resp_matrix, guard_matrix, station_metadata, total_calls, city_area,
+    max_suggestions=10,
+):
+    """Rank stations by greedy marginal call coverage and return top suggestions.
+
+    Each suggestion includes solo call-coverage %, solo land-coverage %, and a
+    default role assignment (2 Responder : 1 Guardian repeating pattern).
+    """
+    if total_calls == 0 or not station_metadata:
+        return []
+
+    n_stations = len(station_metadata)
+    covered = np.zeros(total_calls, dtype=bool)
+    suggestions = []
+    used = set()
+
+    # Greedy ranking: pick station with best marginal gain each round
+    for rank in range(min(max_suggestions, n_stations)):
+        best_idx = -1
+        best_marginal = -1
+        for i in range(n_stations):
+            if i in used:
+                continue
+            marginal = int(np.sum(resp_matrix[i] & ~covered))
+            if marginal > best_marginal:
+                best_marginal = marginal
+                best_idx = i
+        if best_idx < 0 or best_marginal == 0:
+            break
+
+        used.add(best_idx)
+        covered |= resp_matrix[best_idx]
+
+        meta = station_metadata[best_idx]
+        solo_call_pct = (np.sum(resp_matrix[best_idx]) / total_calls * 100)
+        solo_land_pct = (meta['clipped_2m'].area / city_area * 100) if city_area > 0 else 0
+
+        # Role pattern: G, R, R, G, R, R, G, R, R  (≈2:1 ratio, Guardian first)
+        role = 'Guardian' if (rank % 3 == 0) else 'Responder'
+
+        suggestions.append({
+            'rank': rank + 1,
+            'station_idx': best_idx,
+            'name': meta['name'],
+            'address': meta.get('address', ''),
+            'lat': meta['lat'],
+            'lon': meta['lon'],
+            'call_pct': round(solo_call_pct, 1),
+            'land_pct': round(solo_land_pct, 1),
+            'marginal_calls': best_marginal,
+            'role': role,
+        })
+
+    return suggestions
+
+
+def render_station_suggestions(st, session_state, suggestions, text_main, text_muted,
+                               card_bg, card_border, accent_color):
+    """Render a compact 2×5 suggestion card grid below the map.
+
+    Returns True if any toggle changed (caller should rerun).
+    """
+    if not suggestions:
+        return False
+
+    mode_options = ['Guardian', 'Responder', 'Off']
+    # Initialise mode state on first render.
+    if 'suggestion_modes' not in session_state:
+        if 'suggestion_toggles' in session_state:
+            session_state['suggestion_modes'] = {
+                s['station_idx']: (
+                    s['role'] if session_state['suggestion_toggles'].get(s['station_idx']) else 'Off'
+                )
+                for s in suggestions
+            }
+        else:
+            session_state['suggestion_modes'] = {
+                s['station_idx']: (s['role'] if s['rank'] <= 3 else 'Off')
+                for s in suggestions
+            }
+    else:
+        session_state['suggestion_modes'] = {
+            s['station_idx']: session_state['suggestion_modes'].get(
+                s['station_idx'],
+                s['role'] if s['rank'] <= 3 else 'Off',
+            )
+            for s in suggestions
+        }
+    if 'show_suggestion_markers' not in session_state:
+        session_state['show_suggestion_markers'] = True
+
+    modes = session_state['suggestion_modes']
+    changed = False
+
+    n_on = sum(1 for v in modes.values() if v != 'Off')
+    st.markdown(
+        f"<div style='margin-top:12px; margin-bottom:6px; display:flex; align-items:center; "
+        f"justify-content:space-between;'>"
+        f"<span style='font-size:0.85rem; font-weight:700; color:{text_main};'>"
+        f"Suggested Station Placements"
+        f"<span style='font-size:0.7rem; font-weight:400; color:{text_muted}; margin-left:8px;'>"
+        f"({n_on} selected from public data)</span></span></div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Two rows of 5 cards ──────────────────────────────────────────────
+    for row_start in (0, 5):
+        row_items = suggestions[row_start:row_start + 5]
+        if not row_items:
+            break
+        cols = st.columns(5, gap="small")
+        for ci, s in enumerate(row_items):
+            idx = s['station_idx']
+            mode = modes.get(idx, 'Off')
+            mode_color = '#FFD700' if mode == 'Guardian' else '#00D2FF' if mode == 'Responder' else '#9aa0b4'
+            mode_abbr = 'G' if mode == 'Guardian' else 'R' if mode == 'Responder' else 'O'
+            border_col = mode_color if mode != 'Off' else card_border
+            bg = card_bg if mode != 'Off' else 'rgba(30,30,40,0.4)'
+            opacity = '1.0' if mode != 'Off' else '0.55'
+            widget_key = f"suggest_mode_{idx}"
+
+            # Use address if available, otherwise fall back to name
+            display_text = s.get('address', '') or s['name']
+
+            with cols[ci]:
+                st.markdown(
+                    f"<div style='border:1px solid {border_col}; border-radius:6px; "
+                    f"padding:6px 8px; background:{bg}; opacity:{opacity}; "
+                    f"min-height:72px; font-size:0.7rem; line-height:1.3;'>"
+                    f"<div style='display:flex; justify-content:space-between; align-items:center;'>"
+                    f"<span style='font-weight:700; color:{text_main};'>#{s['rank']}</span>"
+                    f"<span style='background:{mode_color}; color:#000; font-size:0.55rem; "
+                    f"font-weight:800; padding:1px 5px; border-radius:3px;'>{mode_abbr}</span></div>"
+                    f"<div style='color:{text_main}; font-weight:600; margin:2px 0; word-wrap:break-word; white-space:normal;'>"
+                    f"{display_text}</div>"
+                    f"<div style='color:{text_muted}; font-size:0.62rem;'>"
+                    f"📞 {s['call_pct']}% calls · 🗺️ {s['land_pct']}% land</div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                new_mode = st.radio(
+                    'Fleet Mode',
+                    options=mode_options,
+                    index=mode_options.index(mode) if mode in mode_options else 2,
+                    key=widget_key,
+                    horizontal=True,
+                    label_visibility="collapsed",
+                )
+                if new_mode != mode:
+                    modes[idx] = new_mode
+                    session_state[widget_key] = new_mode
+                    changed = True
+
+    # Master toggle to hide map markers
+    show_markers = st.checkbox(
+        'Show suggested locations on map',
+        value=session_state.get('show_suggestion_markers', True),
+        key='_suggest_markers_toggle',
+    )
+    if show_markers != session_state.get('show_suggestion_markers', True):
+        session_state['show_suggestion_markers'] = show_markers
+        changed = True
+
+    session_state['suggestion_modes'] = modes
+    session_state['suggestion_toggles'] = {idx: (mode != 'Off') for idx, mode in modes.items()}
+    return changed

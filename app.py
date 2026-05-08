@@ -146,9 +146,34 @@ from modules.public_reports import (
 from modules.image_utils import (
     get_base64_of_bin_file, get_themed_logo_base64, get_transparent_product_base64
 )
-from modules.notifications import (
-    _notify_email, _log_to_sheets, _log_login_to_sheets, _publish_public_report_to_sheets
-)
+NOTIFICATIONS_AVAILABLE = True
+try:
+    from modules.notifications import (
+        _notify_email, _log_to_sheets, _log_login_to_sheets, _publish_public_report_to_sheets,
+        _log_qr_scan_to_sheets, _notify_crash_email,
+    )
+except Exception as _notifications_import_error:
+    NOTIFICATIONS_AVAILABLE = False
+
+    def _notify_email(*args, **kwargs):
+        return None
+
+    def _log_to_sheets(*args, **kwargs):
+        return None
+
+    def _log_login_to_sheets(*args, **kwargs):
+        return None
+
+    def _publish_public_report_to_sheets(*args, **kwargs):
+        return None
+
+    def _log_qr_scan_to_sheets(*args, **kwargs):
+        return None
+
+    def _notify_crash_email(*args, **kwargs):
+        return None
+
+    print(f"Notifications disabled at startup: {_notifications_import_error}")
 from modules.cad_parser import (
     aggressive_parse_calls, _extract_file_meta, _get_annualized_calls
 )
@@ -185,7 +210,7 @@ from modules.geospatial import (
 from modules import faa_rf, optimization, html_reports
 _session_state_mod = _load_local_module("session_state")
 init_session_state = _session_state_mod.init_session_state
-from modules.dashboard_helpers import log_map_build_event_once, resolve_master_boundary, render_sidebar_jurisdiction_selector, render_data_filters, render_display_options, render_deployment_strategy, prepare_station_candidates, manage_custom_stations, prepare_runtime_context, optimize_fleet_selection
+from modules.dashboard_helpers import log_map_build_event_once, resolve_master_boundary, render_sidebar_jurisdiction_selector, render_data_filters, render_display_options, render_deployment_strategy, prepare_station_candidates, manage_custom_stations, prepare_runtime_context, optimize_fleet_selection, compute_station_suggestions, render_station_suggestions
 from modules import onboarding as _onboarding_mod
 from modules.highway_corridor import (
     STATE_PRIMARY_INTERSTATES,
@@ -305,45 +330,40 @@ def _render_public_report_route():
     _qr_mailto = f"mailto:{_qr_rep_email}?subject={_qr_lead_subject}&body={_qr_lead_body}"
 
     try:
-        from modules.notifications import _log_qr_scan_to_sheets
-
-        try:
-            _headers = dict(st.context.headers)
-        except Exception:
-            _headers = {}
-        _ua = _headers.get("User-Agent", _headers.get("user-agent", ""))
-        _lang = _headers.get("Accept-Language", _headers.get("accept-language", ""))
-        _ip = (
-            _headers.get("X-Forwarded-For", "")
-            or _headers.get("x-forwarded-for", "")
-            or _headers.get("Remote-Addr", "")
-        ).split(",")[0].strip()
-
-        _ua_lower = _ua.lower()
-        if "iphone" in _ua_lower or "ipad" in _ua_lower:
-            _device = "iOS"
-        elif "android" in _ua_lower:
-            _device = "Android"
-        elif "mobile" in _ua_lower:
-            _device = "Mobile"
-        elif _ua:
-            _device = "Desktop"
-        else:
-            _device = ""
-
-        _log_qr_scan_to_sheets(
-            report_id=_report_id,
-            city=_scan_meta.get("city", ""),
-            state=_scan_meta.get("state", ""),
-            rep_name=_scan_meta.get("rep_name", ""),
-            rep_email=_scan_meta.get("rep_email", ""),
-            device=_device,
-            user_agent=_ua,
-            language=_lang,
-            ip=_ip,
-        )
+        _headers = dict(st.context.headers)
     except Exception:
-        pass
+        _headers = {}
+    _ua = _headers.get("User-Agent", _headers.get("user-agent", ""))
+    _lang = _headers.get("Accept-Language", _headers.get("accept-language", ""))
+    _ip = (
+        _headers.get("X-Forwarded-For", "")
+        or _headers.get("x-forwarded-for", "")
+        or _headers.get("Remote-Addr", "")
+    ).split(",")[0].strip()
+
+    _ua_lower = _ua.lower()
+    if "iphone" in _ua_lower or "ipad" in _ua_lower:
+        _device = "iOS"
+    elif "android" in _ua_lower:
+        _device = "Android"
+    elif "mobile" in _ua_lower:
+        _device = "Mobile"
+    elif _ua:
+        _device = "Desktop"
+    else:
+        _device = ""
+
+    _log_qr_scan_to_sheets(
+        report_id=_report_id,
+        city=_scan_meta.get("city", ""),
+        state=_scan_meta.get("state", ""),
+        rep_name=_scan_meta.get("rep_name", ""),
+        rep_email=_scan_meta.get("rep_email", ""),
+        device=_device,
+        user_agent=_ua,
+        language=_lang,
+        ip=_ip,
+    )
 
     st.set_page_config(layout="wide", page_title="BRINC DFR", page_icon="https://brincdrones.com/favicon.ico")
     st.markdown("""
@@ -2412,7 +2432,10 @@ def fetch_census_state_population(state_fips):
     return None
 
 SHAPEFILE_DIR = "jurisdiction_data"
-if not os.path.exists(SHAPEFILE_DIR): os.makedirs(SHAPEFILE_DIR)
+try:
+    os.makedirs(SHAPEFILE_DIR, exist_ok=True)
+except OSError:
+    pass  # Directory creation failed; will use temp storage if needed
 
 def _sanitize_boundary_token(value):
     return str(value or "").strip().replace(" ", "_").replace("/", "_")
@@ -3434,6 +3457,7 @@ try:
         _authed_name  = getattr(st.user, "name",  "") or _authed_email.split("@")[0]
         if not st.session_state.get('_oauth_logged', False):
             st.session_state['google_user_email'] = _authed_email
+            st.session_state['_last_user_email'] = _authed_email
             st.session_state['google_user_name']  = _authed_name
             # Derive brinc_user (first.last prefix) from email for backwards compatibility
             _prefix = _authed_email.split("@")[0]
@@ -3823,8 +3847,8 @@ def main():
             <div class="path-card" style="--accent:{accent_color};">
                 <span class="pc-icon">🗺</span>
                 <div class="pc-tag">Path 01</div>
-                <div class="pc-title">Simulate Any<br>US Region</div>
-                <div class="pc-desc">No data needed. Real Census boundaries + realistic 911 call distribution generated automatically. Stack multiple jurisdictions in one run.</div>
+                <div class="pc-title">Simulate a<br>Region</div>
+                <div class="pc-desc">Use this for simulation inputs and optional station files. Real Census boundaries and realistic 911 call distribution are generated automatically.</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -3968,11 +3992,11 @@ def main():
             st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
             st.file_uploader(
-                "Optional: Stations + boundary overlay files",
+                "Optional: Station + boundary overlay files",
                 accept_multiple_files=True,
-                type=['csv', 'xlsx', 'xls', 'xlsb', 'xlsm', 'brinc', 'json', 'txt', 'shp', 'shx', 'dbf', 'prj'],
+                type=['csv', 'xlsx', 'xls', 'xlsb', 'xlsm', 'numbers', 'brinc', 'json', 'txt', 'shp', 'shx', 'dbf', 'prj'],
                 key="sim_optional_uploader",
-                help="Drop a custom stations CSV/Excel plus optional shapefile sidecars (.shp/.shx/.dbf/.prj). Path 01 ignores CAD and .brinc files if included."
+                help="Drop a custom station file plus optional shapefile sidecars (.shp/.shx/.dbf/.prj). Path 01 ignores CAD and .brinc files if included."
             )
 
 
@@ -3980,7 +4004,8 @@ def main():
                 "TkFNRSxUWVBFLEFERFJFU1MsQ0FQQUNJVFksTk9URVMsTEFULExPTgpTYW1wbGUgMSBQb2xpY2UgU3RhdGlvbixQb2xpY2UsIjQyMCBXIFN0YXRlIFN0LCBSb2NrZm9yZCwgSUwgNjExMDEiLDIsUHJpbWFyeSBkb3dudG93biBkaXNwYXRjaCBodWIsNDIuMjcxMSwtODkuMDk0MApTYW1wbGUgMiBQb2xpY2UgU3RhdGlvbixQb2xpY2UsIjM0MDEgTiBNYWluIFN0LCBSb2NrZm9yZCwgSUwgNjExMDMiLDIsTm9ydGggc2lkZSBwYXRyb2wgYmFzZSw0Mi4zMTA1LC04OS4wODg3ClNhbXBsZSAzIFBvbGljZSBTdGF0aW9uLFBvbGljZSwiMTcwNyBTIE11bGZvcmQgUmQsIFJvY2tmb3JkLCBJTCA2MTEwOCIsMSxTb3V0aGVhc3QgY29ycmlkb3IgY292ZXJhZ2UsNDIuMjQ4OCwtODguOTk5OApTYW1wbGUgNCBQb2xpY2UgU3RhdGlvbixQb2xpY2UsIjQzNDAgVyBTdGF0ZSBTdCwgUm9ja2ZvcmQsIElMIDYxMTAyIiwxLFdlc3Qgc2lkZSByYXBpZCByZXNwb25zZSB1bml0LDQyLjI3MTIsLTg5LjEyNDEKU2FtcGxlIDEgRmlyZSBTdGF0aW9uLEZpcmUsIjcwOCBDbGludG9uIFN0LCBSb2NrZm9yZCwgSUwgNjExMDEiLDIsQ2VudHJhbCBmaXJlIGRpc3BhdGNoIC0gU3RhdGlvbiAxLDQyLjI3MjAsLTg5LjA4OTgKU2FtcGxlIDIgRmlyZSBTdGF0aW9uLEZpcmUsIjE0MDIgTiBDb3VydCBTdCwgUm9ja2ZvcmQsIElMIDYxMTAzIiwxLE5vcnRoIFJvY2tmb3JkIGZpcmUgY292ZXJhZ2UsNDIuMjk1MSwtODkuMDgyNgpTYW1wbGUgMyBGaXJlIFN0YXRpb24sRmlyZSwiMjI1MCBTIEFscGluZSBSZCwgUm9ja2ZvcmQsIElMIDYxMTA4IiwxLFNvdXRoIEFscGluZSBmaXJlIHJlc3BvbnNlLDQyLjI0MDEsLTg4Ljk5NjQKU2FtcGxlIDQgRmlyZSBTdGF0aW9uLEZpcmUsIjUyODUgU2FmZm9yZCBSZCwgUm9ja2ZvcmQsIElMIDYxMTAxIiwxLFdlc3QgZGlzdHJpY3QgZmlyZSBzdGF0aW9uLDQyLjI2OTgsLTg5LjE0MDIKU2FtcGxlIDEgRU1TIFN0YXRpb24sRU1TLCIxNDAxIEUgU3RhdGUgU3QsIFJvY2tmb3JkLCBJTCA2MTEwNCIsMixFYXN0IHNpZGUgRU1TIHJhcGlkIHJlc3BvbnNlLDQyLjI2OTQsLTg5LjA2MjEKU2FtcGxlIDIgRU1TIFN0YXRpb24sRU1TLCIzNzIwIENoYXJsZXMgU3QsIFJvY2tmb3JkLCBJTCA2MTEwOCIsMSxTb3V0aGVhc3QgRU1TIGNvdmVyYWdlIHpvbmUsNDIuMjUyMiwtODkuMDA1OApTYW1wbGUgMyBFTVMgU3RhdGlvbixFTVMsIjQ4MjUgTiBCZWxsIFNjaG9vbCBSZCwgUm9ja2ZvcmQsIElMIDYxMTA3IiwxLE5vcnRoZWFzdCBFTVMgcmVzcG9uc2UgaHViLDQyLjMwMjEsLTg4Ljk4OTEKU2FtcGxlIDEgR292IFN0YXRpb24sR292ZXJubWVudCwiNDI1IEUgU3RhdGUgU3QsIFJvY2tmb3JkLCBJTCA2MTEwNCIsMSxXaW5uZWJhZ28gQ291bnR5IGFkbWluIGJ1aWxkaW5nLDQyLjI3MTUsLTg5LjA4NDgKU2FtcGxlIDIgR292IFN0YXRpb24sR292ZXJubWVudCwiMzAwIFcgU3RhdGUgU3QsIFJvY2tmb3JkLCBJTCA2MTEwMSIsMSxDaXR5IEhhbGwgLSBSb2NrZm9yZCBtdW5pY2lwYWwgY2VudGVyLDQyLjI3MTEsLTg5LjA5NTcKU2FtcGxlIDMgR292IFN0YXRpb24sR292ZXJubWVudCwiNjUwIFcgU3RhdGUgU3QsIFJvY2tmb3JkLCBJTCA2MTEwMiIsMSxQdWJsaWMgd29ya3MgYW5kIGVtZXJnZW5jeSBtZ210LDQyLjI3MTMsLTg5LjEwMTgK"
             )
 
-            st.caption("Upload a stations CSV/Excel, optional boundary shapefile sidecars, or download the sample template. If no stations file is uploaded, stations will be auto-generated from call data.")
+            st.caption("Upload a station file, optional boundary shapefile sidecars, or download the sample template. If no station file is uploaded, stations will be auto-generated from call data.")
+            st.caption("Station uploads are intended for small files only, up to 40 rows. Larger coordinate tables will be treated as incident data and routed through Path 02.")
 
             st.download_button(
                 label="📥 Sample stations.csv",
@@ -4085,9 +4110,9 @@ def main():
             <div class="path-card" style="--accent:#39FF14;">
                 <span class="pc-icon">📂</span>
                 <div class="pc-tag">Path 02</div>
-                <div class="pc-title">Upload CAD<br>or .brinc Save</div>
+                <div class="pc-title">Upload CAD<br>Incident Files</div>
                 <div class="pc-desc">
-                    Drop <b>any</b> CAD export CSV — no renaming needed.
+                    Drop <b>any</b> CAD incident file — no renaming needed.
                     Or, drop a previously saved <b>.brinc</b> file to instantly restore your deployment.
                 </div>
             </div>
@@ -4096,17 +4121,18 @@ def main():
             st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
             uploaded_files = st.file_uploader(
-                "Drop CAD calls + optional stations + optional boundary shapefile files",
+                "Drop CAD incident files + optional stations + optional boundary shapefile files",
                 accept_multiple_files=True,
-                type=['csv', 'xlsx', 'xls', 'xlsb', 'xlsm', 'brinc', 'json', 'txt', 'shp', 'shx', 'dbf', 'prj'],
+                type=['csv', 'xlsx', 'xls', 'xlsb', 'xlsm', 'numbers', 'brinc', 'json', 'txt', 'shp', 'shx', 'dbf', 'prj'],
                 label_visibility="collapsed",
-                help="Upload real CAD calls, optional stations, and optional shapefile sidecars (.shp/.shx/.dbf/.prj) for a display-only boundary overlay. OR drop a .brinc file to restore a previous session."
+                help="Upload real CAD incident files, optional stations, and optional shapefile sidecars (.shp/.shx/.dbf/.prj) for a display-only boundary overlay. Or drop a .brinc file to restore a previous session."
             )
+            st.session_state['_last_uploaded_files'] = [getattr(f, 'name', '') for f in (uploaded_files or [])]
 
             st.markdown("""
             <div class="field-footnote">
-                <b style='color:#555;'>1 file</b> — any CAD export (CSV or Excel); stations auto-built from OSM<br>
-                <b style='color:#555;'>Multiple CAD files</b> — drop several spreadsheets; they are combined automatically<br>
+                <b style='color:#555;'>1 file</b> — any CAD incident file; stations auto-built from OSM<br>
+                <b style='color:#555;'>Multiple CAD files</b> — drop several incident files; they are combined automatically<br>
                 <b style='color:#555;'>CAD + stations</b> — include a file with "station" in the name to supply custom stations<br>
                 <b style='color:#39FF14;'>.brinc file</b> — instantly restore a saved deployment<br>
                 Max 25,000 calls (sampled) · 100 stations
@@ -4442,8 +4468,68 @@ def main():
                     _upload_logs.append(str(message))
                     return list(_upload_logs[-8:])
 
+                def _mark_upload_step(step_name):
+                    st.session_state['_upload_crash_step'] = str(step_name)
+
+                def _get_crash_user_email():
+                    email = str(st.session_state.get('google_user_email', '') or st.session_state.get('_last_user_email', '') or '').strip()
+                    if email:
+                        return email
+                    try:
+                        email = str(getattr(st.user, 'email', '') or '').strip()
+                    except Exception:
+                        email = ''
+                    return email
+
+                def _get_crash_city_state():
+                    city = str(st.session_state.get('active_city', '') or '').strip()
+                    state = str(st.session_state.get('active_state', '') or '').strip()
+                    return city, state
+
+                def _report_upload_crash(step_name, exc):
+                    tb_text = traceback.format_exc()
+                    _push_upload_log(f"❌ Crash at {step_name}: {exc}")
+                    _push_upload_log("Traceback captured for crash alert.")
+                    st.session_state['_last_upload_crash'] = {
+                        'step': str(step_name),
+                        'error': str(exc),
+                        'traceback': tb_text,
+                    }
+                    try:
+                        _city, _state = _get_crash_city_state()
+                        _files = list(st.session_state.get('_last_uploaded_files', []))
+                        _notify_crash_email(
+                            step_name,
+                            str(exc),
+                            tb_text,
+                            details={
+                                'source_app': 'Frankenstein',
+                                'session_id': st.session_state.get('session_id', ''),
+                                'user_email': _get_crash_user_email(),
+                                'city': _city,
+                                'state': _state,
+                                'file_count': len(_files),
+                                'upload_signature': current_upload_signature if 'current_upload_signature' in locals() else '',
+                                'upload_files': _files,
+                            },
+                        )
+                    except Exception as _crash_email_exc:
+                        _push_upload_log(f"⚠ Crash email failed: {_crash_email_exc}")
+                    try:
+                        _set_upload_overlay_status(
+                            title="UPLOAD ERROR",
+                            status="CRASH DETECTED",
+                            copy=f"An unexpected error occurred while {step_name}. The full traceback has been logged and emailed if notifications are configured.",
+                            progress=100,
+                            logs=_upload_logs,
+                            error=True,
+                        )
+                    except Exception:
+                        pass
+
                 # --- 1. INTELLIGENTLY CHECK FOR .BRINC FILE ---
                 # Browsers sometimes append .json to .brinc files on download
+                _mark_upload_step("checking for .brinc restore")
                 brinc_file = detect_brinc_file(uploaded_files)
 
                 if brinc_file:
@@ -4460,6 +4546,7 @@ def main():
 
                 else:
                     # --- 2. OTHERWISE, PROCESS AS NORMAL CSV CAD DATA ---
+                    _mark_upload_step("splitting uploaded files")
                     st.session_state['active_city'] = ""
                     st.session_state['active_state'] = ""
                     st.session_state['target_cities'] = []
@@ -4475,6 +4562,7 @@ def main():
 
                     if call_files:
                         census_auto_processed = False
+                        _mark_upload_step("inspecting call files for coordinates")
                         _push_upload_log("Starting coordinate inspection.")
                         _set_upload_overlay_status(
                             title="CAD UPLOAD",
@@ -4484,6 +4572,7 @@ def main():
                             logs=_upload_logs,
                         )
                         with st.spinner("🔍 Detecting column types in CAD export…"):
+                            _mark_upload_step("parsing CAD upload")
                             df_c = aggressive_parse_calls(call_files)
                         for _pq_item in st.session_state.get('parse_quality', []):
                             _pq_in = _pq_item.get('input_rows', 0)
@@ -4504,6 +4593,7 @@ def main():
                                 logs=_upload_logs,
                             )
                             with st.spinner("🛰 No recoverable coordinates found — preparing Census batch conversion; this usually takes a few seconds…"):
+                                _mark_upload_step("building Census staging data")
                                 _push_upload_log("Building partial call frame for merge-back.")
                                 _set_upload_overlay_status(
                                     title="CENSUS REQUIRED",
@@ -4888,6 +4978,7 @@ def main():
                         })
 
                         if station_file is not None:
+                            _mark_upload_step("loading uploaded stations file")
                             _push_upload_log("Loading uploaded stations file.")
                             _set_upload_overlay_status(
                                 title="UPLOAD PROCESSING",
@@ -4907,6 +4998,7 @@ def main():
                                 st.error(f"❌ Stations file error: {osm_note}")
                                 st.stop()
                         else:
+                            _mark_upload_step("generating stations from calls")
                             _push_upload_log("No stations file provided. Building stations automatically from call data.")
                             _set_upload_overlay_status(
                                 title="UPLOAD PROCESSING",
@@ -4930,6 +5022,7 @@ def main():
                             df_s = df_s.sample(100, random_state=42).reset_index(drop=True)
 
                         _push_upload_log("Detecting jurisdiction from call locations.")
+                        _mark_upload_step("detecting jurisdiction from calls")
                         _set_upload_overlay_status(
                             title="UPLOAD PROCESSING",
                             status="DETECTING JURISDICTION",
@@ -4965,6 +5058,7 @@ def main():
                         st.session_state['total_modeled_calls'] = len(df_c)
 
                         _push_upload_log("Resolving uploaded boundaries and final session state.")
+                        _mark_upload_step("resolving uploaded boundaries")
                         _set_upload_overlay_status(
                             title="UPLOAD PROCESSING",
                             status="FINALIZING DATASET",
@@ -5009,7 +5103,7 @@ def main():
             <div class="path-card" style="--accent:#FFD700;">
                 <span class="pc-icon">⚡</span>
                 <div class="pc-tag">Path 03</div>
-                <div class="pc-title">1-Click Demo<br>Large US City</div>
+                <div class="pc-title">Launch a<br>Demo</div>
                 <div class="pc-desc">Instantly spin up a fully pre-configured scenario for a major US city. Ideal for live stakeholder presentations and platform walkthroughs.</div>
             </div>
             """, unsafe_allow_html=True)
@@ -5765,6 +5859,7 @@ body{{background:transparent;overflow:hidden}}
         show_cell_towers = _display_opts['show_cell_towers']
         show_heatmap = _display_opts['show_heatmap']
         show_dots = _display_opts['show_dots']
+        show_station_suggestions = _display_opts['show_station_suggestions']
         show_rapid_response_ring = _display_opts['show_rapid_response_ring']
         simulate_traffic = _display_opts['simulate_traffic']
         show_health = _display_opts['show_health']
@@ -5901,9 +5996,158 @@ body{{background:transparent;overflow:hidden}}
         calls_per_day = _runtime_ctx['calls_per_day']
         dfr_dispatch_rate = _runtime_ctx['dfr_dispatch_rate']
         deflection_rate = _runtime_ctx['deflection_rate']
+
+        # ── STATION SUGGESTIONS (public data only) ───────────────────────
+        _using_suggestions = not st.session_state.get('stations_user_uploaded', False)
+        _suggestions = []
+        if _using_suggestions and total_calls > 0 and station_metadata:
+            _city_area_for_suggest = city_m.area if (city_m and not city_m.is_empty) else 1.0
+            _suggestions = compute_station_suggestions(
+                resp_matrix, guard_matrix, station_metadata,
+                total_calls, _city_area_for_suggest, max_suggestions=10,
+            )
+            st.session_state['_station_suggestions'] = _suggestions
+
+            _suggestion_modes = st.session_state.get('suggestion_modes', {}) or {}
+            _suggestion_modes = {
+                s['station_idx']: _suggestion_modes.get(
+                    s['station_idx'],
+                    s['role'] if s['rank'] <= 3 else 'Off',
+                )
+                for s in _suggestions
+            }
+            st.session_state['suggestion_modes'] = _suggestion_modes
+            st.session_state['suggestion_toggles'] = {
+                idx: (mode != 'Off') for idx, mode in _suggestion_modes.items()
+            }
+
+            def _suggestion_modes_sig(mode_map):
+                return tuple(sorted((int(idx), str(mode)) for idx, mode in mode_map.items()))
+
+            def _apply_role_target(role_suggestions, target_count, target_role):
+                target_count = max(0, int(target_count or 0))
+                current_modes = dict(st.session_state.get('suggestion_modes', {}) or {})
+                active_roles = [
+                    s for s in role_suggestions
+                    if current_modes.get(s['station_idx'], 'Off') == target_role
+                ]
+                changed = False
+
+                if len(active_roles) > target_count:
+                    keep_ids = {
+                        s['station_idx']
+                        for s in active_roles[:target_count]
+                    }
+                    for s in role_suggestions:
+                        idx = s['station_idx']
+                        current_mode = current_modes.get(idx, 'Off')
+                        if idx in keep_ids:
+                            new_mode = target_role
+                        elif current_mode == target_role:
+                            new_mode = 'Off'
+                        else:
+                            new_mode = current_mode
+                        if current_mode != new_mode:
+                            current_modes[idx] = new_mode
+                            changed = True
+                    st.session_state['suggestion_modes'] = current_modes
+                    st.session_state['suggestion_toggles'] = {
+                        idx: (mode != 'Off') for idx, mode in current_modes.items()
+                    }
+                    return current_modes, changed
+
+                if len(active_roles) < target_count:
+                    for s in role_suggestions:
+                        idx = s['station_idx']
+                        if current_modes.get(idx, 'Off') == 'Off':
+                            current_modes[idx] = target_role
+                            changed = True
+                            active_roles.append(s)
+                            if len(active_roles) >= target_count:
+                                break
+                st.session_state['suggestion_modes'] = current_modes
+                st.session_state['suggestion_toggles'] = {
+                    idx: (mode != 'Off') for idx, mode in current_modes.items()
+                }
+                return current_modes, changed
+
+            _prev_suggestion_sync = st.session_state.get('_suggestion_sync_sig')
+            _prev_resp_count = _prev_guard_count = None
+            _prev_modes_sig = None
+            if _prev_suggestion_sync is not None:
+                _prev_resp_count, _prev_guard_count, _prev_modes_sig = _prev_suggestion_sync
+
+            _curr_modes_sig = _suggestion_modes_sig(_suggestion_modes)
+            _custom_resp_lock_count = len(pinned_resp_names)
+            _custom_guard_lock_count = len(pinned_guard_names)
+
+            _sug_resp_idx = [
+                s['station_idx'] for s in _suggestions
+                if _suggestion_modes.get(s['station_idx']) == 'Responder'
+            ]
+            _sug_guard_idx = [
+                s['station_idx'] for s in _suggestions
+                if _suggestion_modes.get(s['station_idx']) == 'Guardian'
+            ]
+
+            _slider_changed = (
+                _prev_suggestion_sync is None
+                or k_responder != _prev_resp_count
+                or k_guardian != _prev_guard_count
+            )
+            _modes_changed = (
+                _prev_suggestion_sync is None
+                or _curr_modes_sig != _prev_modes_sig
+            )
+
+            if _prev_suggestion_sync is None:
+                # Initialize the suggestion counts from the current selection state.
+                k_responder = _custom_resp_lock_count + len(_sug_resp_idx)
+                k_guardian = _custom_guard_lock_count + len(_sug_guard_idx)
+                st.session_state['k_resp'] = k_responder
+                st.session_state['k_guard'] = k_guardian
+            elif _slider_changed and not _modes_changed:
+                _resp_target = max(int(k_responder or 0) - _custom_resp_lock_count, 0)
+                _guard_target = max(int(k_guardian or 0) - _custom_guard_lock_count, 0)
+                _resp_suggestions = [
+                    s for s in _suggestions
+                    if _suggestion_modes.get(s['station_idx']) in {'Responder', 'Off'}
+                ]
+                _guard_suggestions = [
+                    s for s in _suggestions
+                    if _suggestion_modes.get(s['station_idx']) in {'Guardian', 'Off'}
+                ]
+                _suggestion_modes, _resp_changed = _apply_role_target(_resp_suggestions, _resp_target, 'Responder')
+                _suggestion_modes, _guard_changed = _apply_role_target(_guard_suggestions, _guard_target, 'Guardian')
+                if _resp_changed or _guard_changed:
+                    st.session_state['suggestion_modes'] = _suggestion_modes
+                    st.session_state['suggestion_toggles'] = {
+                        idx: (mode != 'Off') for idx, mode in _suggestion_modes.items()
+                    }
+                    _curr_modes_sig = _suggestion_modes_sig(_suggestion_modes)
+            else:
+                k_responder = _custom_resp_lock_count + len(_sug_resp_idx)
+                k_guardian = _custom_guard_lock_count + len(_sug_guard_idx)
+                st.session_state['k_resp'] = k_responder
+                st.session_state['k_guard'] = k_guardian
+
+            locked_r_pins = list(dict.fromkeys(locked_r_pins + [
+                s['station_idx'] for s in _suggestions
+                if _suggestion_modes.get(s['station_idx']) == 'Responder'
+            ]))
+            locked_g_pins = list(dict.fromkeys(locked_g_pins + [
+                s['station_idx'] for s in _suggestions
+                if _suggestion_modes.get(s['station_idx']) == 'Guardian'
+            ]))
+            st.session_state['_suggestion_sync_sig'] = (
+                int(k_responder or 0),
+                int(k_guardian or 0),
+                _curr_modes_sig,
+            )
+
         # ── OPTIMIZATION ──────────────────────────────────────────────────
         _pins_key = f"{sorted(locked_g_pins)}_{sorted(locked_r_pins)}"
-        opt_cache_key = f"{k_responder}_{k_guardian}_{resp_radius_mi}_{guard_radius_mi}_{guard_strategy}_{resp_strategy}_{deployment_mode}_{incremental_build}_{bounds_hash}_{_station_signature}_{_pins_key}"
+        opt_cache_key = f"{k_responder}_{k_guardian}_{resp_radius_mi}_{guard_radius_mi}_{guard_strategy}_{resp_strategy}_{deployment_mode}_{incremental_build}_{allow_redundancy}_{complement_mode}_{shared_mode}_{bounds_hash}_{_station_signature}_{_pins_key}"
         _opt_result = optimize_fleet_selection(
             st,
             st.session_state,
@@ -5959,13 +6203,34 @@ body{{background:transparent;overflow:hidden}}
         for idx in active_guard_idx:
             if idx not in chrono_g: ordered_deployments_raw.append((idx,'GUARDIAN'))
 
+        guardian_color = "#FFD700"
+        responder_color = "#00D2FF"
+        extra_station_colors = [
+            c for c in STATION_COLORS
+            if c not in {guardian_color, responder_color}
+        ]
         active_color_map = {}
-        c_idx = 0
+        role_color_counts = {"GUARDIAN": 0, "RESPONDER": 0}
+        extra_color_idx = 0
         for idx, d_type in ordered_deployments_raw:
             key = f"{idx}_{d_type}"
-            if key not in active_color_map:
-                active_color_map[key] = STATION_COLORS[c_idx % len(STATION_COLORS)]
-                c_idx += 1
+            if key in active_color_map:
+                continue
+            if d_type == "GUARDIAN":
+                if role_color_counts["GUARDIAN"] == 0:
+                    color = guardian_color
+                else:
+                    color = extra_station_colors[extra_color_idx % len(extra_station_colors)]
+                    extra_color_idx += 1
+                role_color_counts["GUARDIAN"] += 1
+            else:
+                if role_color_counts["RESPONDER"] == 0:
+                    color = responder_color
+                else:
+                    color = extra_station_colors[extra_color_idx % len(extra_station_colors)]
+                    extra_color_idx += 1
+                role_color_counts["RESPONDER"] += 1
+            active_color_map[key] = color
 
         guard_geos = [station_metadata[i]['clipped_guard'] for i in active_guard_idx]
         resp_geos  = [station_metadata[i]['clipped_2m']    for i in active_resp_idx]
@@ -6286,7 +6551,8 @@ body{{background:transparent;overflow:hidden}}
                     downtime_minutes=CONFIG["GUARDIAN_CHARGE_MIN"] if _is_guard else CONFIG["RESPONDER_CHARGE_MIN"],
                 )
                 # Alternate type cap (for cross-type deficit recommendation)
-                _alt_avg_dist    = float(station_metadata[idx].get('avg_dist_g' if d_type == 'RESPONDER' else 'avg_dist_r', 0) or 0)
+                # Use same distance as current drone type, but with alternate speed for fair comparison
+                _alt_avg_dist    = avg_dist  # Use the current drone's distance for fair comparison
                 _alt_speed       = CONFIG["GUARDIAN_SPEED"] if _alt_is_guard else CONFIG["RESPONDER_SPEED"]
                 _alt_travel_cost = (_alt_avg_dist / _alt_speed) * 60 if _alt_speed > 0 else 0.0
                 _alt_response_cost = _alt_travel_cost + _MIN_SCENE_MIN
@@ -6646,7 +6912,23 @@ body{{background:transparent;overflow:hidden}}
             except Exception:
                 pass
 
-        avg_resp_time = sum(d['avg_time_min'] for d in active_drones) / len(active_drones) if active_drones else 0.0
+        # Use fastest available drone type for arrival advantage calculation
+        # Guardian (fastest) > Responder (second) > Ground unit (slowest)
+        _guardian_drones = [d for d in active_drones if d.get('type') == 'GUARDIAN']
+        _responder_drones = [d for d in active_drones if d.get('type') == 'RESPONDER']
+
+        if _guardian_drones:
+            # Use Guardian drones (fastest) for arrival advantage calculation
+            avg_resp_time = sum(d['avg_time_min'] for d in _guardian_drones) / len(_guardian_drones)
+            _fleet_for_advantage = _guardian_drones
+        elif _responder_drones:
+            # Use Responder drones if no Guardians
+            avg_resp_time = sum(d['avg_time_min'] for d in _responder_drones) / len(_responder_drones)
+            _fleet_for_advantage = _responder_drones
+        else:
+            # Fall back to all drones if only other types exist
+            avg_resp_time = sum(d['avg_time_min'] for d in active_drones) / len(active_drones) if active_drones else 0.0
+            _fleet_for_advantage = active_drones
 
         # Ground speed: only apply congestion reduction when traffic toggle is on.
         # Both avg_time_saved and gain_val use the same per-drone avg_time_min basis so
@@ -6655,9 +6937,9 @@ body{{background:transparent;overflow:hidden}}
         _effective_ground_speed = _base_ground_speed * (1.0 - float(traffic_level) / 100.0) if simulate_traffic else _base_ground_speed
 
         try:
-            if active_drones and _effective_ground_speed > 0:
+            if _fleet_for_advantage and _effective_ground_speed > 0:
                 _fleet_gnd_time = (sum(d['avg_time_min'] * d['speed_mph'] * 1.4 / _effective_ground_speed
-                                       for d in active_drones) / len(active_drones))
+                                       for d in _fleet_for_advantage) / len(_fleet_for_advantage))
                 avg_time_saved = max(0.0, _fleet_gnd_time - avg_resp_time)
             else:
                 avg_time_saved = 0.0
@@ -6947,7 +7229,7 @@ body{{background:transparent;overflow:hidden}}
                 if d.get('pinned'):
                     fig.add_trace(go.Scattermap(
                         lat=[d['lat']], lon=[d['lon']], mode='markers',
-                        marker=dict(size=18, color=d['color'], symbol='star'),
+                        marker=dict(size=32, color=d['color'], symbol='star'),
                         name=f"📍 {d['name'].split(',')[0]} (Pinned)",
                         hovertemplate=f"<b>🔒 PINNED</b><br>{d['name']}<br>{d['type']}<extra></extra>",
                         showlegend=False
@@ -6996,7 +7278,7 @@ body{{background:transparent;overflow:hidden}}
                         lat=_custom_lat,
                         lon=_custom_lon,
                         mode='markers',
-                        marker=dict(size=13, color=_custom_color, symbol='diamond'),
+                        marker=dict(size=18, color=_custom_color, symbol='diamond'),
                         name='Custom Stations',
                         hovertemplate='%{text}<extra></extra>',
                         text=_custom_text,
@@ -7013,6 +7295,50 @@ body{{background:transparent;overflow:hidden}}
                     hovertemplate='Pending custom station<extra></extra>',
                     showlegend=False,
                 ))
+
+            # ── Suggestion "?" markers on map ─────────────────────────────
+            if _using_suggestions and _suggestions and show_station_suggestions and st.session_state.get('show_suggestion_markers', True):
+                _stg_map = st.session_state.get('suggestion_toggles', {})
+                _sug_on_lat, _sug_on_lon, _sug_on_text = [], [], []
+                _sug_off_lat, _sug_off_lon, _sug_off_text = [], [], []
+                for _s in _suggestions:
+                    _tip = (
+                        f"<b>#{_s['rank']} {_s['name']}</b><br>"
+                        f"{_s['role']} suggestion<br>"
+                        f"📞 {_s['call_pct']}% calls · 🗺️ {_s['land_pct']}% land"
+                    )
+                    if _stg_map.get(_s['station_idx']):
+                        _sug_on_lat.append(_s['lat'])
+                        _sug_on_lon.append(_s['lon'])
+                        _sug_on_text.append(_tip)
+                    else:
+                        _sug_off_lat.append(_s['lat'])
+                        _sug_off_lon.append(_s['lon'])
+                        _sug_off_text.append(_tip)
+                if _sug_off_lat:
+                    fig.add_trace(go.Scattermap(
+                        lat=_sug_off_lat, lon=_sug_off_lon,
+                        mode='text+markers',
+                        text=['?' for _ in _sug_off_lat],
+                        textfont=dict(size=12, color='#8B6F47', weight=700),
+                        marker=dict(size=10, color='rgba(232, 178, 153, 0.8)'),
+                        hovertemplate='%{customdata}<extra></extra>',
+                        customdata=_sug_off_text,
+                        name='Suggested Sites',
+                        showlegend=len(_sug_on_lat) == 0,
+                    ))
+                if _sug_on_lat:
+                    fig.add_trace(go.Scattermap(
+                        lat=_sug_on_lat, lon=_sug_on_lon,
+                        mode='text+markers',
+                        text=['♦' for _ in _sug_on_lat],
+                        textfont=dict(size=14, color='#00D2FF', weight=700),
+                        marker=dict(size=12, color='rgba(0, 210, 255, 0.7)'),
+                        hovertemplate='%{customdata}<extra></extra>',
+                        customdata=_sug_on_text,
+                        name='Suggested Sites (active)',
+                        showlegend=True,
+                    ))
 
             map_cfg = dict(center=dict(lat=center_lat, lon=center_lon), zoom=dynamic_zoom, style=map_style)
             if show_satellite:
@@ -7124,6 +7450,15 @@ body{{background:transparent;overflow:hidden}}
                     key=_map_key,
                 )
 
+
+        # ── STATION SUGGESTIONS PANEL (public data, no stations file) ────────────
+        if _using_suggestions and _suggestions and show_station_suggestions:
+            _sug_changed = render_station_suggestions(
+                st, st.session_state, _suggestions,
+                text_main, text_muted, card_bg, card_border, accent_color,
+            )
+            if _sug_changed:
+                st.rerun()
 
         # ── UNIT ECONOMICS CARDS (directly below map, no toggle) ─────────────────
         st.markdown("---")
@@ -7550,6 +7885,32 @@ body{{background:transparent;overflow:hidden}}
                 )
 
                 components.html(sim_html, height=700)
+
+        # ── CRASH / INCIDENT SIMULATOR ───────────────────────────────────────
+        if fleet_capex > 0:
+            st.markdown("---")
+            st.markdown(f"<h3 style='color:{text_main};'>💥 Crash / Incident Simulator <span class='tip' data-tip='Simulate realistic drone incident scenarios including bird strikes, motor failures, and parachute deployment. Generates FAA-compliant reports and telemetry analysis for training and compliance.'>?</span></h3>", unsafe_allow_html=True)
+            st.markdown(f"<div style='font-size:0.82rem; color:{text_muted}; margin-bottom:10px;'>Simulate drone crash events for training, FAA compliance, and customer reporting. Select a scenario, configure conditions, and review the customer report, FAA checklist, telemetry analysis, and parachute performance metrics.</div>", unsafe_allow_html=True)
+
+            show_crash_sim = st.toggle("🛑 Enable Crash Simulator", value=False, key='show_crash_sim', help='Simulate drone incident scenarios including bird strikes, motor failures, battery failure, operator error, and weather events. Generates FAA-compliant reports.')
+            if show_crash_sim:
+                try:
+                    from modules.crash_simulator import render_crash_simulator
+                    _crash_city = st.session_state.get('active_city', 'Jurisdiction')
+                    _crash_state = st.session_state.get('active_state', 'US')
+                    render_crash_simulator(
+                        city=_crash_city,
+                        state=_crash_state,
+                        center_lat=center_lat,
+                        center_lon=center_lon,
+                        active_drones=active_drones,
+                        text_main=text_main,
+                        text_muted=text_muted,
+                        accent_color=accent_color,
+                        card_bg=card_bg,
+                    )
+                except Exception as e:
+                    st.error(f"Crash simulator unavailable: {str(e)}")
 
         _show_analytics_section = st.toggle(
             "Show CAD Ingestion Analytics",
@@ -8715,10 +9076,21 @@ body{{background:transparent;overflow:hidden}}
             except Exception:
                 _dur_min = ''
 
-            avg_resp_time    = sum(d['avg_time_min'] for d in active_drones) / len(active_drones) if active_drones else 0.0
+            # Use fastest available drone type for arrival advantage calculation
+            _exp_guardian = [d for d in active_drones if d.get('type') == 'GUARDIAN']
+            _exp_responder = [d for d in active_drones if d.get('type') == 'RESPONDER']
+            if _exp_guardian:
+                avg_resp_time = sum(d['avg_time_min'] for d in _exp_guardian) / len(_exp_guardian)
+                _exp_fleet_for_adv = _exp_guardian
+            elif _exp_responder:
+                avg_resp_time = sum(d['avg_time_min'] for d in _exp_responder) / len(_exp_responder)
+                _exp_fleet_for_adv = _exp_responder
+            else:
+                avg_resp_time = sum(d['avg_time_min'] for d in active_drones) / len(active_drones) if active_drones else 0.0
+                _exp_fleet_for_adv = active_drones
             _exp_base_gs     = float(CONFIG["DEFAULT_TRAFFIC_SPEED"])
             _exp_eff_gs      = _exp_base_gs * (1.0 - float(traffic_level) / 100.0) if simulate_traffic else _exp_base_gs
-            avg_time_saved   = (max(0.0, (sum(d['avg_time_min'] * d['speed_mph'] * 1.4 / _exp_eff_gs for d in active_drones) / len(active_drones)) - avg_resp_time)) if active_drones and _exp_eff_gs > 0 else 0.0
+            avg_time_saved   = (max(0.0, (sum(d['avg_time_min'] * d['speed_mph'] * 1.4 / _exp_eff_gs for d in _exp_fleet_for_adv) / len(_exp_fleet_for_adv)) - avg_resp_time)) if _exp_fleet_for_adv and _exp_eff_gs > 0 else 0.0
             _calls_lons = (df_calls_full if df_calls_full is not None else df_calls)['lon'].dropna()
             _calls_lats = (df_calls_full if df_calls_full is not None else df_calls)['lat'].dropna()
             minx = float(_calls_lons.min()) if len(_calls_lons) else 0
@@ -10793,7 +11165,39 @@ body{{background:transparent;overflow:hidden}}
 
 
 
-main()
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as _app_crash_exc:
+        _app_crash_tb = traceback.format_exc()
+        try:
+            _notify_crash_email(
+                st.session_state.get('_upload_crash_step', 'application startup/runtime'),
+                str(_app_crash_exc),
+                _app_crash_tb,
+                details={
+                    'source_app': 'Frankenstein',
+                    'session_id': st.session_state.get('session_id', ''),
+                    'user_email': str(
+                        st.session_state.get('google_user_email', '')
+                        or st.session_state.get('_last_user_email', '')
+                        or getattr(st.user, 'email', '')
+                        or ''
+                    ).strip(),
+                    'city': str(st.session_state.get('active_city', '') or '').strip(),
+                    'state': str(st.session_state.get('active_state', '') or '').strip(),
+                    'file_count': len(st.session_state.get('_last_uploaded_files', [])),
+                    'upload_signature': st.session_state.get('census_source_signature', '') or st.session_state.get('_upload_crash_step', ''),
+                    'upload_files': [
+                        getattr(f, 'name', '')
+                        for f in (st.session_state.get('sim_optional_uploader') or st.session_state.get('uploaded_files') or [])
+                    ],
+                },
+            )
+        except Exception:
+            pass
+        print(_app_crash_tb)
+        raise
 
 
 

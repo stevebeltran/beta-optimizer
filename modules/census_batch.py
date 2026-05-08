@@ -21,6 +21,8 @@ import pandas as pd
 from modules.config import STATE_FIPS, US_STATES_ABBR
 from modules.efficient_merge import merge_census_results_fast
 from modules.data_validation import validate_census_results, validate_merged_data
+from modules.cad_parser import _normalize_jacksonville_cfs_report
+from modules.numbers_adapter import load_numbers_dataframe
 
 
 _STATE_ABBRS = set(STATE_FIPS.keys())
@@ -214,6 +216,10 @@ def _deduplicate_columns(df):
 
 def load_raw_call_table(uploaded_file) -> pd.DataFrame:
     fname = str(uploaded_file.name or '').lower()
+    if fname.endswith('.numbers'):
+        raw_df = load_numbers_dataframe(uploaded_file.getvalue(), uploaded_file.name)
+        raw_df.columns = [str(c).lower().strip() for c in raw_df.columns]
+        return _deduplicate_columns(raw_df).reset_index(drop=True)
     if fname.endswith(_EXCEL_EXTS):
         raw_bytes = uploaded_file.getvalue()
         engine = 'openpyxl'
@@ -250,6 +256,9 @@ def load_raw_call_table(uploaded_file) -> pd.DataFrame:
             raw_df = raw_df.dropna(how='all')
             raw_df.columns = [str(c).lower().strip() for c in raw_df.columns]
             raw_df = _deduplicate_columns(raw_df)
+            _jacksonville_df = _normalize_jacksonville_cfs_report(raw_bytes, filename=uploaded_file.name)
+            if _jacksonville_df is not None and not _jacksonville_df.empty:
+                raw_df = _jacksonville_df
             if _looks_like_headerless_excel_columns(headers_raw) or _looks_like_headerless_cad_export_frame(raw_df):
                 raw_df = _normalize_headerless_excel_frame(raw_df)
             return raw_df.reset_index(drop=True)
@@ -276,6 +285,9 @@ def load_raw_call_table(uploaded_file) -> pd.DataFrame:
                 best_df = pd.read_excel(io.BytesIO(raw_bytes), engine=engine, dtype=str)
             best_df.columns = [str(c).lower().strip() for c in best_df.columns]
             best_df = _deduplicate_columns(best_df)
+            _jacksonville_df = _normalize_jacksonville_cfs_report(raw_bytes, filename=uploaded_file.name)
+            if _jacksonville_df is not None and not _jacksonville_df.empty:
+                best_df = _jacksonville_df
             if _looks_like_headerless_cad_export_frame(best_df):
                 best_df = _normalize_headerless_excel_frame(best_df)
             return best_df.reset_index(drop=True)

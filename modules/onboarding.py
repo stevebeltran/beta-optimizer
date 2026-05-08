@@ -59,7 +59,7 @@ def restore_brinc_session(session_state, save_data):
     session_state['k_guard'] = save_data.get('k_guard', 0)
     session_state['r_resp'] = save_data.get('r_resp', 2.0)
     session_state['r_guard'] = save_data.get('r_guard', 8.0)
-    session_state['dfr_rate'] = save_data.get('dfr_rate', 30)
+    session_state['dfr_rate'] = save_data.get('dfr_rate', 25)
     session_state['deflect_rate'] = save_data.get('deflect_rate', 30)
 
     session_state['pinned_guard_names'] = save_data.get('pinned_guard_names', [])
@@ -272,9 +272,12 @@ def _looks_like_station_upload_content(uploaded_file):
         station_df = _normalize_station_columns(station_df)
         station_df, single_col_note = _extract_single_column_station_addresses(station_df)
         cols = {str(column).lower().strip() for column in station_df.columns}
+        row_count = len(station_df)
         if single_col_note:
             return True
         if not cols:
+            return False
+        if row_count > 40:
             return False
         has_coords = {'lat', 'lon'}.issubset(cols)
         has_station_shape = bool(cols & {'name', 'type', 'address', 'lat', 'lon'})
