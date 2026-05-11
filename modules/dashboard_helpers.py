@@ -870,13 +870,32 @@ def manage_custom_stations(
     except Exception:
         pass
 
-    # For auto-sync with card toggles, use the selected card count as the slider value
-    # But allow user to manually adjust beyond that
-    sync_val_r = max(session_state.get('k_resp', 2), n_selected_responder)
-    sync_val_g = max(session_state.get('k_guard', 0), n_selected_guardian)
+    def _role_count_from_modes(mode_map, role_name):
+        return sum(1 for mode in mode_map.values() if mode == role_name)
 
-    val_r = min(sync_val_r, max_resp_calc)
-    val_g = min(sync_val_g, max_guard_calc)
+    prev_sync = session_state.get('_suggestion_sync_sig')
+    prev_resp_count = prev_guard_count = None
+    prev_modes_sig = None
+    if prev_sync is not None:
+        prev_resp_count, prev_guard_count, prev_modes_sig = prev_sync
+
+    current_resp_from_modes = n_custom_responder + n_selected_responder
+    current_guard_from_modes = n_custom_guardian + n_selected_guardian
+    current_resp_slider = int(session_state.get('k_resp', current_resp_from_modes) or 0)
+    current_guard_slider = int(session_state.get('k_guard', current_guard_from_modes) or 0)
+
+    if prev_sync is None:
+        val_r = int(session_state.get('k_resp', current_resp_from_modes if current_resp_from_modes > 0 else 2) or 0)
+        val_g = int(session_state.get('k_guard', current_guard_from_modes if current_guard_from_modes > 0 else 1) or 0)
+    else:
+        prev_modes_map = dict(prev_modes_sig or [])
+        prev_resp_from_modes = n_custom_responder + _role_count_from_modes(prev_modes_map, 'Responder')
+        prev_guard_from_modes = n_custom_guardian + _role_count_from_modes(prev_modes_map, 'Guardian')
+        val_r = current_resp_from_modes if current_resp_from_modes != prev_resp_from_modes else current_resp_slider
+        val_g = current_guard_from_modes if current_guard_from_modes != prev_guard_from_modes else current_guard_slider
+
+    val_r = min(max(0, int(val_r)), max_resp_calc)
+    val_g = min(max(0, int(val_g)), max_guard_calc)
 
     k_responder = st.sidebar.slider('🚁 Responder Count', 0, max(1, max_resp_calc), val_r, help='Short-range tactical drones (2-3mi radius).')
     k_guardian = st.sidebar.slider('🦅 Guardian Count', 0, max(1, max_guard_calc), val_g, help='Long-range overwatch drones (5-8mi radius).')
