@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 import os
 import sys
+import textwrap
 # Set CWD to the project root so every relative asset path (parquets, shapefiles,
 # logos, etc.) resolves correctly regardless of how the process was launched.
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -149,7 +150,7 @@ NOTIFICATIONS_AVAILABLE = True
 try:
     from modules.notifications import (
         _notify_email, _log_to_sheets, _log_login_to_sheets, _publish_public_report_to_sheets,
-        _log_qr_scan_to_sheets, _notify_crash_email,
+        _log_qr_scan_to_sheets, _notify_crash_email, _write_crash_report,
     )
 except Exception as _notifications_import_error:
     NOTIFICATIONS_AVAILABLE = False
@@ -170,6 +171,9 @@ except Exception as _notifications_import_error:
         return None
 
     def _notify_crash_email(*args, **kwargs):
+        return None
+
+    def _write_crash_report(*args, **kwargs):
         return None
 
     print(f"Notifications disabled at startup: {_notifications_import_error}")
@@ -1030,10 +1034,11 @@ def _make_random_stations(df_calls, n=40, boundary_geom=None, epsg_code=None):
              ['Fire']   * max(1, math.ceil(k_actual * 0.3)) +
              ['School'] * max(1, math.ceil(k_actual * 0.2)))[:k_actual]
     return pd.DataFrame({
-        'name': [f"{types[i]} Station {i+1}" for i in range(k_actual)],
+        'name': [f"Call-Density {types[i]} Station {i+1}" for i in range(k_actual)],
         'lat':  station_lats,
         'lon':  station_lons,
         'type': types,
+        'source': ['CALL_DENSITY'] * k_actual,
     })
 
 @st.cache_data(show_spinner=False)
@@ -1107,50 +1112,61 @@ def _fetch_osm_stations_cached(cen_lat_r: float, cen_lon_r: float, max_stations:
             f'way["amenity"="social_facility"]({bbox});'
             f');out center;'
         )
-        # Fire all three mirrors in parallel — first successful response wins.
-        # Use an explicit shutdown so slow mirrors do not block the caller once
-        # we already have a usable response.
-        data = None
+        # Query all three mirrors in parallel and merge any successful payloads.
+        # Some mirrors return partial coverage, so taking only the first success
+        # can collapse the candidate pool to a single site.
+        data_sets = []
         _pool = cf.ThreadPoolExecutor(max_workers=3)
         try:
             futs = {_pool.submit(_try_mirror, url, query): url for url in osm_urls}
             for fut in cf.as_completed(futs):
                 result = fut.result()
                 if result is not None:
-                    data = result
-                    break
+                    data_sets.append(result)
         finally:
             _pool.shutdown(wait=False, cancel_futures=True)
 
-        if data is None:
+        if not data_sets:
             continue
 
         rows = []
-        for el in data.get('elements', []):
-            tags = el.get('tags', {})
-            lat = el.get('lat') or (el.get('center') or {}).get('lat')
-            lon = el.get('lon') or (el.get('center') or {}).get('lon')
-            if lat is None or lon is None:
-                continue
-            amenity  = tags.get('amenity', '')
-            building = tags.get('building', '')
-            railway  = tags.get('railway', '')
-            type_label = (
-                'Fire'           if amenity == 'fire_station'                    else
-                'Police'         if amenity == 'police'                          else
-                'Hospital'       if amenity == 'hospital'                        else
-                'Library'        if amenity == 'library'                         else
-                'EMS'            if amenity == 'ambulance_station'               else
-                'University'     if amenity in ('university', 'college')         else
-                'Transit'        if amenity == 'bus_station' or railway == 'station' else
-                'Community'      if amenity == 'community_centre'                else
-                'Courthouse'     if amenity == 'courthouse'                      else
-                'Social Services' if amenity == 'social_facility'               else
-                'Government'     if building == 'government'                     else
-                'School'
-            )
-            rows.append({'name': tags.get('name', f"{type_label} Station"),
-                         'lat': round(lat, 6), 'lon': round(lon, 6), 'type': type_label})
+        seen = set()
+        for data in data_sets:
+            for el in data.get('elements', []):
+                tags = el.get('tags', {})
+                lat = el.get('lat') or (el.get('center') or {}).get('lat')
+                lon = el.get('lon') or (el.get('center') or {}).get('lon')
+                if lat is None or lon is None:
+                    continue
+                amenity  = tags.get('amenity', '')
+                building = tags.get('building', '')
+                railway  = tags.get('railway', '')
+                type_label = (
+                    'Fire'            if amenity == 'fire_station'                     else
+                    'Police'          if amenity == 'police'                           else
+                    'Hospital'        if amenity == 'hospital'                         else
+                    'Library'         if amenity == 'library'                          else
+                    'EMS'             if amenity == 'ambulance_station'                else
+                    'University'      if amenity in ('university', 'college')          else
+                    'Transit'         if amenity == 'bus_station' or railway == 'station' else
+                    'Community'       if amenity == 'community_centre'                 else
+                    'Courthouse'      if amenity == 'courthouse'                       else
+                    'Social Services' if amenity == 'social_facility'                  else
+                    'Government'      if building == 'government'                      else
+                    'School'
+                )
+                row = {
+                    'name': tags.get('name', f"{type_label} Station"),
+                    'lat': round(float(lat), 6),
+                    'lon': round(float(lon), 6),
+                    'type': type_label,
+                    'source': 'OSM',
+                }
+                dedupe_key = (row['lat'], row['lon'], row['name'].strip().lower(), row['type'])
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                rows.append(row)
 
         if rows:
             df_s = pd.DataFrame(rows).drop_duplicates(subset=['lat', 'lon']).reset_index(drop=True)
@@ -1222,7 +1238,7 @@ def _fetch_hifld_stations_cached(min_lat: float, min_lon: float, max_lat: float,
                     continue
                 name = (attrs.get(name_field) or '').strip() or f"{type_label} Station"
                 rows.append({'name': name, 'lat': round(float(lat), 6),
-                             'lon': round(float(lon), 6), 'type': type_label})
+                             'lon': round(float(lon), 6), 'type': type_label, 'source': 'HIFLD'})
             return rows
         except Exception:
             return []
@@ -2049,7 +2065,6 @@ def search_public_facility_candidates(query_str, facility_type, limit=6, preferr
     for _candidate in candidates:
         _candidate['_score'] = _public_facility_candidate_score(_candidate, facility_key, preferred_city=preferred_city, preferred_state=preferred_state)
 
-    candidates = [c for c in candidates if c.get('_score', -999) > 0]
     candidates.sort(key=lambda item: (-item.get('_score', 0), item.get('matched_address', '')))
 
     try:
@@ -3540,19 +3555,26 @@ def _render_in_app_faq():
         for _entry in FAQ_CHANGELOG
     )
 
-    st.markdown(
-        f"""
+    st.html(
+        textwrap.dedent(f"""
         <style>
         .faq-float {{
             position: fixed;
-            top: 12px;
-            left: 14px;
-            z-index: 9998;
+            top: calc(14px + env(safe-area-inset-top, 0px));
+            left: calc(14px + env(safe-area-inset-left, 0px));
+            z-index: 2147483647;
             width: min(420px, calc(100vw - 28px));
             font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            margin: 0;
+            pointer-events: none;
+            transform: translateZ(0);
+        }}
+        .faq-float > * {{
+            pointer-events: auto;
         }}
         .faq-float summary {{
             list-style: none;
+            margin: 0;
         }}
         .faq-float summary::-webkit-details-marker {{
             display: none;
@@ -3560,30 +3582,55 @@ def _render_in_app_faq():
         .faq-pill {{
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-            padding: 5px 10px;
+            gap: 8px;
+            padding: 8px 12px;
             border-radius: 999px;
-            background: rgba(8, 12, 20, 0.88);
-            border: 1px solid rgba(116, 224, 255, 0.22);
-            color: rgba(226, 238, 246, 0.92);
-            font-size: 0.72rem;
-            font-weight: 700;
+            background: linear-gradient(180deg, rgba(7, 17, 31, 0.98), rgba(4, 10, 20, 0.96));
+            border: 1px solid rgba(0, 210, 255, 0.78);
+            color: #f5fdff;
+            font-size: 0.78rem;
+            font-weight: 800;
             letter-spacing: 0.04em;
             cursor: pointer;
-            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+            box-shadow:
+                0 0 0 1px rgba(0, 210, 255, 0.16),
+                0 10px 24px rgba(0, 0, 0, 0.28),
+                0 0 24px rgba(0, 210, 255, 0.16);
             backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
         }}
         .faq-pill:hover {{
-            border-color: rgba(116, 224, 255, 0.42);
-            background: rgba(10, 16, 28, 0.96);
+            border-color: rgba(0, 210, 255, 0.98);
+            background: linear-gradient(180deg, rgba(8, 24, 42, 0.99), rgba(5, 12, 22, 0.98));
+            box-shadow:
+                0 0 0 1px rgba(0, 210, 255, 0.24),
+                0 12px 28px rgba(0, 0, 0, 0.34),
+                0 0 28px rgba(0, 210, 255, 0.22);
+        }}
+        .faq-pill::before {{
+            content: "?";
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            border-radius: 999px;
+            background: rgba(0, 210, 255, 0.18);
+            border: 1px solid rgba(0, 210, 255, 0.46);
+            color: #8eeeff;
+            font-size: 0.72rem;
+            font-weight: 900;
+            line-height: 1;
+            flex: 0 0 auto;
         }}
         .faq-panel {{
             margin-top: 8px;
             background: rgba(7, 11, 18, 0.97);
-            border: 1px solid rgba(116, 224, 255, 0.18);
+            border: 1px solid rgba(0, 210, 255, 0.22);
             border-radius: 16px;
             box-shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
             overflow: hidden;
+            width: min(420px, calc(100vw - 28px));
         }}
         .faq-panel-inner {{
             max-height: min(78vh, 760px);
@@ -3591,14 +3638,14 @@ def _render_in_app_faq():
             padding: 14px 14px 12px;
         }}
         .faq-title {{
-            color: #f4fbff;
-            font-size: 0.92rem;
+            color: #f7fdff;
+            font-size: 0.96rem;
             font-weight: 800;
             margin: 0 0 4px 0;
         }}
         .faq-subtitle {{
-            color: rgba(193, 209, 221, 0.78);
-            font-size: 0.76rem;
+            color: rgba(216, 229, 239, 0.84);
+            font-size: 0.78rem;
             line-height: 1.5;
             margin-bottom: 12px;
         }}
@@ -3611,14 +3658,14 @@ def _render_in_app_faq():
             padding-top: 0;
         }}
         .faq-q {{
-            color: #f6fbff;
-            font-size: 0.79rem;
+            color: #fbfeff;
+            font-size: 0.81rem;
             font-weight: 700;
             margin-bottom: 4px;
         }}
         .faq-a {{
-            color: rgba(209, 220, 230, 0.84);
-            font-size: 0.75rem;
+            color: rgba(220, 230, 238, 0.88);
+            font-size: 0.76rem;
             line-height: 1.52;
         }}
         .faq-footer {{
@@ -3628,7 +3675,7 @@ def _render_in_app_faq():
         }}
         .faq-footer-label {{
             color: #7edfff;
-            font-size: 0.68rem;
+            font-size: 0.69rem;
             font-weight: 800;
             letter-spacing: 0.08em;
             text-transform: uppercase;
@@ -3636,13 +3683,13 @@ def _render_in_app_faq():
         }}
         .faq-version-line {{
             color: rgba(245, 250, 255, 0.92);
-            font-size: 0.72rem;
+            font-size: 0.73rem;
             font-family: "IBM Plex Mono", Consolas, monospace;
             margin-bottom: 8px;
         }}
         .faq-changelog-line {{
             color: rgba(201, 214, 225, 0.82);
-            font-size: 0.70rem;
+            font-size: 0.71rem;
             line-height: 1.45;
             font-family: "IBM Plex Mono", Consolas, monospace;
             word-break: break-word;
@@ -3665,8 +3712,7 @@ def _render_in_app_faq():
                 </div>
             </div>
         </details>
-        """,
-        unsafe_allow_html=True,
+        """),
     )
 
 
@@ -4495,15 +4541,34 @@ def main():
                         'error': str(exc),
                         'traceback': tb_text,
                     }
+                    crash_report_path = None
                     try:
                         _city, _state = _get_crash_city_state()
                         _files = list(st.session_state.get('_last_uploaded_files', []))
+                        crash_report_path = _write_crash_report(
+                            step_name,
+                            str(exc),
+                            tb_text,
+                            details={
+                                'source_app': Path(__file__).resolve().parent.name,
+                                'session_id': st.session_state.get('session_id', ''),
+                                'user_email': _get_crash_user_email(),
+                                'city': _city,
+                                'state': _state,
+                                'file_count': len(_files),
+                                'upload_signature': current_upload_signature if 'current_upload_signature' in locals() else '',
+                                'upload_files': _files,
+                            },
+                        )
+                        if crash_report_path:
+                            st.session_state['_last_crash_report_path'] = str(crash_report_path)
+                            _push_upload_log(f"Crash report saved to {crash_report_path}")
                         _notify_crash_email(
                             step_name,
                             str(exc),
                             tb_text,
                             details={
-                                'source_app': 'Frankenstein',
+                                'source_app': Path(__file__).resolve().parent.name,
                                 'session_id': st.session_state.get('session_id', ''),
                                 'user_email': _get_crash_user_email(),
                                 'city': _city,
@@ -4515,11 +4580,13 @@ def main():
                         )
                     except Exception as _crash_email_exc:
                         _push_upload_log(f"⚠ Crash email failed: {_crash_email_exc}")
+                    if not crash_report_path:
+                        _push_upload_log("⚠ Local crash report could not be written.")
                     try:
                         _set_upload_overlay_status(
                             title="UPLOAD ERROR",
                             status="CRASH DETECTED",
-                            copy=f"An unexpected error occurred while {step_name}. The full traceback has been logged and emailed if notifications are configured.",
+                            copy=f"An unexpected error occurred while {step_name}. The full traceback has been logged locally and emailed if notifications are configured.",
                             progress=100,
                             logs=_upload_logs,
                             error=True,
@@ -5212,6 +5279,20 @@ def main():
                 st.session_state['active_city']  = f"{_target_city} & {len(active_targets)-1} others"
                 st.session_state['active_state'] = active_targets[0]['state']
 
+            # ── Fetch real population for upload path ─────────────────────────────
+            try:
+                _upload_pop = 0
+                for _t in active_targets:
+                    _fips = STATE_FIPS.get(_t.get('state', ''), '')
+                    if _fips:
+                        _p = fetch_census_population(_fips, _t.get('city', ''))
+                        if _p:
+                            _upload_pop += _p
+                if _upload_pop > 0:
+                    st.session_state['estimated_pop'] = _upload_pop
+            except Exception:
+                pass
+
             # ── Flight-path loading overlay ───────────────────────────────────────
             _swarm_city = st.session_state.get('active_city', 'Jurisdiction') if active_targets else "Jurisdiction"
             _swarm_logo_b64 = get_themed_logo_base64("logo.png", theme="dark") or ""
@@ -5890,7 +5971,7 @@ body{{background:transparent;overflow:hidden}}
         opt_strategy = guard_strategy  # primary strategy label for reporting
 
 
-        st.sidebar.markdown('<div class="sidebar-section-header">② Optimize Fleet</div>', unsafe_allow_html=True)
+        st.sidebar.markdown('<div class="sidebar-section-header">② Optimize Fleet 🚁</div>', unsafe_allow_html=True)
 
         _station_prep = prepare_station_candidates(
             st,
@@ -6005,6 +6086,7 @@ body{{background:transparent;overflow:hidden}}
             _suggestions = compute_station_suggestions(
                 resp_matrix, guard_matrix, station_metadata,
                 total_calls, _city_area_for_suggest, max_suggestions=10,
+                rank_by='land' if resp_strategy_raw == 'Land Coverage' else 'call',
             )
             st.session_state['_station_suggestions'] = _suggestions
 
@@ -6020,130 +6102,6 @@ body{{background:transparent;overflow:hidden}}
             st.session_state['suggestion_toggles'] = {
                 idx: (mode != 'Off') for idx, mode in _suggestion_modes.items()
             }
-
-            def _suggestion_modes_sig(mode_map):
-                return tuple(sorted((int(idx), str(mode)) for idx, mode in mode_map.items()))
-
-            def _apply_role_target(role_suggestions, target_count, target_role):
-                target_count = max(0, int(target_count or 0))
-                current_modes = dict(st.session_state.get('suggestion_modes', {}) or {})
-                active_roles = [
-                    s for s in role_suggestions
-                    if current_modes.get(s['station_idx'], 'Off') == target_role
-                ]
-                changed = False
-
-                if len(active_roles) > target_count:
-                    keep_ids = {
-                        s['station_idx']
-                        for s in active_roles[:target_count]
-                    }
-                    for s in role_suggestions:
-                        idx = s['station_idx']
-                        current_mode = current_modes.get(idx, 'Off')
-                        if idx in keep_ids:
-                            new_mode = target_role
-                        elif current_mode == target_role:
-                            new_mode = 'Off'
-                        else:
-                            new_mode = current_mode
-                        if current_mode != new_mode:
-                            current_modes[idx] = new_mode
-                            changed = True
-                    st.session_state['suggestion_modes'] = current_modes
-                    st.session_state['suggestion_toggles'] = {
-                        idx: (mode != 'Off') for idx, mode in current_modes.items()
-                    }
-                    return current_modes, changed
-
-                if len(active_roles) < target_count:
-                    for s in role_suggestions:
-                        idx = s['station_idx']
-                        if current_modes.get(idx, 'Off') == 'Off':
-                            current_modes[idx] = target_role
-                            changed = True
-                            active_roles.append(s)
-                            if len(active_roles) >= target_count:
-                                break
-                st.session_state['suggestion_modes'] = current_modes
-                st.session_state['suggestion_toggles'] = {
-                    idx: (mode != 'Off') for idx, mode in current_modes.items()
-                }
-                return current_modes, changed
-
-            _prev_suggestion_sync = st.session_state.get('_suggestion_sync_sig')
-            _prev_resp_count = _prev_guard_count = None
-            _prev_modes_sig = None
-            if _prev_suggestion_sync is not None:
-                _prev_resp_count, _prev_guard_count, _prev_modes_sig = _prev_suggestion_sync
-
-            _curr_modes_sig = _suggestion_modes_sig(_suggestion_modes)
-            _custom_resp_lock_count = len(pinned_resp_names)
-            _custom_guard_lock_count = len(pinned_guard_names)
-
-            _sug_resp_idx = [
-                s['station_idx'] for s in _suggestions
-                if _suggestion_modes.get(s['station_idx']) == 'Responder'
-            ]
-            _sug_guard_idx = [
-                s['station_idx'] for s in _suggestions
-                if _suggestion_modes.get(s['station_idx']) == 'Guardian'
-            ]
-
-            _slider_changed = (
-                _prev_suggestion_sync is None
-                or k_responder != _prev_resp_count
-                or k_guardian != _prev_guard_count
-            )
-            _modes_changed = (
-                _prev_suggestion_sync is None
-                or _curr_modes_sig != _prev_modes_sig
-            )
-
-            if _prev_suggestion_sync is None:
-                # Initialize the suggestion counts from the current selection state.
-                k_responder = _custom_resp_lock_count + len(_sug_resp_idx)
-                k_guardian = _custom_guard_lock_count + len(_sug_guard_idx)
-                st.session_state['k_resp'] = k_responder
-                st.session_state['k_guard'] = k_guardian
-            elif _slider_changed and not _modes_changed:
-                _resp_target = max(int(k_responder or 0) - _custom_resp_lock_count, 0)
-                _guard_target = max(int(k_guardian or 0) - _custom_guard_lock_count, 0)
-                _resp_suggestions = [
-                    s for s in _suggestions
-                    if _suggestion_modes.get(s['station_idx']) in {'Responder', 'Off'}
-                ]
-                _guard_suggestions = [
-                    s for s in _suggestions
-                    if _suggestion_modes.get(s['station_idx']) in {'Guardian', 'Off'}
-                ]
-                _suggestion_modes, _resp_changed = _apply_role_target(_resp_suggestions, _resp_target, 'Responder')
-                _suggestion_modes, _guard_changed = _apply_role_target(_guard_suggestions, _guard_target, 'Guardian')
-                if _resp_changed or _guard_changed:
-                    st.session_state['suggestion_modes'] = _suggestion_modes
-                    st.session_state['suggestion_toggles'] = {
-                        idx: (mode != 'Off') for idx, mode in _suggestion_modes.items()
-                    }
-                    _curr_modes_sig = _suggestion_modes_sig(_suggestion_modes)
-            else:
-                k_responder = _custom_resp_lock_count + len(_sug_resp_idx)
-                k_guardian = _custom_guard_lock_count + len(_sug_guard_idx)
-                st.session_state['k_resp'] = k_responder
-                st.session_state['k_guard'] = k_guardian
-
-            locked_r_pins = list(dict.fromkeys(locked_r_pins + [
-                s['station_idx'] for s in _suggestions
-                if _suggestion_modes.get(s['station_idx']) == 'Responder'
-            ]))
-            locked_g_pins = list(dict.fromkeys(locked_g_pins + [
-                s['station_idx'] for s in _suggestions
-                if _suggestion_modes.get(s['station_idx']) == 'Guardian'
-            ]))
-            st.session_state['_suggestion_sync_sig'] = (
-                int(k_responder or 0),
-                int(k_guardian or 0),
-                _curr_modes_sig,
-            )
 
         # ── OPTIMIZATION ──────────────────────────────────────────────────
         _pins_key = f"{sorted(locked_g_pins)}_{sorted(locked_r_pins)}"
@@ -6464,6 +6422,7 @@ body{{background:transparent;overflow:hidden}}
                 'lat': d_lat, 'lon': d_lon, 'type': d_type, 'cost': cost,
                 'cov_array': cov_array, 'color': map_color,
                 'pinned': _is_pinned,
+                'source': station_metadata[idx].get('source', ''),
                 'deploy_step': step if (idx in chrono_r or idx in chrono_g) else "MANUAL",
                 'avg_time_min': avg_time_min, 'speed_mph': speed_mph, 'radius_m': radius_m,
                 'faa_ceiling': faa_rf.get_station_faa_ceiling(d_lat, d_lon, faa_geojson),
@@ -7457,8 +7416,6 @@ body{{background:transparent;overflow:hidden}}
                 st, st.session_state, _suggestions,
                 text_main, text_muted, card_bg, card_border, accent_color,
             )
-            if _sug_changed:
-                st.rerun()
 
         # ── UNIT ECONOMICS CARDS (directly below map, no toggle) ─────────────────
         st.markdown("---")
@@ -8355,13 +8312,15 @@ body{{background:transparent;overflow:hidden}}
                 _qr_host = st.context.headers.get("host", "") or st.context.headers.get("Host", "")
                 _qr_proto = "https" if (_qr_host and ("streamlit.app" in _qr_host or "share" in _qr_host)) else "http"
                 if not _qr_host:
-                    _qr_host = f"{_sock.gethostbyname(_sock.gethostname())}:8501"
+                    _qr_port = str(st.get_option("server.port") or os.environ.get("STREAMLIT_SERVER_PORT") or os.environ.get("PORT") or "8501").strip() or "8501"
+                    _qr_host = f"{_sock.gethostbyname(_sock.gethostname())}:{_qr_port}"
                 _qr_base = f"{_qr_proto}://{_qr_host}"
             except Exception:
                 try:
-                    _qr_base = f"http://{_sock.gethostbyname(_sock.gethostname())}:8501"
+                    _qr_port = str(st.get_option("server.port") or os.environ.get("STREAMLIT_SERVER_PORT") or os.environ.get("PORT") or "8501").strip() or "8501"
+                    _qr_base = f"http://{_sock.gethostbyname(_sock.gethostname())}:{_qr_port}"
                 except Exception:
-                    _qr_base = "http://localhost:8501"
+                    _qr_base = f"http://localhost:{str(st.get_option('server.port') or os.environ.get('STREAMLIT_SERVER_PORT') or os.environ.get('PORT') or '8501').strip() or '8501'}"
 
             # Compute area inline (may not yet be in scope)
             try:
@@ -8497,6 +8456,28 @@ body{{background:transparent;overflow:hidden}}
                 _stype = str(station_type or "").upper()
                 return "Guardian" if "GUARD" in _stype else "Responder"
 
+            def _is_call_density_station(station):
+                _raw = re.sub(r"\s+", " ", str((station or {}).get("name") or "").strip())
+                if not _raw:
+                    return True
+                if bool(
+                    st.session_state.get("allow_generated_station_names", False)
+                    or st.session_state.get("show_generated_station_names", False)
+                ):
+                    return False
+                _source = str((station or {}).get("source") or "").strip().upper()
+                if _source == "CALL_DENSITY":
+                    return True
+                _low = _raw.lower()
+                if _low.startswith("call-density "):
+                    return True
+                return False
+
+            def _get_visible_station_rows(station_rows):
+                _rows = list(station_rows or [])
+                _visible = [d for d in _rows if not _is_call_density_station(d)]
+                return _visible, max(0, len(_rows) - len(_visible))
+
             def _coverage_band(idx, total):
                 if total <= 1:
                     return "Primary gap closure"
@@ -8508,6 +8489,7 @@ body{{background:transparent;overflow:hidden}}
                     return "Medium"
                 return "Supporting"
 
+            _visible_station_rows, _hidden_station_count = _get_visible_station_rows(active_drones)
             _station_table_rows_html = "".join(
                 f"<tr>"
                 f"<td>{idx + 1}</td>"
@@ -8515,8 +8497,15 @@ body{{background:transparent;overflow:hidden}}
                 f"<td>{_rank_station_role(d.get('type', ''))}</td>"
                 f"<td>{float(d.get('avg_time_min', 0) or 0):.1f} min</td>"
                 f"</tr>"
-                for idx, d in enumerate(active_drones[:6])
+                for idx, d in enumerate(_visible_station_rows[:6])
             ) or "<tr><td colspan='4'>No active stations available for this scenario.</td></tr>"
+            if _hidden_station_count:
+                _station_table_rows_html += (
+                    f"<tr><td colspan='4' style='font-size:12px;color:#6b7280;padding-top:8px;'>"
+                    f"Hidden {_hidden_station_count} call-density generated station"
+                    f"{'s' if _hidden_station_count != 1 else ''}."
+                    f"</td></tr>"
+                )
 
             _why_sites_html = "".join([
                 "<li>Selected from jurisdiction-specific call density and travel geometry</li>",
@@ -8966,6 +8955,7 @@ body{{background:transparent;overflow:hidden}}
             f"📄 {prop_city}, {prop_state} — Executive Summary",
             disabled=True,
             width="stretch",
+            key="html_export_wait_btn",
             help=(
                 "Deploy at least one drone to generate the executive summary."
                 if fleet_capex <= 0
@@ -8976,12 +8966,105 @@ body{{background:transparent;overflow:hidden}}
             "🌏 Google Earth Briefing File",
             disabled=True,
             width="stretch",
+            key="kml_export_wait_btn",
             help=(
                 "Deploy at least one drone to generate the KML file."
                 if not active_drones
                 else _report_wait_note
             ),
         )
+
+        def _load_recent_crash_notice():
+            crash_dir = APP_DIR / "crash_logs"
+            latest_report = crash_dir / "latest_crash.txt"
+            ack_path = crash_dir / "latest_crash_ack.json"
+            if not latest_report.exists():
+                return None
+            try:
+                report_stat = latest_report.stat()
+            except OSError:
+                return None
+
+            age_seconds = max(0.0, time.time() - report_stat.st_mtime)
+            if age_seconds > 24 * 60 * 60:
+                return None
+
+            notice_id = f"{report_stat.st_mtime_ns}:{report_stat.st_size}"
+            if ack_path.exists():
+                try:
+                    ack_data = json.loads(ack_path.read_text(encoding="utf-8"))
+                    if str(ack_data.get("notice_id", "")) == notice_id:
+                        return None
+                except Exception:
+                    pass
+
+            try:
+                report_text = latest_report.read_text(encoding="utf-8")
+            except Exception:
+                report_text = ""
+
+            def _extract_report_value(prefix):
+                for line in report_text.splitlines():
+                    if line.startswith(prefix):
+                        return line[len(prefix):].strip()
+                return ""
+
+            return {
+                "notice_id": notice_id,
+                "age_hours": age_seconds / 3600.0,
+                "timestamp": _extract_report_value("Timestamp (UTC):"),
+                "step": _extract_report_value("Step:") or "Crash recorded",
+                "error": _extract_report_value("Error:") or "Crash details are available in the local report.",
+                "path": str(latest_report),
+            }
+
+        def _acknowledge_crash_notice(notice):
+            crash_dir = APP_DIR / "crash_logs"
+            crash_dir.mkdir(parents=True, exist_ok=True)
+            ack_path = crash_dir / "latest_crash_ack.json"
+            ack_path.write_text(
+                json.dumps(
+                    {
+                        "notice_id": notice["notice_id"],
+                        "acknowledged_at_utc": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                        "path": notice["path"],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+        _recent_crash_notice = _load_recent_crash_notice()
+        if _recent_crash_notice:
+            st.sidebar.markdown(
+                "<div style='margin-top:8px; font-size:0.68rem; color:#777; text-transform:uppercase; letter-spacing:0.12em;'>Recent crash</div>",
+                unsafe_allow_html=True,
+            )
+            _show_recent_crash = st.sidebar.toggle(
+                "Show crash details",
+                value=st.session_state.get("_show_recent_crash_notice", False),
+                key="_show_recent_crash_notice",
+                help="Show the most recent local crash report. It hides automatically after 24 hours or after acknowledgment.",
+            )
+            if _show_recent_crash:
+                st.sidebar.caption(
+                    f"Recorded {_recent_crash_notice['age_hours']:.1f} hours ago"
+                    + (f" · {_recent_crash_notice['timestamp']}" if _recent_crash_notice.get("timestamp") else "")
+                )
+                st.sidebar.code(
+                    f"{_recent_crash_notice['step']}\n{_recent_crash_notice['error']}",
+                    language="text",
+                )
+                if st.sidebar.button(
+                    "Acknowledge",
+                    key="_ack_recent_crash_notice_btn",
+                    width="stretch",
+                    help="Hide this crash notice until a newer crash is recorded.",
+                ):
+                    _acknowledge_crash_notice(_recent_crash_notice)
+                    st.session_state["_show_recent_crash_notice"] = False
+                    st.rerun()
         export_dict = {
             "city": prop_city,
             "state": prop_state,
@@ -9354,7 +9437,11 @@ body{{background:transparent;overflow:hidden}}
                     )
                 )
                 map_html_str = fig_for_export.to_html(full_html=False, include_plotlyjs='cdn', default_height='500px', default_width='100%')
-                station_rows = "".join(f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>{d['faa_ceiling']}</td><td>${d['cost']:,}</td></tr>" for d in active_drones)
+                _visible_export_rows = [d for d in active_drones if not _is_call_density_station(d)]
+                station_rows = "".join(
+                    f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>{d['faa_ceiling']}</td><td>${d['cost']:,}</td></tr>"
+                    for d in _visible_export_rows
+                ) or "<tr><td colspan='5'>No verified real facility names available for this scenario.</td></tr>"
     
                 all_bldgs_rows = ""
                 _type_colors = {
@@ -11112,6 +11199,7 @@ body{{background:transparent;overflow:hidden}}
                     f"📄 {prop_city}, {prop_state} — Executive Summary",
                     disabled=True,
                     width="stretch",
+                    key="html_export_not_ready_btn",
                     help="Executive summary data is not ready for this run.",
                 )
         else:
@@ -11119,6 +11207,7 @@ body{{background:transparent;overflow:hidden}}
                 f"📄 {prop_city}, {prop_state} — Executive Summary",
                 disabled=True,
                 width="stretch",
+                key="html_export_no_drones_btn",
                 help="Deploy at least one drone to generate the executive summary.",
             )
 
@@ -11149,15 +11238,23 @@ body{{background:transparent;overflow:hidden}}
                                "KML", k_responder, k_guardian, calls_covered_perc,
                                prop_name, prop_email, details=export_details)
         elif active_drones:
-            _kml_export_slot.button("🌏 Google Earth Briefing File", disabled=True,
-                                    width="stretch",
-                                    help="Google Earth export is unavailable for the current geometry.")
+            _kml_export_slot.button(
+                "🌏 Google Earth Briefing File",
+                disabled=True,
+                width="stretch",
+                key="kml_export_unavailable_btn",
+                help="Google Earth export is unavailable for the current geometry.",
+            )
             if _kml_error:
                 st.sidebar.caption(f"Google Earth export issue: {_kml_error}")
         else:
-            _kml_export_slot.button("🌏 Google Earth Briefing File", disabled=True,
-                                    width="stretch",
-                                    help="Deploy at least one drone to generate the KML file.")
+            _kml_export_slot.button(
+                "🌏 Google Earth Briefing File",
+                disabled=True,
+                width="stretch",
+                key="kml_export_no_drones_btn",
+                help="Deploy at least one drone to generate the KML file.",
+            )
 
 
 
@@ -11170,13 +11267,37 @@ if __name__ == "__main__":
         main()
     except Exception as _app_crash_exc:
         _app_crash_tb = traceback.format_exc()
+        _app_crash_report_path = None
         try:
+            _app_crash_report_path = _write_crash_report(
+                st.session_state.get('_upload_crash_step', 'application startup/runtime'),
+                str(_app_crash_exc),
+                _app_crash_tb,
+                details={
+                    'source_app': Path(__file__).resolve().parent.name,
+                    'session_id': st.session_state.get('session_id', ''),
+                    'user_email': str(
+                        st.session_state.get('google_user_email', '')
+                        or st.session_state.get('_last_user_email', '')
+                        or getattr(st.user, 'email', '')
+                        or ''
+                    ).strip(),
+                    'city': str(st.session_state.get('active_city', '') or '').strip(),
+                    'state': str(st.session_state.get('active_state', '') or '').strip(),
+                    'file_count': len(st.session_state.get('_last_uploaded_files', [])),
+                    'upload_signature': st.session_state.get('census_source_signature', '') or st.session_state.get('_upload_crash_step', ''),
+                    'upload_files': [
+                        getattr(f, 'name', '')
+                        for f in (st.session_state.get('sim_optional_uploader') or st.session_state.get('uploaded_files') or [])
+                    ],
+                },
+            )
             _notify_crash_email(
                 st.session_state.get('_upload_crash_step', 'application startup/runtime'),
                 str(_app_crash_exc),
                 _app_crash_tb,
                 details={
-                    'source_app': 'Frankenstein',
+                    'source_app': Path(__file__).resolve().parent.name,
                     'session_id': st.session_state.get('session_id', ''),
                     'user_email': str(
                         st.session_state.get('google_user_email', '')
@@ -11196,6 +11317,8 @@ if __name__ == "__main__":
             )
         except Exception:
             pass
+        if _app_crash_report_path:
+            print(f"[BRINC] Crash report saved to {_app_crash_report_path}")
         print(_app_crash_tb)
         raise
 

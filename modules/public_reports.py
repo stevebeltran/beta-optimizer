@@ -72,6 +72,14 @@ def _get_request_base_url():
             return f"{_proto}://{_host}"
     except Exception:
         pass
+    _port = str(
+        st.get_option("server.port")
+        or os.environ.get("STREAMLIT_SERVER_PORT")
+        or os.environ.get("PORT")
+        or ""
+    ).strip()
+    if _port:
+        return f"http://localhost:{_port}"
     return "http://localhost:8501"
 
 

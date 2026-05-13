@@ -729,10 +729,11 @@ def prepare_station_candidates(
                     grid_lons = np.linspace(lons.quantile(0.1), lons.quantile(0.9), 8)
                     glat, glon = np.meshgrid(grid_lats, grid_lons)
                     df_stations_all = pd.DataFrame({
-                        'name': [f'Station {i+1}' for i in range(len(glat.ravel()))],
+                        'name': [f'Call-Density Station {i+1}' for i in range(len(glat.ravel()))],
                         'lat': glat.ravel(),
                         'lon': glon.ravel(),
                         'type': (['Police', 'Fire', 'School'] * 30)[:len(glat.ravel())],
+                        'source': ['CALL_DENSITY'] * len(glat.ravel()),
                     })
                 except Exception:
                     df_stations_all = pd.DataFrame()
@@ -870,29 +871,10 @@ def manage_custom_stations(
     except Exception:
         pass
 
-    def _role_count_from_modes(mode_map, role_name):
-        return sum(1 for mode in mode_map.values() if mode == role_name)
-
-    prev_sync = session_state.get('_suggestion_sync_sig')
-    prev_resp_count = prev_guard_count = None
-    prev_modes_sig = None
-    if prev_sync is not None:
-        prev_resp_count, prev_guard_count, prev_modes_sig = prev_sync
-
     current_resp_from_modes = n_custom_responder + n_selected_responder
     current_guard_from_modes = n_custom_guardian + n_selected_guardian
-    current_resp_slider = int(session_state.get('k_resp', current_resp_from_modes) or 0)
-    current_guard_slider = int(session_state.get('k_guard', current_guard_from_modes) or 0)
-
-    if prev_sync is None:
-        val_r = int(session_state.get('k_resp', current_resp_from_modes if current_resp_from_modes > 0 else 2) or 0)
-        val_g = int(session_state.get('k_guard', current_guard_from_modes if current_guard_from_modes > 0 else 1) or 0)
-    else:
-        prev_modes_map = dict(prev_modes_sig or [])
-        prev_resp_from_modes = n_custom_responder + _role_count_from_modes(prev_modes_map, 'Responder')
-        prev_guard_from_modes = n_custom_guardian + _role_count_from_modes(prev_modes_map, 'Guardian')
-        val_r = current_resp_from_modes if current_resp_from_modes != prev_resp_from_modes else current_resp_slider
-        val_g = current_guard_from_modes if current_guard_from_modes != prev_guard_from_modes else current_guard_slider
+    val_r = int(session_state.get('k_resp', current_resp_from_modes if current_resp_from_modes > 0 else 2) or 0)
+    val_g = int(session_state.get('k_guard', current_guard_from_modes if current_guard_from_modes > 0 else 1) or 0)
 
     val_r = min(max(0, int(val_r)), max_resp_calc)
     val_g = min(max(0, int(val_g)), max_guard_calc)
@@ -1212,6 +1194,37 @@ def manage_custom_stations(
                         else:
                             st.write(f"{_row.get('provider')}: {_row.get('status')}")
 
+        _geo_trace = session_state.get('_last_geocode_trace') or {}
+        _geo_providers = _geo_trace.get('providers') or []
+        if addr_query:
+            _provider_summary = []
+            for _provider_name in ['Google', 'Mapbox', 'Census', 'OSM']:
+                _rows = [r for r in _geo_providers if r.get('provider') == _provider_name]
+                if not _rows:
+                    continue
+                _used = any(bool(r.get('used')) for r in _rows)
+                _total = sum(int(r.get('match_count') or 0) for r in _rows if r.get('used'))
+                _status = next((str(r.get('status')) for r in _rows if not r.get('used')), 'ok')
+                if _used:
+                    _provider_summary.append(f"{_provider_name}: queried, {_total} match(es)")
+                else:
+                    _provider_summary.append(f"{_provider_name}: {_status}")
+            if _provider_summary:
+                st.caption("Providers: " + " | ".join(_provider_summary))
+            with st.expander('Geocoder Diagnostics', expanded=False):
+                _queries = _geo_trace.get('queries') or []
+                if _queries:
+                    st.write("Queries tried:")
+                    for _q in _queries:
+                        st.code(_q)
+                if _geo_providers:
+                    st.write("Provider results:")
+                    for _row in _geo_providers:
+                        if _row.get('used'):
+                            st.write(f"{_row.get('provider')}: {_row.get('status')} | {_row.get('match_count')} match(es) | {_row.get('query')}")
+                        else:
+                            st.write(f"{_row.get('provider')}: {_row.get('status')}")
+
         if addr_option_rows:
             addr_pick = st.selectbox(
                 'Suggested Match',
@@ -1356,14 +1369,18 @@ def manage_custom_stations(
     pinned_guard_names = list(session_state.get('pinned_guard_names', []))
     pinned_resp_names = list(session_state.get('pinned_resp_names', []))
     session_state['show_lock_stations'] = False
-    if len(pinned_guard_names) > k_guardian:
-        st.sidebar.warning(f'Guardian Count was raised to honor {len(pinned_guard_names)} locked Guardian station(s).')
-    if len(pinned_resp_names) > k_responder:
-        st.sidebar.warning(f'Responder Count was raised to honor {len(pinned_resp_names)} locked Responder station(s).')
+
+    # Locks are hard constraints: the effective fleet count cannot fall below
+    # the number of pinned stations for each role.
+    effective_k_guardian = max(int(k_guardian or 0), len(pinned_guard_names))
+    effective_k_responder = max(int(k_responder or 0), len(pinned_resp_names))
+    if effective_k_guardian != k_guardian or effective_k_responder != k_responder:
+        session_state['k_guard'] = effective_k_guardian
+        session_state['k_resp'] = effective_k_responder
 
     return {
-        'k_responder': k_responder,
-        'k_guardian': k_guardian,
+        'k_responder': effective_k_responder,
+        'k_guardian': effective_k_guardian,
         'pinned_guard_names': pinned_guard_names,
         'pinned_resp_names': pinned_resp_names,
         'station_names': station_names,
@@ -1809,8 +1826,9 @@ def optimize_fleet_selection(
 def compute_station_suggestions(
     resp_matrix, guard_matrix, station_metadata, total_calls, city_area,
     max_suggestions=10,
+    rank_by='call',
 ):
-    """Rank stations by greedy marginal call coverage and return top suggestions.
+    """Rank stations by call coverage and return the top suggestions.
 
     Each suggestion includes solo call-coverage %, solo land-coverage %, and a
     default role assignment (2 Responder : 1 Guardian repeating pattern).
@@ -1819,46 +1837,49 @@ def compute_station_suggestions(
         return []
 
     n_stations = len(station_metadata)
-    covered = np.zeros(total_calls, dtype=bool)
     suggestions = []
-    used = set()
+    scored = []
 
-    # Greedy ranking: pick station with best marginal gain each round
-    for rank in range(min(max_suggestions, n_stations)):
-        best_idx = -1
-        best_marginal = -1
-        for i in range(n_stations):
-            if i in used:
-                continue
-            marginal = int(np.sum(resp_matrix[i] & ~covered))
-            if marginal > best_marginal:
-                best_marginal = marginal
-                best_idx = i
-        if best_idx < 0 or best_marginal == 0:
-            break
-
-        used.add(best_idx)
-        covered |= resp_matrix[best_idx]
-
-        meta = station_metadata[best_idx]
-        solo_call_pct = (np.sum(resp_matrix[best_idx]) / total_calls * 100)
+    for i in range(n_stations):
+        meta = station_metadata[i]
+        # Use the raw haversine-based count here instead of the projected mask.
+        # The Euclidean matrix can slightly over-claim fringe calls and make
+        # central responder sites look like they cover 100% of city calls.
+        raw_calls = int(meta.get('raw_calls_r', np.sum(resp_matrix[i])))
+        solo_call_pct = (raw_calls / total_calls * 100) if total_calls > 0 else 0
         solo_land_pct = (meta['clipped_2m'].area / city_area * 100) if city_area > 0 else 0
-
-        # Role pattern: G, R, R, G, R, R, G, R, R  (≈2:1 ratio, Guardian first)
-        role = 'Guardian' if (rank % 3 == 0) else 'Responder'
-
-        suggestions.append({
-            'rank': rank + 1,
-            'station_idx': best_idx,
+        marginal_calls = raw_calls
+        scored.append({
+            'station_idx': i,
             'name': meta['name'],
             'address': meta.get('address', ''),
             'lat': meta['lat'],
             'lon': meta['lon'],
             'call_pct': round(solo_call_pct, 1),
             'land_pct': round(solo_land_pct, 1),
-            'marginal_calls': best_marginal,
-            'role': role,
+            'marginal_calls': marginal_calls,
         })
+
+    primary_metric = 'land_pct' if str(rank_by).strip().lower().startswith('land') else 'call_pct'
+    secondary_metric = 'call_pct' if primary_metric == 'land_pct' else 'land_pct'
+
+    # Keep the cards aligned with the active deployment objective while
+    # preserving the previous call-volume tie-breaker.
+    scored.sort(
+        key=lambda s: (
+            s.get(primary_metric, 0),
+            s.get(secondary_metric, 0),
+            s['marginal_calls'],
+            -s['station_idx'],
+        ),
+        reverse=True,
+    )
+
+    # Preserve the existing alternating role pattern for the top 10 cards.
+    for rank, suggestion in enumerate(scored[:min(max_suggestions, n_stations)]):
+        suggestion['rank'] = rank + 1
+        suggestion['role'] = 'Guardian' if (rank % 3 == 0) else 'Responder'
+        suggestions.append(suggestion)
 
     return suggestions
 
@@ -1908,11 +1929,30 @@ def render_station_suggestions(st, session_state, suggestions, text_main, text_m
         f"<span style='font-size:0.85rem; font-weight:700; color:{text_main};'>"
         f"Suggested Station Placements"
         f"<span style='font-size:0.7rem; font-weight:400; color:{text_muted}; margin-left:8px;'>"
-        f"({n_on} selected from public data)</span></span></div>",
+        f"({n_on} shown from public data)</span></span></div>",
         unsafe_allow_html=True,
     )
+    st.caption('Suggestion cards are advisory only. They do not force the deployment objective or lock the optimizer.')
 
     # ── Two rows of 5 cards ──────────────────────────────────────────────
+    st.markdown(
+        """
+        <style>
+        section.main div[data-testid="stRadio"] div[role="radiogroup"] {
+            gap: 0.08rem !important;
+            flex-wrap: nowrap !important;
+        }
+        section.main div[data-testid="stRadio"] label,
+        section.main div[data-testid="stRadio"] label p,
+        section.main div[data-testid="stRadio"] label span {
+            font-size: 0.46rem !important;
+            line-height: 0.95 !important;
+            white-space: nowrap !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     for row_start in (0, 5):
         row_items = suggestions[row_start:row_start + 5]
         if not row_items:

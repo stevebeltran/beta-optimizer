@@ -4,6 +4,7 @@ Session-state helpers for the Streamlit app.
 
 import datetime
 import uuid
+import urllib.parse
 
 
 DEFAULTS = {
@@ -88,9 +89,18 @@ def init_session_state(session_state, slugify, build_public_report_url) -> None:
 
     _built_public_report_url = build_public_report_url(session_state["public_report_id"])
     _current_public_report_url = str(session_state.get("public_report_url", "") or "").strip()
-    if (not _current_public_report_url) or (
-        "script.google.com" in _built_public_report_url and "script.google.com" not in _current_public_report_url
-    ):
+    _needs_update = not _current_public_report_url
+    if not _needs_update:
+        try:
+            _built_parts = urllib.parse.urlsplit(_built_public_report_url)
+            _current_parts = urllib.parse.urlsplit(_current_public_report_url)
+            if "script.google.com" in _built_public_report_url and "script.google.com" not in _current_public_report_url:
+                _needs_update = True
+            elif (_built_parts.scheme, _built_parts.netloc) != (_current_parts.scheme, _current_parts.netloc):
+                _needs_update = True
+        except Exception:
+            _needs_update = _built_public_report_url != _current_public_report_url
+    if _needs_update:
         session_state["public_report_url"] = _built_public_report_url
 
     if "target_cities" not in session_state:

@@ -70,6 +70,22 @@ PUBLIC_REPORT_HEADERS = [
 ]
 
 
+def _split_recipients(value):
+    """Return a cleaned list of email recipients from a string or iterable."""
+    if not value:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = str(value).replace(";", ",").split(",")
+    recipients = []
+    for item in raw_items:
+        addr = str(item or "").strip()
+        if addr:
+            recipients.append(addr)
+    return recipients
+
+
 def _sheet_col_label(index):
     """Convert a 1-based column index to an A1-style column label."""
     label = ""
@@ -176,7 +192,11 @@ def _notify_email(city, state, file_type, k_resp, k_guard, coverage, name, email
         gmail_address  = st.secrets.get("GMAIL_ADDRESS", "")
         app_password   = st.secrets.get("GMAIL_APP_PASSWORD", "")
         notify_address = st.secrets.get("NOTIFY_EMAIL", gmail_address)
+        sms_address = st.secrets.get("NOTIFY_SMS_EMAIL", "")
+        recipients = _split_recipients([notify_address, sms_address])
         if not gmail_address or not app_password:
+            return
+        if not recipients:
             return
         emoji = {"HTML": "📄", "KML": "🌏", "BRINC": "💾", "MAP_BUILD": "🗺️"}.get(file_type, "📥")
         label = {"HTML": "Executive Summary", "KML": "Google Earth Briefing", "BRINC": "BRINC File", "MAP_BUILD": "Map Build"}.get(file_type, file_type.replace('_', ' ').title())
@@ -184,6 +204,16 @@ def _notify_email(city, state, file_type, k_resp, k_guard, coverage, name, email
         details_html = _build_details_html(details)
         d = details or {}
         pop  = d.get('population', 0)
+        plain_body = (
+            f"BRINC {label} Notification\n"
+            f"Event: {label}\n"
+            f"Jurisdiction: {city}, {state}\n"
+            f"Population: {pop:,}\n"
+            f"Fleet: {k_resp} Responder / {k_guard} Guardian\n"
+            f"Call Coverage: {coverage:.1f}%\n"
+            f"BRINC Rep: {name if name else '—'}\n"
+            f"Rep Email: {email if email else '—'}\n"
+        )
         body = f"""
         <html><body style="font-family:Arial,sans-serif;color:#333;padding:20px;">
         <div style="max-width:560px;margin:0 auto;border:1px solid #ddd;border-radius:8px;overflow:hidden;">
@@ -209,11 +239,89 @@ def _notify_email(city, state, file_type, k_resp, k_guard, coverage, name, email
 </body></html>
         """
         msg = MIMEMultipart("alternative")
-        msg["Subject"], msg["From"], msg["To"] = subject, gmail_address, notify_address
+        msg["Subject"], msg["From"], msg["To"] = subject, gmail_address, recipients[0]
+        if len(recipients) > 1:
+            msg["Cc"] = ", ".join(recipients[1:])
+        msg.attach(MIMEText(plain_body, "plain"))
         msg.attach(MIMEText(body, "html"))
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=8) as server:
             server.login(gmail_address, app_password)
-            server.sendmail(gmail_address, notify_address, msg.as_string())
+            server.sendmail(gmail_address, recipients, msg.as_string())
+    except:
+        pass
+
+
+def _notify_crash_email(step, error_message, traceback_text, details=None):
+    """Send a crash alert email via Gmail."""
+    try:
+        gmail_address = st.secrets.get("GMAIL_ADDRESS", "")
+        app_password = st.secrets.get("GMAIL_APP_PASSWORD", "")
+        notify_address = st.secrets.get("NOTIFY_EMAIL", gmail_address)
+        sms_address = st.secrets.get("NOTIFY_SMS_EMAIL", "")
+        recipients = _split_recipients([notify_address, sms_address])
+        if not gmail_address or not app_password or not recipients:
+            return
+
+        d = details or {}
+        source_app = d.get("source_app", "") or Path(__file__).resolve().parent.parent.name
+        session_id = d.get("session_id", "")
+        upload_sig = d.get("upload_signature", "")
+        user_email = d.get("user_email", "")
+        city = d.get("city", "")
+        state = d.get("state", "")
+        file_count = d.get("file_count", "")
+        upload_files = d.get("upload_files", [])
+        file_html = ""
+        if upload_files:
+            file_html = "<ul style='margin:8px 0 0 18px;padding:0;'>" + "".join(
+                f"<li>{html.escape(str(name))}</li>" for name in upload_files
+            ) + "</ul>"
+
+        subject = f"🚨 BRINC app crash at {step}"
+        plain_body = (
+            f"BRINC Crash Alert\n"
+            f"Step: {step}\n"
+            f"Source app: {source_app}\n"
+            f"Session ID: {session_id or '-'}\n"
+            f"User email: {user_email or '-'}\n"
+            f"City/state: {city or '-'}, {state or '-'}\n"
+            f"File count: {file_count or '-'}\n"
+            f"Upload signature: {upload_sig or '-'}\n"
+            f"Error: {error_message}\n"
+        )
+        body = f"""
+        <html><body style="font-family:Arial,sans-serif;color:#333;padding:20px;">
+        <div style="max-width:720px;margin:0 auto;border:1px solid #ddd;border-radius:8px;overflow:hidden;">
+            <div style="background:#7f1d1d;padding:16px 20px;border-bottom:3px solid #ff6b6b;">
+                <span style="color:#fff;font-size:18px;font-weight:900;letter-spacing:1px;">BRINC Crash Alert</span>
+            </div>
+            <div style="padding:20px;">
+                <p style="margin:0 0 12px;"><b>Step:</b> {html.escape(str(step))}</p>
+                <p style="margin:0 0 12px;"><b>Source app:</b> {html.escape(str(source_app))}</p>
+                <p style="margin:0 0 12px;"><b>Session ID:</b> {html.escape(str(session_id or '—'))}</p>
+                <p style="margin:0 0 12px;"><b>User email:</b> {html.escape(str(user_email or '—'))}</p>
+                <p style="margin:0 0 12px;"><b>City/state:</b> {html.escape(str(city or '—'))}, {html.escape(str(state or '—'))}</p>
+                <p style="margin:0 0 12px;"><b>File count:</b> {html.escape(str(file_count or '—'))}</p>
+                <p style="margin:0 0 12px;"><b>Upload signature:</b> {html.escape(str(upload_sig or '—'))}</p>
+                <p style="margin:0 0 12px;"><b>Error:</b> {html.escape(str(error_message))}</p>
+                <div style="margin:16px 0 8px;font-weight:bold;">Uploaded files</div>
+                {file_html or "<div style='color:#666;'>None</div>"}
+                <div style="margin:16px 0 8px;font-weight:bold;">Traceback</div>
+                <pre style="white-space:pre-wrap;word-wrap:break-word;background:#f7f7f7;border:1px solid #eee;padding:12px;border-radius:6px;font-size:12px;line-height:1.45;">{html.escape(str(traceback_text))}</pre>
+                <div style="margin-top:16px;font-size:11px;color:#888;">{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC</div>
+            </div>
+        </div>
+        </body></html>
+        """
+        msg = MIMEMultipart("alternative")
+        msg["Subject"], msg["From"], msg["To"] = subject, gmail_address, recipients[0]
+        if len(recipients) > 1:
+            msg["Cc"] = ", ".join(recipients[1:])
+        msg.attach(MIMEText(plain_body, "plain"))
+        msg.attach(MIMEText(body, "html"))
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=8) as server:
+            server.login(gmail_address, app_password)
+            server.sendmail(gmail_address, recipients, msg.as_string())
     except:
         pass
 
@@ -431,6 +539,36 @@ def _log_to_sheets(city, state, file_type, k_resp, k_guard, coverage, name, emai
                      fleet_capex=d.get('fleet_capex'))
     except:
         pass
+
+
+def _write_crash_report(step, error_message, traceback_text, details=None):
+    """Write a local crash report and return the saved file path."""
+    try:
+        report_dir = Path(st.secrets.get("CRASH_REPORT_DIR", "") or Path(__file__).resolve().parent.parent / "crash_reports")
+        report_dir.mkdir(parents=True, exist_ok=True)
+        safe_step = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(step or "crash")).strip("._-") or "crash"
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = report_dir / f"{safe_step}_{timestamp}.txt"
+        d = details or {}
+        lines = [
+            f"Step: {step}",
+            f"Error: {error_message}",
+            f"Source app: {d.get('source_app', '')}",
+            f"Session ID: {d.get('session_id', '')}",
+            f"User email: {d.get('user_email', '')}",
+            f"City: {d.get('city', '')}",
+            f"State: {d.get('state', '')}",
+            f"File count: {d.get('file_count', '')}",
+            f"Upload signature: {d.get('upload_signature', '')}",
+            "",
+            "Traceback:",
+            str(traceback_text or ""),
+            "",
+        ]
+        report_path.write_text("\n".join(lines), encoding="utf-8")
+        return str(report_path)
+    except Exception:
+        return ""
 
 
 def _log_login_to_sheets(email, name):
