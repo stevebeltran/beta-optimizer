@@ -3733,7 +3733,7 @@ def _render_live_admin_dashboard():
         .live-admin-float {{
             position: fixed;
             top: calc(14px + env(safe-area-inset-top, 0px));
-            left: min(calc(14px + 470px + 16px), calc(100vw - 560px - 14px));
+            right: calc(14px + env(safe-area-inset-right, 0px));
             z-index: 2147483647;
             width: min(680px, calc(100vw - 28px));
             font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -4123,10 +4123,10 @@ def _render_in_app_faq():
 
 
 def main():
-    _render_in_app_faq()
     _presence_heartbeat_fragment()
-    _live_admin_dashboard_fragment()
     if not st.session_state['csvs_ready']:
+        _render_in_app_faq()
+        _live_admin_dashboard_fragment()
 
         # GRAB THE LOGO FOR THE UPLOAD PAGE
         logo_b64 = get_themed_logo_base64("logo.png", theme="dark")
