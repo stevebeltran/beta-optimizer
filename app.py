@@ -6419,9 +6419,11 @@ body{{background:transparent;overflow:hidden}}
             _resp_delta = _prior_resp_selected - _prev_resp_selected
             _guard_delta = _prior_guard_selected - _prev_guard_selected
             if _resp_delta:
-                st.session_state['k_resp'] = max(0, int(st.session_state.get('k_resp', 0) or 0) + _resp_delta)
+                _current_resp_count = int(st.session_state.get('_fleet_k_resp', st.session_state.get('k_resp', 0)) or 0)
+                st.session_state['_pending_k_resp'] = max(0, _current_resp_count + _resp_delta)
             if _guard_delta:
-                st.session_state['k_guard'] = max(0, int(st.session_state.get('k_guard', 0) or 0) + _guard_delta)
+                _current_guard_count = int(st.session_state.get('_fleet_k_guard', st.session_state.get('k_guard', 0)) or 0)
+                st.session_state['_pending_k_guard'] = max(0, _current_guard_count + _guard_delta)
             st.session_state['_suggestion_selected_resp_count'] = _prior_resp_selected
             st.session_state['_suggestion_selected_guard_count'] = _prior_guard_selected
 
