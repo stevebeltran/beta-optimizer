@@ -1,4 +1,4 @@
-﻿# Copyright (c) Steven Beltran. Created by Steven Beltran in partnership with BRINC Drones.
+# Copyright (c) Steven Beltran. Created by Steven Beltran in partnership with BRINC Drones.
 import warnings
 warnings.filterwarnings(
     "ignore",
@@ -3946,7 +3946,7 @@ def _render_in_app_faq():
         for _entry in FAQ_CHANGELOG
     )
 
-    st.markdown(
+    st.html(
         textwrap.dedent(f"""
         <style>
         .faq-float {{
@@ -4102,9 +4102,7 @@ def _render_in_app_faq():
                     </div>
                 </div>
             </div>
-        </details>
-        """),
-        unsafe_allow_html=True,
+        </details>\r\n        """)
     )
 
 
