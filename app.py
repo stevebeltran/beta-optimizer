@@ -3675,7 +3675,7 @@ def _render_live_admin_dashboard():
         _rows_html = "".join(_rows)
 
     _stale_seconds = int(_ACTIVE_SESSION_TTL_SECONDS)
-    st.html(
+    components.html(
         textwrap.dedent(f"""
         <style>
         .live-admin-float {{
@@ -3871,6 +3871,8 @@ def _render_live_admin_dashboard():
             </div>
         </details>
         """),
+        height=520,
+        scrolling=False,
     )
 
 
