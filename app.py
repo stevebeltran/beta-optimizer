@@ -3945,185 +3945,20 @@ def _render_in_app_faq():
         ),
     ]
 
-    _faq_html_parts = []
-    for _question, _answer in _faq_items:
-        _faq_html_parts.append(
-            f"""
-            <div class="faq-item">
-                <div class="faq-q">{html.escape(_question)}</div>
-                <div class="faq-a">{html.escape(_answer)}</div>
-            </div>
-            """
+    with st.popover("Help / FAQ"):
+        st.markdown("### BRINC DFR Planning FAQ")
+        st.markdown(
+            "Quick answers for customer conversations, workflow, station strategy, deployment planning, and executive positioning."
         )
-
-    _changelog_lines = "".join(
-        f'<div class="faq-changelog-line">v{html.escape(str(_entry["version"]))} | '
-        f'{html.escape(str(_entry["timestamp"]))} | '
-        f'{html.escape(str(_entry["summary"]))}</div>'
-        for _entry in FAQ_CHANGELOG
-    )
-
-    components.html(
-        textwrap.dedent(f"""
-        <style>
-        .faq-float {{
-            position: fixed;
-            top: calc(14px + env(safe-area-inset-top, 0px));
-            left: calc(14px + env(safe-area-inset-left, 0px));
-            z-index: 2147483647;
-            width: min(420px, calc(100vw - 28px));
-            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            margin: 0;
-            pointer-events: none;
-            transform: translateZ(0);
-        }}
-        .faq-float > * {{
-            pointer-events: auto;
-        }}
-        .faq-float summary {{
-            list-style: none;
-            margin: 0;
-        }}
-        .faq-float summary::-webkit-details-marker {{
-            display: none;
-        }}
-        .faq-pill {{
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 12px;
-            border-radius: 999px;
-            background: linear-gradient(180deg, rgba(7, 17, 31, 0.98), rgba(4, 10, 20, 0.96));
-            border: 1px solid rgba(0, 210, 255, 0.78);
-            color: #f5fdff;
-            font-size: 0.78rem;
-            font-weight: 800;
-            letter-spacing: 0.04em;
-            cursor: pointer;
-            box-shadow:
-                0 0 0 1px rgba(0, 210, 255, 0.16),
-                0 10px 24px rgba(0, 0, 0, 0.28),
-                0 0 24px rgba(0, 210, 255, 0.16);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-        }}
-        .faq-pill:hover {{
-            border-color: rgba(0, 210, 255, 0.98);
-            background: linear-gradient(180deg, rgba(8, 24, 42, 0.99), rgba(5, 12, 22, 0.98));
-            box-shadow:
-                0 0 0 1px rgba(0, 210, 255, 0.24),
-                0 12px 28px rgba(0, 0, 0, 0.34),
-                0 0 28px rgba(0, 210, 255, 0.22);
-        }}
-        .faq-pill::before {{
-            content: "?";
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 18px;
-            height: 18px;
-            border-radius: 999px;
-            background: rgba(0, 210, 255, 0.18);
-            border: 1px solid rgba(0, 210, 255, 0.46);
-            color: #8eeeff;
-            font-size: 0.72rem;
-            font-weight: 900;
-            line-height: 1;
-            flex: 0 0 auto;
-        }}
-        .faq-panel {{
-            margin-top: 8px;
-            background: rgba(7, 11, 18, 0.97);
-            border: 1px solid rgba(0, 210, 255, 0.22);
-            border-radius: 16px;
-            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
-            overflow: hidden;
-            width: min(420px, calc(100vw - 28px));
-        }}
-        .faq-panel-inner {{
-            max-height: min(78vh, 760px);
-            overflow-y: auto;
-            padding: 14px 14px 12px;
-        }}
-        .faq-title {{
-            color: #f7fdff;
-            font-size: 0.96rem;
-            font-weight: 800;
-            margin: 0 0 4px 0;
-        }}
-        .faq-subtitle {{
-            color: rgba(216, 229, 239, 0.84);
-            font-size: 0.78rem;
-            line-height: 1.5;
-            margin-bottom: 12px;
-        }}
-        .faq-item {{
-            padding: 10px 0;
-            border-top: 1px solid rgba(255, 255, 255, 0.06);
-        }}
-        .faq-item:first-of-type {{
-            border-top: none;
-            padding-top: 0;
-        }}
-        .faq-q {{
-            color: #fbfeff;
-            font-size: 0.81rem;
-            font-weight: 700;
-            margin-bottom: 4px;
-        }}
-        .faq-a {{
-            color: rgba(220, 230, 238, 0.88);
-            font-size: 0.76rem;
-            line-height: 1.52;
-        }}
-        .faq-footer {{
-            margin-top: 12px;
-            padding-top: 10px;
-            border-top: 1px solid rgba(116, 224, 255, 0.14);
-        }}
-        .faq-footer-label {{
-            color: #7edfff;
-            font-size: 0.69rem;
-            font-weight: 800;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            margin-bottom: 6px;
-        }}
-        .faq-version-line {{
-            color: rgba(245, 250, 255, 0.92);
-            font-size: 0.73rem;
-            font-family: "IBM Plex Mono", Consolas, monospace;
-            margin-bottom: 8px;
-        }}
-        .faq-changelog-line {{
-            color: rgba(201, 214, 225, 0.82);
-            font-size: 0.71rem;
-            line-height: 1.45;
-            font-family: "IBM Plex Mono", Consolas, monospace;
-            word-break: break-word;
-        }}
-        </style>
-        <details class="faq-float">
-            <summary class="faq-pill">Help / FAQ</summary>
-            <div class="faq-panel">
-                <div class="faq-panel-inner">
-                    <div class="faq-title">BRINC DFR Planning FAQ</div>
-                    <div class="faq-subtitle">
-                        Quick answers for customer conversations, workflow, station strategy, deployment planning, and executive positioning.
-                    </div>
-                    {''.join(_faq_html_parts)}
-                    <div class="faq-footer">
-                        <div class="faq-footer-label">Version &amp; Changelog</div>
-                        <div class="faq-version-line">Current version: v{html.escape(__version__)} | Build time: {html.escape(__build_datetime__)}</div>
-                        {_changelog_lines}
-                    </div>
-                </div>
-            </div>
-        </details>
-        """),
-        height=520,
-        scrolling=False,
-    )
+        for _question, _answer in _faq_items:
+            st.markdown(f"**{_question}**")
+            st.markdown(_answer)
+        st.markdown("### Version & Changelog")
+        st.markdown(f"Current version: `{__version__}` | Build time: `{__build_datetime__}`")
+        for _entry in FAQ_CHANGELOG:
+            st.markdown(
+                f"- `v{_entry['version']}` | `{_entry['timestamp']}` | {_entry['summary']}"
+            )
 
 
 def main():
