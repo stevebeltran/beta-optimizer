@@ -1906,7 +1906,7 @@ def sync_station_suggestion_modes(session_state, suggestions):
 
 
 def render_station_suggestions(st, session_state, suggestions, text_main, text_muted,
-                               card_bg, card_border, accent_color):
+                               card_bg, card_border, accent_color, source_label='public data'):
     """Render a compact 2×5 suggestion card grid below the map.
 
     Returns True if any toggle changed (caller should rerun).
@@ -1939,6 +1939,7 @@ def render_station_suggestions(st, session_state, suggestions, text_main, text_m
         }
     if 'show_suggestion_markers' not in session_state:
         session_state['show_suggestion_markers'] = True
+    source_label = session_state.get('station_suggestions_source', source_label)
 
     modes = session_state['suggestion_modes']
     changed = False
@@ -1950,10 +1951,10 @@ def render_station_suggestions(st, session_state, suggestions, text_main, text_m
         f"<span style='font-size:0.85rem; font-weight:700; color:{text_main};'>"
         f"Suggested Station Placements"
         f"<span style='font-size:0.7rem; font-weight:400; color:{text_muted}; margin-left:8px;'>"
-        f"({n_on} shown from public data)</span></span></div>",
+        f"({n_on} shown from {source_label})</span></span></div>",
         unsafe_allow_html=True,
     )
-    st.caption('Suggestion cards are advisory only. They do not force the deployment objective or lock the optimizer.')
+    st.caption('Click a card to compare role assignment. These suggestions are advisory only and do not force the deployment objective or lock the optimizer.')
 
     # ── Two rows of 5 cards ──────────────────────────────────────────────
     st.markdown(
@@ -1974,11 +1975,11 @@ def render_station_suggestions(st, session_state, suggestions, text_main, text_m
         """,
         unsafe_allow_html=True,
     )
-    for row_start in (0, 5):
+    for row_start in range(0, len(suggestions), 5):
         row_items = suggestions[row_start:row_start + 5]
         if not row_items:
             break
-        cols = st.columns(5, gap="small")
+        cols = st.columns(len(row_items), gap="small")
         for ci, s in enumerate(row_items):
             idx = s['station_idx']
             mode = modes.get(idx, 'Off')
