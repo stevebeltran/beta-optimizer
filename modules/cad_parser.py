@@ -768,6 +768,8 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                 locality = None
                 if len(parts) >= 3 and re.match(r'^[A-Z]{2}$', parts[-2]) and re.match(r'^\d{5}(?:-\d{4})?$', parts[-1]):
                     locality = parts[-3]
+                elif len(parts) == 2 and not re.match(r'^[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?$', parts[-1]):
+                    locality = parts[-1]
                 elif re.match(r'^[A-Z]{2}(?:\s+\d{5}(?:-\d{4})?)?$', parts[-1]):
                     locality = parts[-2]
                 if locality is None:
@@ -786,6 +788,81 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
 
         vc = pd.Series(candidates).value_counts()
         return vc.index[0] if not vc.empty else None
+
+    def _normalize_chicagoland_cfs_report(raw_df):
+        required = {
+            'call', 'date', 'date time_call create', 'call type description',
+            'lat', 'lon', 'address', 'department name'
+        }
+        cols = {str(c).strip().lower() for c in raw_df.columns}
+        if not required.issubset(cols):
+            return None
+
+        res = raw_df.copy().reset_index(drop=True)
+        res['lat'] = pd.to_numeric(res['lat'], errors='coerce')
+        res['lon'] = pd.to_numeric(res['lon'], errors='coerce')
+        res = res[
+            res['lat'].between(17.5, 72) &
+            res['lon'].between(-180, -64)
+        ].copy()
+        if res.empty:
+            return None
+
+        dt_source = next((
+            c for c in res.columns
+            if c == 'date time_call create' or c == 'date' or 'date time' in c or 'created' in c
+        ), None)
+        if dt_source is not None:
+            try:
+                dt_series = pd.to_datetime(res[dt_source], format='mixed', errors='coerce')
+                res['date'] = dt_series.dt.strftime('%Y-%m-%d')
+                res['time'] = dt_series.dt.strftime('%H:%M:%S')
+            except Exception:
+                pass
+
+        desc_col = next((c for c in res.columns if c == 'call type description' or c in ('call_type_desc', 'call type', 'nature')), None)
+        if desc_col is not None:
+            res['call_type_desc'] = res[desc_col].fillna('').astype(str).str.strip()
+
+        dept_col = next((c for c in res.columns if c in ('department name', 'department', 'dept', 'agency', 'agency name')), None)
+        if dept_col is not None:
+            dept_vals = res[dept_col].fillna('').astype(str).str.strip()
+            res['agency'] = dept_vals.str.contains(
+                r'\b(?:fire|ems|medic|rescue|ambulance|engine|ladder|battalion)\b',
+                regex=True,
+                na=False,
+            ).map({True: 'fire', False: 'police'})
+        else:
+            res['agency'] = 'police'
+
+        top_city_name = _infer_city_from_location_text(res)
+        if not top_city_name and dept_col is not None:
+            dept_vals = res[dept_col].fillna('').astype(str).str.upper().str.strip()
+            dept_vals = dept_vals.str.replace(r'[^A-Z0-9 /,-]', ' ', regex=True)
+            dept_vals = dept_vals.str.replace(r'\s+', ' ', regex=True).str.strip()
+            dept_cands = []
+            for val in dept_vals:
+                m = re.match(r'^(?:PD|FD|EMS|POLICE|FIRE|SHERIFF|DEPT|DEPARTMENT)\s+(.+?)\s*$', val, flags=re.I)
+                if m:
+                    locality = m.group(1).strip()
+                    if locality and not _looks_like_street_or_intersection(locality):
+                        dept_cands.append(locality.title())
+                        continue
+                m = re.match(r'^(.+?)\s+(?:PD|FD|EMS|POLICE|FIRE|SHERIFF|DEPT|DEPARTMENT)\s*$', val, flags=re.I)
+                if m:
+                    locality = m.group(1).strip()
+                    if locality and not _looks_like_street_or_intersection(locality):
+                        dept_cands.append(locality.title())
+            if dept_cands:
+                vc = pd.Series(dept_cands).value_counts()
+                if not vc.empty:
+                    top_city_name = vc.index[0]
+
+        if top_city_name:
+            res['_csv_city'] = top_city_name
+        res['_csv_state'] = 'IL'
+        res['priority'] = 3
+        return res
 
     def _infer_state_from_text(raw_df, inferred_city=None):
         for col in ['state', 'state_name']:
@@ -950,6 +1027,12 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
             else:
                 # ── CSV / TXT path ────────────────────────────────────────────
                 content = cfile.getvalue().decode('utf-8', errors='ignore')
+                _content_lines = content.splitlines()
+                for _header_idx, _line in enumerate(_content_lines[:30]):
+                    _line_l = _line.lower()
+                    if all(token in _line_l for token in ('call', 'date', 'lat', 'lon', 'address', 'department name')):
+                        content = '\n'.join(_content_lines[_header_idx:])
+                        break
                 first_line = content.split('\n')[0]
                 delim = ',' if first_line.count(',') > first_line.count('\t') else '\t'
                 raw_df = pd.read_csv(io.StringIO(content), sep=delim, dtype=str)
@@ -1000,6 +1083,116 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                                 raw_df['_csv_state'] = _top_st
                     except Exception:
                         pass
+
+                _chicago_report = _normalize_chicagoland_cfs_report(raw_df)
+                if _chicago_report is not None and not _chicago_report.empty:
+                    res = _chicago_report
+                    source_ids = pd.Series(
+                        [f"{file_idx}:{cfile.name}:{row_idx}" for row_idx in range(len(raw_df))],
+                        index=raw_df.index
+                    )
+                    res['_source_row_id'] = source_ids.reindex(res.index).values
+                    res['_source_file'] = cfile.name
+                    try:
+                        _meta = _extract_file_meta(raw_df, res, filename=cfile.name)
+                        _existing = st.session_state.get('file_meta', {})
+                        _existing_names = _existing.get('uploaded_filename', '')
+                        if _existing_names and _meta.get('uploaded_filename', '') and _meta['uploaded_filename'] not in _existing_names:
+                            _meta['uploaded_filename'] = _existing_names + ' | ' + _meta['uploaded_filename']
+                        st.session_state['file_meta'] = {**_existing, **_meta}
+                    except Exception:
+                        pass
+                    _pq['input_rows'] = len(raw_df)
+                    _pq['output_rows'] = len(res)
+                    _pq['has_lat'] = True
+                    _pq['has_lon'] = True
+                    _pq['has_date'] = 'date' in res.columns and bool(res['date'].notna().any())
+                    _pq['has_priority_col'] = True
+                    _file_parse_quality.append(_pq)
+                    all_calls_list.append(res.reset_index(drop=True))
+                    continue
+
+                if 'lat' in raw_df.columns and 'lon' in raw_df.columns:
+                    _direct_lat = pd.to_numeric(raw_df['lat'], errors='coerce')
+                    _direct_lon = pd.to_numeric(raw_df['lon'], errors='coerce')
+                    _direct_valid_rate = (
+                        _direct_lat.between(17.5, 72) &
+                        _direct_lon.between(-180, -64)
+                    ).mean()
+                    if _direct_valid_rate >= 0.85:
+                        res = raw_df.copy().reset_index(drop=True)
+                        res['lat'] = _direct_lat.reset_index(drop=True)
+                        res['lon'] = _direct_lon.reset_index(drop=True)
+                        res = res.dropna(subset=['lat', 'lon'])
+                        res = res[
+                            (res['lat'].between(17.5, 72)) &
+                            (res['lon'].between(-180, -64))
+                        ].copy()
+                        if not res.empty:
+                            dt_source = None
+                            for _candidate in [
+                                c for c in raw_df.columns
+                                if c == 'date' or 'date time' in c or 'datetime' in c or 'created' in c
+                            ]:
+                                dt_source = _candidate
+                                break
+                            if dt_source is not None:
+                                try:
+                                    dt_series = pd.to_datetime(raw_df[dt_source], format='mixed', errors='coerce')
+                                    res['date'] = dt_series.dt.strftime('%Y-%m-%d')
+                                    res['time'] = dt_series.dt.strftime('%H:%M:%S')
+                                except Exception:
+                                    pass
+                            else:
+                                date_cols = [c for c in raw_df.columns if c == 'date']
+                                time_cols = [c for c in raw_df.columns if 'time' in c]
+                                if date_cols:
+                                    try:
+                                        date_series = pd.to_datetime(raw_df[date_cols[0]], format='mixed', errors='coerce')
+                                        res['date'] = date_series.dt.strftime('%Y-%m-%d')
+                                    except Exception:
+                                        pass
+                                if time_cols:
+                                    res['time'] = raw_df[time_cols[0]].fillna('').astype(str).str.strip()
+                            desc_col = next((c for c in raw_df.columns if 'call type description' in c or c in ('call_type_desc', 'call type', 'nature')), None)
+                            if desc_col is not None:
+                                res['call_type_desc'] = raw_df[desc_col].fillna('').astype(str).str.strip()
+                            dept_col = next((c for c in raw_df.columns if c in ('department name', 'department', 'dept', 'agency', 'agency name')), None)
+                            if dept_col is not None:
+                                dept_vals = raw_df[dept_col].fillna('').astype(str).str.strip()
+                                res['agency'] = dept_vals.str.contains(
+                                    r'\b(?:fire|ems|medic|rescue|ambulance|engine|ladder|battalion)\b',
+                                    regex=True,
+                                    na=False,
+                                ).map({True: 'fire', False: 'police'})
+                            else:
+                                res['agency'] = 'police'
+                            top_city_name = _infer_city_from_location_text(raw_df)
+                            if top_city_name:
+                                res['_csv_city'] = top_city_name
+                            inferred_state = _infer_state_from_text(raw_df, top_city_name)
+                            if inferred_state:
+                                res['_csv_state'] = inferred_state
+                            res['priority'] = 3
+                            res['_source_row_id'] = source_ids.reindex(raw_df.index).values
+                            res['_source_file'] = cfile.name
+                            try:
+                                _meta = _extract_file_meta(raw_df, res, filename=cfile.name)
+                                _existing = st.session_state.get('file_meta', {})
+                                _existing_names = _existing.get('uploaded_filename', '')
+                                if _existing_names and _meta.get('uploaded_filename', '') and _meta['uploaded_filename'] not in _existing_names:
+                                    _meta['uploaded_filename'] = _existing_names + ' | ' + _meta['uploaded_filename']
+                                st.session_state['file_meta'] = {**_existing, **_meta}
+                            except Exception:
+                                pass
+                            _pq['output_rows'] = len(res)
+                            _pq['has_lat'] = True
+                            _pq['has_lon'] = True
+                            _pq['has_date'] = 'date' in res.columns and bool(res['date'].notna().any())
+                            _pq['has_priority_col'] = False
+                            _file_parse_quality.append(_pq)
+                            all_calls_list.append(res)
+                            continue
 
             source_ids = pd.Series(
                 [f"{file_idx}:{cfile.name}:{row_idx}" for row_idx in range(len(raw_df))],
