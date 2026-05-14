@@ -3709,16 +3709,7 @@ def _render_live_admin_dashboard():
         _seen = _item.get("last_seen")
         _seen_text = _seen.strftime("%H:%M:%S UTC") if isinstance(_seen, datetime.datetime) else "?"
         _rows.append(
-            f"""
-            <div class="live-admin-row">
-                <div class="live-admin-main">
-                    <div class="live-admin-user">{html.escape(_item.get("name") or _item.get("email") or "Unknown")}</div>
-                    <div class="live-admin-meta">{html.escape(_item.get("email") or "—")} · session {html.escape(_item.get("session_id") or "—")}</div>
-                    <div class="live-admin-meta">{html.escape(_item.get("city") or "—")}, {html.escape(_item.get("state") or "—")} · {html.escape(_item.get("page") or "current app")}</div>
-                </div>
-                <div class="live-admin-seen">{html.escape(_seen_text)}</div>
-            </div>
-            """
+            f'<div class="live-admin-row"><div class="live-admin-main"><div class="live-admin-user">{html.escape(_item.get("name") or _item.get("email") or "Unknown")}</div><div class="live-admin-meta">{html.escape(_item.get("email") or "—")} · session {html.escape(_item.get("session_id") or "—")}</div><div class="live-admin-meta">{html.escape(_item.get("city") or "—")}, {html.escape(_item.get("state") or "—")} · {html.escape(_item.get("page") or "current app")}</div></div><div class="live-admin-seen">{html.escape(_seen_text)}</div></div>'
         )
 
     if not _rows:
@@ -3735,6 +3726,7 @@ def _render_live_admin_dashboard():
             max-width: 680px;
             margin: 14px auto 0;
             font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            position: relative;
         }}
         .live-admin-dock {{
             display: flex;
@@ -3743,6 +3735,7 @@ def _render_live_admin_dashboard():
             gap: 8px;
             flex-wrap: wrap;
             width: 100%;
+            position: relative;
         }}
         .live-admin-quickjump {{
             display: inline-flex;
@@ -3789,6 +3782,9 @@ def _render_live_admin_dashboard():
             font-size: 0.72rem;
             line-height: 1;
             flex: 0 0 auto;
+        }}
+        .live-admin-inline details {{
+            position: relative;
         }}
         .live-admin-inline summary {{
             list-style: none;
@@ -3841,13 +3837,18 @@ def _render_live_admin_dashboard():
             flex: 0 0 auto;
         }}
         .live-admin-panel {{
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
             margin-top: 8px;
             background: rgba(7, 11, 18, 0.97);
             border: 1px solid {_panel_border};
             border-radius: 16px;
             box-shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
             overflow: hidden;
-            width: min(560px, 100%);
+            width: min(560px, calc(100vw - 28px));
+            z-index: 9999;
         }}
         .live-admin-panel-inner {{
             max-height: min(78vh, 760px);
@@ -3943,7 +3944,9 @@ def _render_live_admin_dashboard():
                 max-width: calc(100vw - 28px);
             }}
             .live-admin-panel {{
-                width: 100%;
+                width: calc(100vw - 28px);
+                left: 50%;
+                transform: translateX(-50%);
             }}
         }}
         </style>
@@ -4069,15 +4072,11 @@ def _render_in_app_faq():
             f"""
             <style>
             .faq-float {{
-                position: fixed;
-                top: calc(14px + env(safe-area-inset-top, 0px));
-                left: calc(14px + env(safe-area-inset-left, 0px));
-                z-index: 2147483646;
-                width: min(680px, calc(100vw - 28px));
+                width: 100%;
+                max-width: 680px;
+                margin: 8px auto 0;
                 font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                margin: 0;
-                pointer-events: none;
-                transform: translateZ(0);
+                position: relative;
             }}
             .faq-float > * {{
                 pointer-events: auto;
@@ -4085,7 +4084,7 @@ def _render_in_app_faq():
             .faq-dock {{
                 display: flex;
                 align-items: flex-start;
-                justify-content: flex-start;
+                justify-content: center;
                 width: 100%;
             }}
             .faq-float summary {{
@@ -4229,15 +4228,13 @@ def _render_in_app_faq():
             </div>
             """
         ),
-        height=0,
+        height=850,
     )
 
 
 def main():
     _presence_heartbeat_fragment()
     if not st.session_state['csvs_ready']:
-        _render_in_app_faq()
-
         # GRAB THE LOGO FOR THE UPLOAD PAGE
         logo_b64 = get_themed_logo_base64("logo.png", theme="dark")
         hero_logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:72px; margin-bottom:15px;">' if logo_b64 else f'<div style="font-size:2.5rem; font-weight:900; letter-spacing:4px; color:#ffffff; margin-bottom:15px;">BRINC</div>'
@@ -5737,6 +5734,7 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         _live_admin_dashboard_fragment()
+        _render_in_app_faq()
 
         if submit_demo or st.session_state.get('trigger_sim', False):
             if st.session_state.get('trigger_sim', False):
