@@ -145,6 +145,7 @@ def restore_brinc_session(session_state, save_data):
             stations_df['lon'] = pd.to_numeric(stations_df['lon'], errors='coerce')
             stations_df = stations_df.dropna(subset=['lat', 'lon']).reset_index(drop=True)
             session_state['df_stations'] = stations_df
+            session_state['stations_user_uploaded'] = True
 
     boundary_geojson = save_data.get('boundary_geojson')
     if boundary_geojson:
