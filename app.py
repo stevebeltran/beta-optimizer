@@ -3982,7 +3982,6 @@ def _render_live_admin_dashboard():
         </div>
         """),
         height=520,
-        scrolling=False,
     )
 
 
