@@ -911,6 +911,7 @@ def _render_public_report_route():
 
 
 _render_public_report_route()
+_apply_admin_fast_jump()
 
 st.markdown(
     """
@@ -3590,6 +3591,40 @@ def _is_admin_dashboard_user() -> bool:
     return _email in _get_admin_dashboard_emails()
 
 
+def _apply_admin_fast_jump():
+    _params = _get_query_params_dict()
+    _jump = str(_params.get("admin_jump", "") or "").strip().lower()
+    if not _jump:
+        return False
+    if not _is_admin_dashboard_user():
+        return False
+
+    if _jump == "rockford_il":
+        st.session_state["active_city"] = "Rockford"
+        st.session_state["active_state"] = "IL"
+        st.session_state["target_cities"] = [{"city": "Rockford", "state": "IL"}]
+        st.session_state["city_count"] = 1
+        st.session_state["use_county_boundary"] = False
+        st.session_state["boundary_kind"] = "place"
+        st.session_state["boundary_source_path"] = ""
+        st.session_state["location_detection_source"] = "admin_fast_jump"
+        st.session_state["boundary_detection_mode"] = "admin_fast_jump"
+        st.session_state["master_gdf_override"] = None
+        st.session_state["boundary_overlay_gdf"] = None
+        st.session_state["boundary_overlay_name"] = ""
+        st.session_state["boundary_overlay_file"] = ""
+        st.session_state["trigger_sim"] = False
+        if st.session_state.get("df_calls") is not None and st.session_state.get("df_stations") is not None:
+            st.session_state["csvs_ready"] = True
+        try:
+            st.query_params.clear()
+        except Exception:
+            pass
+        return True
+
+    return False
+
+
 def _prune_active_sessions(now=None):
     _now = now or datetime.datetime.now(datetime.timezone.utc)
     _cutoff = _now - datetime.timedelta(seconds=_ACTIVE_SESSION_TTL_SECONDS)
@@ -3698,7 +3733,7 @@ def _render_live_admin_dashboard():
             top: calc(14px + env(safe-area-inset-top, 0px));
             left: min(calc(14px + 470px + 16px), calc(100vw - 560px - 14px));
             z-index: 2147483647;
-            width: min(560px, calc(100vw - 28px));
+            width: min(680px, calc(100vw - 28px));
             font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             margin: 0;
             pointer-events: none;
@@ -3706,6 +3741,60 @@ def _render_live_admin_dashboard():
         }}
         .live-admin-float > * {{
             pointer-events: auto;
+        }}
+        .live-admin-dock {{
+            display: flex;
+            align-items: flex-start;
+            justify-content: flex-end;
+            gap: 8px;
+            flex-wrap: wrap;
+            width: 100%;
+        }}
+        .live-admin-quickjump {{
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, rgba(17, 33, 18, 0.98), rgba(8, 18, 10, 0.96));
+            border: 1px solid rgba(0, 255, 170, 0.72);
+            color: #ecfff5;
+            font-size: 0.76rem;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-decoration: none;
+            white-space: nowrap;
+            box-shadow:
+                0 0 0 1px rgba(0, 255, 170, 0.14),
+                0 10px 24px rgba(0, 0, 0, 0.28),
+                0 0 24px rgba(0, 255, 170, 0.14);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+        }}
+        .live-admin-quickjump:hover {{
+            transform: translateY(-1px);
+            border-color: rgba(0, 255, 170, 0.95);
+            background: linear-gradient(180deg, rgba(21, 42, 24, 0.99), rgba(10, 24, 12, 0.98));
+            box-shadow:
+                0 0 0 1px rgba(0, 255, 170, 0.2),
+                0 12px 28px rgba(0, 0, 0, 0.34),
+                0 0 28px rgba(0, 255, 170, 0.2);
+        }}
+        .live-admin-quickjump::before {{
+            content: "⚡";
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            border-radius: 999px;
+            background: rgba(0, 255, 170, 0.14);
+            border: 1px solid rgba(0, 255, 170, 0.72);
+            color: #7cffc9;
+            font-size: 0.72rem;
+            line-height: 1;
+            flex: 0 0 auto;
         }}
         .live-admin-float summary {{
             list-style: none;
@@ -3764,7 +3853,7 @@ def _render_live_admin_dashboard():
             border-radius: 16px;
             box-shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
             overflow: hidden;
-            width: min(560px, calc(100vw - 28px));
+            width: min(680px, calc(100vw - 28px));
         }}
         .live-admin-panel-inner {{
             max-height: min(78vh, 760px);
@@ -3856,35 +3945,40 @@ def _render_live_admin_dashboard():
             color: #f5fff8;
         }}
         </style>
-        <details class="live-admin-float">
-            <summary class="live-admin-pill">Live Users</summary>
-            <div class="live-admin-panel">
-                <div class="live-admin-panel-inner">
-                    <div class="live-admin-title">Live User Dashboard</div>
-                    <div class="live-admin-subtitle">
-                        Admin-only view of recent Streamlit sessions. A session stays visible while it has pinged the app within the last {_stale_seconds} seconds.
-                    </div>
-                    <div class="live-admin-stats">
-                        <div class="live-admin-stat">
-                            <div class="live-admin-stat-label">Active</div>
-                            <div class="live-admin-stat-value">{_count}</div>
+        <div class="live-admin-float">
+            <div class="live-admin-dock">
+                <a class="live-admin-quickjump" href="?admin_jump=rockford_il" target="_self" rel="noopener noreferrer">Rockford, IL</a>
+                <details>
+                    <summary class="live-admin-pill">Live Users</summary>
+                    <div class="live-admin-panel">
+                        <div class="live-admin-panel-inner">
+                            <div class="live-admin-title">Live User Dashboard</div>
+                            <div class="live-admin-subtitle">
+                                Admin-only view of recent Streamlit sessions. A session stays visible while it has pinged the app within the last {_stale_seconds} seconds.
+                            </div>
+                            <div class="live-admin-stats">
+                                <div class="live-admin-stat">
+                                    <div class="live-admin-stat-label">Active</div>
+                                    <div class="live-admin-stat-value">{_count}</div>
+                                </div>
+                                <div class="live-admin-stat">
+                                    <div class="live-admin-stat-label">Stale cutoff</div>
+                                    <div class="live-admin-stat-value">{_stale_seconds}s</div>
+                                </div>
+                                <div class="live-admin-stat">
+                                    <div class="live-admin-stat-label">Updated</div>
+                                    <div class="live-admin-stat-value">{html.escape(datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S"))} UTC</div>
+                                </div>
+                            </div>
+                            {_rows_html}
+                            <div class="live-admin-note">
+                                <strong>Scope:</strong> this tracks sessions inside the current Streamlit app process only. If the app restarts or scales across multiple workers, the panel will reflect only the sessions that are still reachable in this process.
+                            </div>
                         </div>
-                        <div class="live-admin-stat">
-                            <div class="live-admin-stat-label">Stale cutoff</div>
-                            <div class="live-admin-stat-value">{_stale_seconds}s</div>
-                        </div>
-                        <div class="live-admin-stat">
-                            <div class="live-admin-stat-label">Updated</div>
-                            <div class="live-admin-stat-value">{html.escape(datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S"))} UTC</div>
-                        </div>
                     </div>
-                    {_rows_html}
-                    <div class="live-admin-note">
-                        <strong>Scope:</strong> this tracks sessions inside the current Streamlit app process only. If the app restarts or scales across multiple workers, the panel will reflect only the sessions that are still reachable in this process.
-                    </div>
-                </div>
+                </details>
             </div>
-        </details>
+        </div>
         """),
         height=520,
         scrolling=False,
