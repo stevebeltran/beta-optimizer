@@ -700,28 +700,61 @@ def prepare_station_candidates(
             crs='EPSG:4326',
         )
         station_gdf_utm = station_gdf.to_crs(epsg=epsg_code)
-        mask = station_gdf_utm.within(city_m)
-        df_inside = df_stations_all[mask].reset_index(drop=True)
 
-        if df_inside.empty:
-            if stations_user_uploaded:
-                mask_buf = station_gdf_utm.within(city_m.buffer(5000))
-                df_inside_buf = df_stations_all[mask_buf].reset_index(drop=True)
-                if not df_inside_buf.empty:
-                    df_stations_all = df_inside_buf
-            else:
+        if stations_user_uploaded:
+            # Preserve all uploaded candidate stations for optimization.
+            # Uploaded files are user-authored deployment inputs, so we do not
+            # silently drop rows just because one point falls outside the active
+            # boundary polygon.
+            pass
+        else:
+            mask = station_gdf_utm.within(city_m)
+            df_inside = df_stations_all[mask].reset_index(drop=True)
+
+            if df_inside.empty:
                 st.info(
-                    'ℹ️ No OSM public buildings were found inside the jurisdiction boundary. '
-                    'Using call-density station placement — stations are snapped to incident '
+                    '?? No OSM public buildings were found inside the jurisdiction boundary. '
+                    'Using call-density station placement ? stations are snapped to incident '
                     'locations that fall inside the city limits.'
                 )
-            try:
-                if not stations_user_uploaded:
+                try:
                     df_stations_all = make_random_stations(df_calls, n=60, boundary_geom=city_m, epsg_code=epsg_code)
-            except Exception:
-                df_stations_all = pd.DataFrame()
+                except Exception:
+                    df_stations_all = pd.DataFrame()
 
-            if df_stations_all.empty:
+                if df_stations_all.empty:
+                    try:
+                        lats = df_calls['lat'].dropna()
+                        lons = df_calls['lon'].dropna()
+                        grid_lats = np.linspace(lats.quantile(0.1), lats.quantile(0.9), 8)
+                        grid_lons = np.linspace(lons.quantile(0.1), lons.quantile(0.9), 8)
+                        glat, glon = np.meshgrid(grid_lats, grid_lons)
+                        df_stations_all = pd.DataFrame({
+                            'name': [f'Call-Density Station {i+1}' for i in range(len(glat.ravel()))],
+                            'lat': glat.ravel(),
+                            'lon': glon.ravel(),
+                            'type': (['Police', 'Fire', 'School'] * 30)[:len(glat.ravel())],
+                            'source': ['CALL_DENSITY'] * len(glat.ravel()),
+                        })
+                    except Exception:
+                        df_stations_all = pd.DataFrame()
+            else:
+                df_stations_all = df_inside
+
+            if not df_stations_all.empty:
+                try:
+                    final_station_gdf = gpd.GeoDataFrame(
+                        df_stations_all,
+                        geometry=gpd.points_from_xy(df_stations_all.lon, df_stations_all.lat),
+                        crs='EPSG:4326',
+                    ).to_crs(epsg=epsg_code)
+                    final_mask = final_station_gdf.within(city_m)
+                    if final_mask.any():
+                        df_stations_all = df_stations_all[final_mask].reset_index(drop=True)
+                except Exception:
+                    pass
+
+        if df_stations_all.empty:
                 try:
                     lats = df_calls['lat'].dropna()
                     lons = df_calls['lon'].dropna()
