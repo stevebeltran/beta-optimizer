@@ -5707,7 +5707,7 @@ def main():
                 st.session_state['demo_mode_used'] = True
                 st.rerun()
 
-            city_chips = "  ·  ".join([f"{c}" for c, _ in DEMO_CITIES[:12]]) + "  · and more…"
+            city_chips = "  ·  ".join([f"{c}" for c, _ in FAST_DEMO_CITIES])
             st.markdown(f"""
             <div class="demo-cities">
                 <b>Available Cities</b><br>
