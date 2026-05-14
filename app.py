@@ -3949,7 +3949,6 @@ def _render_live_admin_dashboard():
         </style>
         <div class="live-admin-float">
             <div class="live-admin-dock">
-                <a class="live-admin-quickjump" href="?admin_jump=rockford_il" target="_self" rel="noopener noreferrer">Rockford, IL</a>
                 <details>
                     <summary class="live-admin-pill">Live Users</summary>
                     <div class="live-admin-panel">
@@ -7373,17 +7372,6 @@ body{{background:transparent;overflow:hidden}}
                 <span style="color:{card_border};">|</span>
                 <span style="font-weight: 800; color: {text_main}; font-size: 0.95rem;">{actual_k_responder} <span style="color:#888; font-weight:normal;">Resp</span> · {actual_k_guardian} <span style="color:#888; font-weight:normal;">Guard</span></span>
                 <span style="background:#0066aa;border:1px solid #00D2FF;border-radius:4px;padding:3px 8px;font-size:0.75rem;font-weight:700;color:#00D2FF;letter-spacing:0.5px;text-transform:uppercase;">{_tier_badge}</span>
-                {(
-                    '<a href="?admin_jump=rockford_il" target="_self" rel="noopener noreferrer" '
-                    'style="display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; '
-                    'border:1px solid rgba(0, 255, 170, 0.72); background:linear-gradient(180deg, rgba(17, 33, 18, 0.98), rgba(8, 18, 10, 0.96)); '
-                    'color:#ecfff5; font-size:0.72rem; font-weight:800; letter-spacing:0.04em; text-decoration:none; white-space:nowrap; '
-                    'box-shadow:0 0 0 1px rgba(0, 255, 170, 0.14), 0 8px 20px rgba(0, 0, 0, 0.18);">'
-                    'One-click Rockford, IL</a>'
-                    if str(st.session_state.get("active_city", "") or "").strip().lower() == "rockford"
-                    and str(st.session_state.get("active_state", "") or "").strip().upper() == "IL"
-                    else ""
-                )}
                 {main_logo_html}
             </div>
         </div>
