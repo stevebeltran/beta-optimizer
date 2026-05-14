@@ -214,7 +214,23 @@ from modules.geospatial import (
 from modules import faa_rf, optimization, html_reports
 _session_state_mod = _load_local_module("session_state")
 init_session_state = _session_state_mod.init_session_state
-from modules.dashboard_helpers import log_map_build_event_once, resolve_master_boundary, render_sidebar_jurisdiction_selector, render_data_filters, render_display_options, render_deployment_strategy, prepare_station_candidates, manage_custom_stations, prepare_runtime_context, optimize_fleet_selection, compute_station_suggestions, render_station_suggestions
+_dashboard_helpers_mod = _load_local_module("dashboard_helpers")
+if not hasattr(_dashboard_helpers_mod, "render_station_suggestions_grid"):
+    import importlib as _importlib
+    _dashboard_helpers_mod = _importlib.reload(_dashboard_helpers_mod)
+log_map_build_event_once = _dashboard_helpers_mod.log_map_build_event_once
+resolve_master_boundary = _dashboard_helpers_mod.resolve_master_boundary
+render_sidebar_jurisdiction_selector = _dashboard_helpers_mod.render_sidebar_jurisdiction_selector
+render_data_filters = _dashboard_helpers_mod.render_data_filters
+render_display_options = _dashboard_helpers_mod.render_display_options
+render_deployment_strategy = _dashboard_helpers_mod.render_deployment_strategy
+prepare_station_candidates = _dashboard_helpers_mod.prepare_station_candidates
+manage_custom_stations = _dashboard_helpers_mod.manage_custom_stations
+prepare_runtime_context = _dashboard_helpers_mod.prepare_runtime_context
+optimize_fleet_selection = _dashboard_helpers_mod.optimize_fleet_selection
+compute_station_suggestions = _dashboard_helpers_mod.compute_station_suggestions
+sync_station_suggestion_modes = _dashboard_helpers_mod.sync_station_suggestion_modes
+render_station_suggestions_grid = _dashboard_helpers_mod.render_station_suggestions_grid
 _onboarding_mod = _load_local_module("onboarding")
 from modules.highway_corridor import (
     STATE_PRIMARY_INTERSTATES,
@@ -895,6 +911,27 @@ def _render_public_report_route():
 
 
 _render_public_report_route()
+
+st.markdown(
+    """
+    <style>
+    section[data-testid="stSidebar"] {
+        display: block !important;
+        visibility: visible !important;
+    }
+    [data-testid="stSidebar"],
+    [data-testid="stSidebarNav"] {
+        display: block !important;
+    }
+    [data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapsedControl"] {
+        display: block !important;
+        visibility: visible !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 
@@ -3325,6 +3362,7 @@ def build_display_calls(df_calls_full, _city_m, epsg_code, max_points=300000, se
 # ============================================================
 st.set_page_config(
     layout="wide",
+    initial_sidebar_state="expanded",
     page_title="BRINC Drone-as-First-Responder",
     page_icon="https://brincdrones.com/favicon.ico"
 )
@@ -3334,8 +3372,16 @@ st.set_page_config(
 # ============================================================
 # Activates only when [auth] section is present in secrets.toml.
 # Falls through silently if auth is not configured (local dev without secrets).
+def _is_local_loopback_request() -> bool:
+    try:
+        _headers = dict(st.context.headers)
+    except Exception:
+        return False
+    _host = str(_headers.get("Host", _headers.get("host", "")) or "").strip().lower()
+    return _host.startswith("127.") or _host.startswith("localhost") or _host.startswith("::1")
+
 try:
-    if hasattr(st, 'user') and "auth" in st.secrets:
+    if hasattr(st, 'user') and "auth" in st.secrets and not _is_local_loopback_request():
         if not st.user.is_logged_in:
             import base64 as _b64
             try:
@@ -6023,6 +6069,22 @@ body{{background:transparent;overflow:hidden}}
         pinned_resp_names = _custom_station_state['pinned_resp_names']
         _station_names = _custom_station_state['station_names']
 
+        _prior_suggestions = st.session_state.get('_station_suggestions', []) or []
+        if _prior_suggestions:
+            _prior_modes = sync_station_suggestion_modes(st.session_state, _prior_suggestions)
+            _prior_resp_selected = sum(1 for _mode in _prior_modes.values() if _mode == 'Responder')
+            _prior_guard_selected = sum(1 for _mode in _prior_modes.values() if _mode == 'Guardian')
+            _prev_resp_selected = int(st.session_state.get('_suggestion_selected_resp_count', 0) or 0)
+            _prev_guard_selected = int(st.session_state.get('_suggestion_selected_guard_count', 0) or 0)
+            _resp_delta = _prior_resp_selected - _prev_resp_selected
+            _guard_delta = _prior_guard_selected - _prev_guard_selected
+            if _resp_delta:
+                st.session_state['k_resp'] = max(0, int(st.session_state.get('k_resp', k_responder) or 0) + _resp_delta)
+            if _guard_delta:
+                st.session_state['k_guard'] = max(0, int(st.session_state.get('k_guard', k_guardian) or 0) + _guard_delta)
+            st.session_state['_suggestion_selected_resp_count'] = _prior_resp_selected
+            st.session_state['_suggestion_selected_guard_count'] = _prior_guard_selected
+
 
         # Convert pin names → station indices for the optimizer
         _name_to_idx = {row['name']: i for i, row in df_stations_all.iterrows()}
@@ -6089,19 +6151,17 @@ body{{background:transparent;overflow:hidden}}
                 rank_by='land' if resp_strategy_raw == 'Land Coverage' else 'call',
             )
             st.session_state['_station_suggestions'] = _suggestions
-
-            _suggestion_modes = st.session_state.get('suggestion_modes', {}) or {}
-            _suggestion_modes = {
-                s['station_idx']: _suggestion_modes.get(
-                    s['station_idx'],
-                    s['role'] if s['rank'] <= 3 else 'Off',
-                )
-                for s in _suggestions
-            }
-            st.session_state['suggestion_modes'] = _suggestion_modes
-            st.session_state['suggestion_toggles'] = {
-                idx: (mode != 'Off') for idx, mode in _suggestion_modes.items()
-            }
+            _current_modes = sync_station_suggestion_modes(st.session_state, _suggestions)
+            st.session_state['_suggestion_selected_resp_count'] = sum(1 for _mode in _current_modes.values() if _mode == 'Responder')
+            st.session_state['_suggestion_selected_guard_count'] = sum(1 for _mode in _current_modes.values() if _mode == 'Guardian')
+            locked_g_pins = list(dict.fromkeys(locked_g_pins + [
+                s['station_idx'] for s in _suggestions
+                if _current_modes.get(s['station_idx']) == 'Guardian'
+            ]))
+            locked_r_pins = list(dict.fromkeys(locked_r_pins + [
+                s['station_idx'] for s in _suggestions
+                if _current_modes.get(s['station_idx']) == 'Responder'
+            ]))
 
         # ── OPTIMIZATION ──────────────────────────────────────────────────
         _pins_key = f"{sorted(locked_g_pins)}_{sorted(locked_r_pins)}"
@@ -7412,7 +7472,7 @@ body{{background:transparent;overflow:hidden}}
 
         # ── STATION SUGGESTIONS PANEL (public data, no stations file) ────────────
         if _using_suggestions and _suggestions and show_station_suggestions:
-            _sug_changed = render_station_suggestions(
+            _sug_changed = render_station_suggestions_grid(
                 st, st.session_state, _suggestions,
                 text_main, text_muted, card_bg, card_border, accent_color,
             )
