@@ -911,7 +911,6 @@ def _render_public_report_route():
 
 
 _render_public_report_route()
-_apply_admin_fast_jump()
 
 st.markdown(
     """
@@ -3625,6 +3624,9 @@ def _apply_admin_fast_jump():
     return False
 
 
+_apply_admin_fast_jump()
+
+
 def _prune_active_sessions(now=None):
     _now = now or datetime.datetime.now(datetime.timezone.utc)
     _cutoff = _now - datetime.timedelta(seconds=_ACTIVE_SESSION_TTL_SECONDS)
@@ -4040,19 +4042,86 @@ def _render_in_app_faq():
     ]
 
     with st.popover("Help / FAQ"):
-        st.markdown("### BRINC DFR Planning FAQ")
         st.markdown(
-            "Quick answers for customer conversations, workflow, station strategy, deployment planning, and executive positioning."
+            """
+            <style>
+            .faq-shell {
+                padding: 2px 0 0;
+            }
+            .faq-intro {
+                color: rgba(235, 242, 248, 0.78);
+                font-size: 0.84rem;
+                line-height: 1.45;
+                margin: 0 0 12px;
+            }
+            .faq-item {
+                padding: 10px 0 11px;
+                border-top: 1px solid rgba(116, 255, 186, 0.14);
+            }
+            .faq-item:first-of-type {
+                border-top: 0;
+                padding-top: 0;
+            }
+            .faq-q {
+                color: #f5fff8;
+                font-size: 0.93rem;
+                font-weight: 800;
+                line-height: 1.35;
+                margin-bottom: 4px;
+            }
+            .faq-a {
+                color: rgba(225, 236, 242, 0.84);
+                font-size: 0.83rem;
+                line-height: 1.48;
+            }
+            .faq-footer {
+                margin-top: 14px;
+                padding-top: 10px;
+                border-top: 1px solid rgba(116, 255, 186, 0.18);
+            }
+            .faq-footer-label {
+                color: #7cffc9;
+                font-size: 0.68rem;
+                font-weight: 800;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                margin-bottom: 6px;
+            }
+            .faq-version-line,
+            .faq-changelog-line {
+                color: rgba(225, 236, 242, 0.78);
+                font-size: 0.73rem;
+                line-height: 1.4;
+            }
+            .faq-changelog-line {
+                margin-top: 4px;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
         )
+        _faq_html = [
+            '<div class="faq-shell">',
+            '<div class="faq-intro">Quick answers for customer conversations, workflow, station strategy, deployment planning, and executive positioning.</div>',
+        ]
         for _question, _answer in _faq_items:
-            st.markdown(f"**{_question}**")
-            st.markdown(_answer)
-        st.markdown("### Version & Changelog")
-        st.markdown(f"Current version: `{__version__}` | Build time: `{__build_datetime__}`")
-        for _entry in FAQ_CHANGELOG:
-            st.markdown(
-                f"- `v{_entry['version']}` | `{_entry['timestamp']}` | {_entry['summary']}"
+            _faq_html.append(
+                f'<div class="faq-item"><div class="faq-q">{html.escape(_question)}</div><div class="faq-a">{html.escape(_answer)}</div></div>'
             )
+        _faq_html.append(
+            f'<div class="faq-footer"><div class="faq-footer-label">Version &amp; Changelog</div><div class="faq-version-line">Current version: {html.escape(__version__)} | Build time: {html.escape(__build_datetime__)}</div>'
+        )
+        for _entry in FAQ_CHANGELOG:
+            _changelog_text = "v{version} | {timestamp} | {summary}".format(
+                version=_entry["version"],
+                timestamp=_entry["timestamp"],
+                summary=_entry["summary"],
+            )
+            _faq_html.append(
+                f'<div class="faq-changelog-line">{html.escape(_changelog_text)}</div>'
+            )
+        _faq_html.append("</div></div>")
+        st.markdown("".join(_faq_html), unsafe_allow_html=True)
 
 
 def main():
@@ -7305,6 +7374,17 @@ body{{background:transparent;overflow:hidden}}
                 <span style="color:{card_border};">|</span>
                 <span style="font-weight: 800; color: {text_main}; font-size: 0.95rem;">{actual_k_responder} <span style="color:#888; font-weight:normal;">Resp</span> · {actual_k_guardian} <span style="color:#888; font-weight:normal;">Guard</span></span>
                 <span style="background:#0066aa;border:1px solid #00D2FF;border-radius:4px;padding:3px 8px;font-size:0.75rem;font-weight:700;color:#00D2FF;letter-spacing:0.5px;text-transform:uppercase;">{_tier_badge}</span>
+                {(
+                    '<a href="?admin_jump=rockford_il" target="_self" rel="noopener noreferrer" '
+                    'style="display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; '
+                    'border:1px solid rgba(0, 255, 170, 0.72); background:linear-gradient(180deg, rgba(17, 33, 18, 0.98), rgba(8, 18, 10, 0.96)); '
+                    'color:#ecfff5; font-size:0.72rem; font-weight:800; letter-spacing:0.04em; text-decoration:none; white-space:nowrap; '
+                    'box-shadow:0 0 0 1px rgba(0, 255, 170, 0.14), 0 8px 20px rgba(0, 0, 0, 0.18);">'
+                    'One-click Rockford, IL</a>'
+                    if str(st.session_state.get("active_city", "") or "").strip().lower() == "rockford"
+                    and str(st.session_state.get("active_state", "") or "").strip().upper() == "IL"
+                    else ""
+                )}
                 {main_logo_html}
             </div>
         </div>
