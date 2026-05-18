@@ -2771,7 +2771,7 @@ def generate_clustered_calls(polygon, num_points):
     sigma_x = max((maxx - minx) / 18.0, 1e-4)
     sigma_y = max((maxy - miny) / 18.0, 1e-4)
 
-    for _ in range(max(target * 60, 2000)):
+    for _ in range(max(int(target * 0.60), 2000)):
         if len(points) >= target_clustered:
             break
         hx, hy = random.choice(hotspots)
