@@ -1003,6 +1003,8 @@ def build_demo_calls(city_poly, total_estimated_pop, generate_clustered_calls, b
         if weighted_annual_cfs > 0:
             annual_cfs = weighted_annual_cfs
     simulated_points_count = max(int(round(annual_cfs)), 0)
+    # Cap simulated points to prevent Streamlit Cloud crashes (limit 5000 max)
+    simulated_points_count = min(simulated_points_count, 5000)
     np.random.seed(42)
     random.seed(42)
     call_points = []

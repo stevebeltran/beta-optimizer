@@ -3291,7 +3291,7 @@ def find_relevant_jurisdictions(calls_df, shapefile_dir, preferred_shp=None):
     return master_gdf
 
 @st.cache_data(show_spinner=False)
-def build_display_calls(df_calls_full, _city_m, epsg_code, max_points=300000, seed=42, bounds_hash=''):
+def build_display_calls(df_calls_full, _city_m, epsg_code, max_points=3000, seed=42, bounds_hash=''):
     if df_calls_full is None or len(df_calls_full) == 0:
         return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
 
@@ -6280,6 +6280,11 @@ body{{background:transparent;overflow:hidden}}
             st.session_state['df_calls'] = df_demo
             st.session_state['df_calls_full'] = df_demo.copy()
             st.session_state['total_modeled_calls'] = len(df_demo)
+            # Create downsampled version for map display (max 3000 dots to prevent Streamlit Cloud crashes)
+            if len(df_demo) > 3000:
+                st.session_state['df_calls_display'] = df_demo.sample(n=3000, random_state=42)
+            else:
+                st.session_state['df_calls_display'] = df_demo.copy()
 
             prog.progress(80, text="Loading simulation stations...")
             stations_df, stations_user_uploaded, station_notices, station_warnings = resolve_demo_stations(
