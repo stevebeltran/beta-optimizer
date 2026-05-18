@@ -2251,7 +2251,9 @@ def fetch_county_boundary_local(state_abbr, county_name_input):
         gdf = gpd.read_parquet(local_file)
 
         # Filter for the exact State FIPS code and County Name
-        match = gdf[(gdf['STATEFP'] == state_fips) & (gdf['NAME'].str.lower() == search_name)]
+        # Normalize database NAME for fair comparison with search_name
+        gdf['NAME_NORM'] = gdf['NAME'].str.lower().apply(normalize_jurisdiction_name)
+        match = gdf[(gdf['STATEFP'] == state_fips) & (gdf['NAME_NORM'] == search_name)]
 
         if not match.empty:
             # Put the word "County" back on for the UI displays
