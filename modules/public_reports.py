@@ -83,6 +83,30 @@ def _get_request_base_url():
     return "http://localhost:8501"
 
 
+def _is_local_or_private_base_url(base_url):
+    try:
+        parsed = urllib.parse.urlsplit(str(base_url or "").strip())
+        host = str(parsed.hostname or "").strip().lower()
+    except Exception:
+        host = ""
+    if not host:
+        return True
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    if host.endswith(".local"):
+        return True
+    if host.startswith("10.") or host.startswith("192.168."):
+        return True
+    if host.startswith("172."):
+        try:
+            second = int(host.split(".", 2)[1])
+            if 16 <= second <= 31:
+                return True
+        except Exception:
+            pass
+    return False
+
+
 def _get_public_report_secret():
     try:
         if "PUBLIC_REPORT_SECRET" in st.secrets:
@@ -119,10 +143,20 @@ def _build_public_report_url(report_id):
     except Exception:
         _public_webapp_url = ""
     if _public_webapp_url:
-        _query = urllib.parse.urlencode({"report_id": report_id, "sig": _sig})
+        _query = urllib.parse.urlencode({
+            "report_id": report_id,
+            "public_report": report_id,
+            "sig": _sig,
+        })
         _sep = "&" if "?" in _public_webapp_url else "?"
         return f"{_public_webapp_url}{_sep}{_query}"
-    return f"{_get_request_base_url()}/?public_report={report_id}&sig={_sig}"
+    _base_url = _get_request_base_url()
+    if _is_local_or_private_base_url(_base_url):
+        raise ValueError(
+            "Public report URL would point to a local or private host. "
+            "Set PUBLIC_REPORT_WEBAPP_URL to a public deployment URL."
+        )
+    return f"{_base_url}/?report_id={report_id}&public_report={report_id}&sig={_sig}"
 
 
 def _public_report_html_path(report_id):

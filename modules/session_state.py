@@ -32,6 +32,7 @@ DEFAULTS = {
     "session_id": str(uuid.uuid4())[:8],
     "public_report_id": "",
     "public_report_url": "",
+    "public_report_url_error": "",
     "data_source": "unknown",
     "map_build_logged": False,
     "boundary_kind": "place",
@@ -87,21 +88,33 @@ def init_session_state(session_state, slugify, build_public_report_url) -> None:
         public_token = uuid.uuid4().hex[:16]
         session_state["public_report_id"] = f"{city_slug}-{public_token}"
 
-    _built_public_report_url = build_public_report_url(session_state["public_report_id"])
+    _built_public_report_url = ""
+    _build_error = ""
+    try:
+        _built_public_report_url = build_public_report_url(session_state["public_report_id"])
+    except ValueError as exc:
+        _build_error = str(exc)
     _current_public_report_url = str(session_state.get("public_report_url", "") or "").strip()
-    _needs_update = not _current_public_report_url
-    if not _needs_update:
+    _needs_update = False
+    if _built_public_report_url and not _current_public_report_url:
+        _needs_update = True
+    elif _built_public_report_url and _current_public_report_url:
         try:
             _built_parts = urllib.parse.urlsplit(_built_public_report_url)
             _current_parts = urllib.parse.urlsplit(_current_public_report_url)
+            _built_query = dict(urllib.parse.parse_qsl(_built_parts.query, keep_blank_values=True))
+            _current_query = dict(urllib.parse.parse_qsl(_current_parts.query, keep_blank_values=True))
             if "script.google.com" in _built_public_report_url and "script.google.com" not in _current_public_report_url:
                 _needs_update = True
             elif (_built_parts.scheme, _built_parts.netloc) != (_current_parts.scheme, _current_parts.netloc):
+                _needs_update = True
+            elif _built_query != _current_query:
                 _needs_update = True
         except Exception:
             _needs_update = _built_public_report_url != _current_public_report_url
     if _needs_update:
         session_state["public_report_url"] = _built_public_report_url
+    session_state["public_report_url_error"] = _build_error
 
     if "target_cities" not in session_state:
         session_state["target_cities"] = [

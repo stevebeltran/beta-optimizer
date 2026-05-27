@@ -9,24 +9,11 @@ import os
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-import streamlit as st
 from shapely.geometry import box
 from shapely.ops import unary_union
 
 from modules.config import calculate_max_flights_per_day, US_STATES_ABBR, text_muted
 from modules.versioning import __version__ as _app_version
-
-
-@st.cache_resource(show_spinner=False)
-def _load_boundary_gdf_cached(boundary_path, boundary_mtime, boundary_size):
-    """Load a saved boundary once and reuse it across reruns for the same file."""
-    try:
-        gdf = gpd.read_file(boundary_path)
-        if gdf.crs is None:
-            gdf = gdf.set_crs(epsg=4269)
-        return gdf.to_crs(epsg=4326)
-    except Exception:
-        return None
 
 
 def log_map_build_event_once(session_state, log_to_sheets):
@@ -224,25 +211,10 @@ def resolve_master_boundary(
                         master_gdf = None
                         raise ValueError('No overlapping shapefiles found')
 
-                try:
-                    best_stat = os.stat(best)
-                except OSError:
-                    best_stat = None
-
-                # Lazy-load the selected county/parish file and keep the parsed
-                # GeoDataFrame cached for the next rerun.
-                fallback_gdf = (
-                    _load_boundary_gdf_cached(best, best_stat.st_mtime, best_stat.st_size)
-                    if best_stat is not None
-                    else None
-                )
-                if fallback_gdf is None:
-                    fallback_gdf = gpd.read_file(best)
-                    if fallback_gdf.crs is None:
-                        fallback_gdf = fallback_gdf.set_crs(epsg=4269)
-                    fallback_gdf = fallback_gdf.to_crs(epsg=4326)
-                else:
-                    fallback_gdf = fallback_gdf.copy()
+                fallback_gdf = gpd.read_file(best)
+                if fallback_gdf.crs is None:
+                    fallback_gdf = fallback_gdf.set_crs(epsg=4269)
+                fallback_gdf = fallback_gdf.to_crs(epsg=4326)
                 name_col = next(
                     (column for column in ['NAME', 'DISTRICT', 'NAMELSAD'] if column in fallback_gdf.columns),
                     fallback_gdf.columns[0],
@@ -333,8 +305,22 @@ def render_sidebar_jurisdiction_selector(
                 st.sidebar.warning(sidebar_overlay_status['message'])
 
     master_gdf = master_gdf.copy()
-    total_pts = master_gdf['data_count'].sum()
-    master_gdf['LABEL'] = master_gdf['DISPLAY_NAME'] + ' (' + (master_gdf['data_count'] / total_pts * 100).round(1).astype(str) + '%)'
+    if 'DISPLAY_NAME' not in master_gdf.columns:
+        master_gdf['DISPLAY_NAME'] = master_gdf.index.astype(str)
+    if 'data_count' not in master_gdf.columns:
+        master_gdf['data_count'] = 1
+    else:
+        master_gdf['data_count'] = pd.to_numeric(master_gdf['data_count'], errors='coerce').fillna(0)
+        if float(master_gdf['data_count'].sum() or 0) <= 0:
+            master_gdf['data_count'] = 1
+
+    total_pts = float(master_gdf['data_count'].sum() or len(master_gdf) or 1)
+    master_gdf['LABEL'] = (
+        master_gdf['DISPLAY_NAME'].astype(str)
+        + ' ('
+        + (master_gdf['data_count'] / total_pts * 100).round(1).astype(str)
+        + '%)'
+    )
     options_map = dict(zip(master_gdf['LABEL'], master_gdf['DISPLAY_NAME']))
     all_options = master_gdf['LABEL'].tolist()
     default_selection = [all_options[0]] if all_options else []
@@ -466,10 +452,11 @@ def render_display_options(st):
         )
 
         section_header('🛠️ Deployment Tools')
+        if 'show_station_suggestions_ui' not in st.session_state:
+            st.session_state['show_station_suggestions_ui'] = bool(st.session_state.get('show_station_suggestions_b', True))
         show_station_suggestions = st.toggle(
             'Suggested Station Placements',
-            value=True,
-            key='show_station_suggestions_b',
+            key='show_station_suggestions_ui',
             help='Show or hide the suggested station placement workflow and its map markers.',
         )
         if 'show_rapid_response_ring_b' not in st.session_state:
@@ -945,6 +932,11 @@ def manage_custom_stations(
     k_responder = st.sidebar.slider('🚁 Responder Count', 0, max(1, max_resp_calc), value=val_r, help='Short-range tactical drones (2-3mi radius).')
     k_guardian = st.sidebar.slider('🦅 Guardian Count', 0, max(1, max_guard_calc), value=val_g, help='Long-range overwatch drones (5-8mi radius).')
     _set_fleet_counts(resp_value=k_responder or 0, guard_value=k_guardian or 0)
+    if k_guardian == 0 and session_state.get('show_station_suggestions_b', True):
+        session_state['show_station_suggestions_b'] = False
+        session_state['show_suggestion_markers'] = False
+        session_state['_suggest_markers_toggle'] = False
+        st.rerun()
 
     station_names = df_stations_all['name'].tolist() if not df_stations_all.empty else []
 
@@ -1508,8 +1500,14 @@ def prepare_runtime_context(
         faa_feature_count = len(faa_geojson.get('features', [])) if isinstance(faa_geojson, dict) and faa_geojson.get('features') else 0
         if faa_feature_count == 0:
             st.sidebar.warning('FAA data not loading (0 zones). Check Display Options.')
-    with st.spinner(get_airfield_message()):
-        airfields = faa_rf_module.fetch_airfields(minx, miny, maxx, maxy)
+    airfield_cache = session_state.setdefault('_airfields_cache', {})
+    airfield_cache_key = f"{str(session_state.get('active_city', '')).strip().lower()}|{str(session_state.get('active_state', '')).strip().lower()}|{bounds_hash}"
+    if airfield_cache_key in airfield_cache:
+        airfields = airfield_cache[airfield_cache_key]
+    else:
+        with st.spinner(get_airfield_message()):
+            airfields = faa_rf_module.fetch_airfields(minx, miny, maxx, maxy)
+        airfield_cache[airfield_cache_key] = airfields
 
     st.sidebar.markdown('<div class="sidebar-section-header">③ Budget & Downloads</div>', unsafe_allow_html=True)
     budget_expander = st.sidebar.expander('Budget Inputs', expanded=False)
@@ -1900,7 +1898,7 @@ def compute_station_suggestions(
     """Rank stations by call coverage and return the top suggestions.
 
     Each suggestion includes solo call-coverage %, solo land-coverage %, and a
-    default role assignment (2 Responder : 1 Guardian repeating pattern).
+    legacy default role label that is overridden by the current fleet counts.
     """
     if total_calls == 0 or not station_metadata:
         return []
@@ -1914,68 +1912,187 @@ def compute_station_suggestions(
         # Use the raw haversine-based count here instead of the projected mask.
         # The Euclidean matrix can slightly over-claim fringe calls and make
         # central responder sites look like they cover 100% of city calls.
-        raw_calls = int(meta.get('raw_calls_r', np.sum(resp_matrix[i])))
-        solo_call_pct = (raw_calls / total_calls * 100) if total_calls > 0 else 0
-        solo_land_pct = (meta['clipped_2m'].area / city_area * 100) if city_area > 0 else 0
-        marginal_calls = raw_calls
+        raw_calls_r = int(meta.get('raw_calls_r', np.sum(resp_matrix[i])))
+        raw_calls_g = int(meta.get('raw_calls_g', raw_calls_r))
+        resp_call_pct = (raw_calls_r / total_calls * 100) if total_calls > 0 else 0
+        guard_call_pct = (raw_calls_g / total_calls * 100) if total_calls > 0 else 0
+        resp_land_pct = (meta['clipped_2m'].area / city_area * 100) if city_area > 0 else 0
+        guard_land_pct = (meta['clipped_guard'].area / city_area * 100) if city_area > 0 else 0
+        marginal_calls = raw_calls_r
         scored.append({
             'station_idx': i,
             'name': meta['name'],
             'address': meta.get('address', ''),
             'lat': meta['lat'],
             'lon': meta['lon'],
-            'call_pct': round(solo_call_pct, 1),
-            'land_pct': round(solo_land_pct, 1),
+            'call_count': raw_calls_r,
+            'call_count_responder': raw_calls_r,
+            'call_count_guardian': raw_calls_g,
+            'call_pct': round(resp_call_pct, 1),
+            'call_pct_responder': round(resp_call_pct, 1),
+            'call_pct_guardian': round(guard_call_pct, 1),
+            'land_pct': round(resp_land_pct, 1),
+            'land_pct_responder': round(resp_land_pct, 1),
+            'land_pct_guardian': round(guard_land_pct, 1),
             'marginal_calls': marginal_calls,
         })
 
-    primary_metric = 'land_pct' if str(rank_by).strip().lower().startswith('land') else 'call_pct'
-    secondary_metric = 'call_pct' if primary_metric == 'land_pct' else 'land_pct'
-
-    # Keep the cards aligned with the active deployment objective while
-    # preserving the previous call-volume tie-breaker.
+    # Cards are always ordered by call coverage, highest to lowest.
     scored.sort(
         key=lambda s: (
-            s.get(primary_metric, 0),
-            s.get(secondary_metric, 0),
+            s.get('call_pct', 0),
+            s.get('land_pct', 0),
             s['marginal_calls'],
             -s['station_idx'],
         ),
         reverse=True,
     )
 
-    # Preserve the existing alternating role pattern for the top 10 cards.
+    # The current slider-driven assignment can override this label on render.
     for rank, suggestion in enumerate(scored[:min(max_suggestions, n_stations)]):
         suggestion['rank'] = rank + 1
-        suggestion['role'] = 'Guardian' if (rank % 3 == 0) else 'Responder'
+        suggestion['role'] = 'Guardian' if rank == 0 else 'Responder'
         suggestions.append(suggestion)
 
     return suggestions
 
 
-def sync_station_suggestion_modes(session_state, suggestions):
-    """Keep suggestion mode state aligned with live widget values."""
+def station_suggestion_display_metrics(suggestion, mode):
+    """Return role-specific display metrics for a suggestion card."""
+    mode = str(mode or '').strip()
+    if mode == 'Guardian':
+        call_count = int(suggestion.get('call_count_guardian', suggestion.get('call_count', 0)) or 0)
+        call_pct = float(suggestion.get('call_pct_guardian', suggestion.get('call_pct', 0)) or 0)
+        land_pct = float(suggestion.get('land_pct_guardian', suggestion.get('land_pct', 0)) or 0)
+    elif mode == 'Responder':
+        call_count = int(suggestion.get('call_count_responder', suggestion.get('call_count', 0)) or 0)
+        call_pct = float(suggestion.get('call_pct_responder', suggestion.get('call_pct', 0)) or 0)
+        land_pct = float(suggestion.get('land_pct_responder', suggestion.get('land_pct', 0)) or 0)
+    else:
+        call_count = int(suggestion.get('call_count', suggestion.get('marginal_calls', 0)) or 0)
+        call_pct = float(suggestion.get('call_pct', 0) or 0)
+        land_pct = float(suggestion.get('land_pct', 0) or 0)
+    return {
+        'call_count': call_count,
+        'call_pct': round(call_pct, 1),
+        'land_pct': round(land_pct, 1),
+    }
+
+
+def _ranked_suggestion_modes(suggestions, k_guardian=0, k_responder=0):
+    """Assign visible suggestions from the slider counts in rank order."""
+    guardian_left = max(0, int(k_guardian or 0))
+    responder_left = max(0, int(k_responder or 0))
+    modes = {}
+    for s in suggestions:
+        idx = s['station_idx']
+        if guardian_left > 0:
+            modes[idx] = 'Guardian'
+            guardian_left -= 1
+        elif responder_left > 0:
+            modes[idx] = 'Responder'
+            responder_left -= 1
+        else:
+            modes[idx] = 'Off'
+    return modes
+
+
+def _suggestion_widget_version(session_state):
+    try:
+        return max(0, int(session_state.get('_suggestion_widget_version', 0) or 0))
+    except Exception:
+        return 0
+
+
+def _suggestion_widget_key(session_state, idx):
+    return f"suggest_mode_{_suggestion_widget_version(session_state)}_{idx}"
+
+
+def sync_station_suggestion_modes(session_state, suggestions, k_guardian=None, k_responder=None):
+    """Keep suggestion mode state aligned with either cards or slider counts."""
     if not suggestions:
         return {}
 
+    valid_modes = {'Guardian', 'Responder', 'Off'}
     existing_modes = session_state.get('suggestion_modes', {}) or {}
-    synced_modes = {}
+    normalized_existing = {}
     for s in suggestions:
         idx = s['station_idx']
-        widget_key = f"suggest_mode_{idx}"
-        default_mode = s['role'] if s['rank'] <= 3 else 'Off'
-        mode = session_state.get(widget_key, existing_modes.get(idx, default_mode))
-        if mode not in ('Guardian', 'Responder', 'Off'):
-            mode = 'Off'
-        synced_modes[idx] = mode
+        mode = existing_modes.get(idx, 'Off')
+        normalized_existing[idx] = mode if mode in valid_modes else 'Off'
+
+    widget_changed = False
+    for s in suggestions:
+        idx = s['station_idx']
+        widget_mode = session_state.get(_suggestion_widget_key(session_state, idx))
+        if widget_mode in valid_modes and widget_mode != normalized_existing.get(idx, 'Off'):
+            normalized_existing[idx] = widget_mode
+            widget_changed = True
+
+    if widget_changed:
+        synced_modes = normalized_existing
+        next_resp = sum(1 for mode in synced_modes.values() if mode == 'Responder')
+        next_guard = sum(1 for mode in synced_modes.values() if mode == 'Guardian')
+        session_state['_pending_k_resp'] = next_resp
+        session_state['_pending_k_guard'] = next_guard
+        session_state['_suggestion_card_change_pending'] = True
+        session_state['_suggestion_sync_source'] = 'cards'
+        session_state['_suggestion_manual_modes'] = dict(synced_modes)
+        session_state['suggestion_modes'] = synced_modes
+        session_state['suggestion_toggles'] = {idx: (mode != 'Off') for idx, mode in synced_modes.items()}
+        return synced_modes
+
+    if (k_guardian is not None) or (k_responder is not None):
+        current_guard = sum(1 for mode in normalized_existing.values() if mode == 'Guardian')
+        current_resp = sum(1 for mode in normalized_existing.values() if mode == 'Responder')
+        requested_guard = max(0, int(k_guardian or 0))
+        requested_resp = max(0, int(k_responder or 0))
+
+        if not existing_modes or current_guard != requested_guard or current_resp != requested_resp:
+            synced_modes = _ranked_suggestion_modes(
+                suggestions,
+                k_guardian=requested_guard,
+                k_responder=requested_resp,
+            )
+            session_state['_suggestion_sync_source'] = 'slider'
+            session_state['_suggestion_widget_version'] = _suggestion_widget_version(session_state) + 1
+            session_state['_suggestion_manual_modes'] = {}
+        else:
+            synced_modes = normalized_existing
+            session_state['_suggestion_sync_source'] = 'cards'
+    else:
+        synced_modes = normalized_existing or {
+            s['station_idx']: (s['role'] if s['rank'] <= 3 else 'Off')
+            for s in suggestions
+        }
+        session_state['_suggestion_sync_source'] = 'cards'
 
     session_state['suggestion_modes'] = synced_modes
     session_state['suggestion_toggles'] = {idx: (mode != 'Off') for idx, mode in synced_modes.items()}
     return synced_modes
 
 
+def _queue_suggestion_mode_delta(session_state, idx, current_resp, current_guard, old_mode, new_mode):
+    """Queue fleet count changes for a manual suggestion-card role change."""
+    if old_mode == new_mode:
+        return False
+
+    # Queue the exact current totals from the updated suggestion map so the
+    # sliders follow the cards without accumulating stale deltas across reruns.
+    modes = session_state.get('suggestion_modes', {}) or {}
+    next_resp = sum(1 for mode in modes.values() if mode == 'Responder')
+    next_guard = sum(1 for mode in modes.values() if mode == 'Guardian')
+    session_state['_pending_k_resp'] = next_resp
+    session_state['_pending_k_guard'] = next_guard
+    manual_modes = dict(session_state.get('_suggestion_manual_modes', {}) or {})
+    manual_modes[int(idx)] = new_mode
+    session_state['_suggestion_manual_modes'] = manual_modes
+    return True
+
+
 def render_station_suggestions(st, session_state, suggestions, text_main, text_muted,
-                               card_bg, card_border, accent_color, source_label='public data'):
+                               card_bg, card_border, accent_color, source_label='public data',
+                               k_guardian=None, k_responder=None):
     """Render a compact 2×5 suggestion card grid below the map.
 
     Returns True if any toggle changed (caller should rerun).
@@ -2052,12 +2169,13 @@ def render_station_suggestions(st, session_state, suggestions, text_main, text_m
         for ci, s in enumerate(row_items):
             idx = s['station_idx']
             mode = modes.get(idx, 'Off')
+            display_metrics = station_suggestion_display_metrics(s, mode)
             mode_color = '#FFD700' if mode == 'Guardian' else '#00D2FF' if mode == 'Responder' else '#9aa0b4'
             mode_abbr = 'G' if mode == 'Guardian' else 'R' if mode == 'Responder' else 'O'
             border_col = mode_color if mode != 'Off' else card_border
             bg = card_bg if mode != 'Off' else 'rgba(30,30,40,0.4)'
             opacity = '1.0' if mode != 'Off' else '0.55'
-            widget_key = f"suggest_mode_{idx}"
+            widget_key = _suggestion_widget_key(session_state, idx)
 
             # Use address if available, otherwise fall back to name
             display_text = s.get('address', '') or s['name']
@@ -2074,7 +2192,8 @@ def render_station_suggestions(st, session_state, suggestions, text_main, text_m
                     f"<div style='color:{text_main}; font-weight:600; margin:2px 0; word-wrap:break-word; white-space:normal;'>"
                     f"{display_text}</div>"
                     f"<div style='color:{text_muted}; font-size:0.62rem;'>"
-                    f"📞 {s['call_pct']}% calls · 🗺️ {s['land_pct']}% land</div>"
+                    f"Calls {display_metrics['call_count']:,} · "
+                    f"City {display_metrics['call_pct']}% · Land {display_metrics['land_pct']}%</div>"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
@@ -2088,7 +2207,14 @@ def render_station_suggestions(st, session_state, suggestions, text_main, text_m
                 )
                 if new_mode != mode:
                     modes[idx] = new_mode
+                    manual_modes = dict(session_state.get('_suggestion_manual_modes', {}) or {})
+                    manual_modes[int(idx)] = new_mode
+                    session_state['_suggestion_manual_modes'] = manual_modes
+                    session_state['suggestion_modes'] = modes
+                    session_state['suggestion_toggles'] = {i: (m != 'Off') for i, m in modes.items()}
+                    _queue_suggestion_mode_delta(session_state, idx, k_responder, k_guardian, mode, new_mode)
                     changed = True
+                    st.rerun()
 
     # Master toggle to hide map markers
     show_markers = st.checkbox(
@@ -2104,9 +2230,9 @@ def render_station_suggestions(st, session_state, suggestions, text_main, text_m
     session_state['suggestion_toggles'] = {idx: (mode != 'Off') for idx, mode in modes.items()}
     return changed
 
-
 def render_station_suggestions_grid(st, session_state, suggestions, text_main, text_muted,
-                                    card_bg, card_border, accent_color, source_label='public data'):
+                                    card_bg, card_border, accent_color, source_label='public data',
+                                    k_guardian=None, k_responder=None):
     """Render station suggestions with synced widget state and a fixed 5-column grid."""
     if not suggestions:
         return False
@@ -2137,7 +2263,14 @@ def render_station_suggestions_grid(st, session_state, suggestions, text_main, t
         session_state['show_suggestion_markers'] = True
     source_label = session_state.get('station_suggestions_source', source_label)
 
-    modes = sync_station_suggestion_modes(session_state, suggestions)
+    # Use the live widget/session state for rendering so a user edit is not
+    # immediately overwritten by the current slider assignment.
+    modes = sync_station_suggestion_modes(
+        session_state,
+        suggestions,
+        k_guardian=k_guardian,
+        k_responder=k_responder,
+    )
     changed = False
 
     n_on = sum(1 for v in modes.values() if v != 'Off')
@@ -2183,12 +2316,13 @@ def render_station_suggestions_grid(st, session_state, suggestions, text_main, t
 
                 idx = s['station_idx']
                 mode = modes.get(idx, 'Off')
+                display_metrics = station_suggestion_display_metrics(s, mode)
                 mode_color = '#FFD700' if mode == 'Guardian' else '#00D2FF' if mode == 'Responder' else '#9aa0b4'
                 mode_abbr = 'G' if mode == 'Guardian' else 'R' if mode == 'Responder' else 'O'
                 border_col = mode_color if mode != 'Off' else card_border
                 bg = card_bg if mode != 'Off' else 'rgba(30,30,40,0.4)'
                 opacity = '1.0' if mode != 'Off' else '0.55'
-                widget_key = f"suggest_mode_{idx}"
+                widget_key = _suggestion_widget_key(session_state, idx)
                 display_text = s.get('address', '') or s['name']
 
                 st.markdown(
@@ -2202,7 +2336,8 @@ def render_station_suggestions_grid(st, session_state, suggestions, text_main, t
                     f"<div style='color:{text_main}; font-weight:600; margin:2px 0; word-wrap:break-word; white-space:normal;'>"
                     f"{display_text}</div>"
                     f"<div style='color:{text_muted}; font-size:0.62rem;'>"
-                    f"📞 {s['call_pct']}% calls · 🗺️ {s['land_pct']}% land</div>"
+                    f"Calls {display_metrics['call_count']:,} · "
+                    f"City {display_metrics['call_pct']}% · Land {display_metrics['land_pct']}%</div>"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
@@ -2216,7 +2351,14 @@ def render_station_suggestions_grid(st, session_state, suggestions, text_main, t
                 )
                 if new_mode != mode:
                     modes[idx] = new_mode
+                    manual_modes = dict(session_state.get('_suggestion_manual_modes', {}) or {})
+                    manual_modes[int(idx)] = new_mode
+                    session_state['_suggestion_manual_modes'] = manual_modes
+                    session_state['suggestion_modes'] = modes
+                    session_state['suggestion_toggles'] = {i: (m != 'Off') for i, m in modes.items()}
+                    _queue_suggestion_mode_delta(session_state, idx, k_responder, k_guardian, mode, new_mode)
                     changed = True
+                    st.rerun()
 
     show_markers = st.checkbox(
         'Show suggested locations on map',
@@ -2227,5 +2369,6 @@ def render_station_suggestions_grid(st, session_state, suggestions, text_main, t
         session_state['show_suggestion_markers'] = show_markers
         changed = True
 
-    sync_station_suggestion_modes(session_state, suggestions)
+    session_state['suggestion_modes'] = modes
+    session_state['suggestion_toggles'] = {idx: (mode != 'Off') for idx, mode in modes.items()}
     return changed

@@ -6,9 +6,12 @@ import pandas as pd
 
 import numpy as np
 
-import json, re, io, math, datetime, base64
+import os, json, re, io, math, datetime, base64, html as html_lib, sys, subprocess, tempfile
+from pathlib import Path
 
 import simplekml
+
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from shapely.geometry import Polygon
 
@@ -77,7 +80,7 @@ def _detect_datetime_series_for_labels(df):
                 formats=['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%m/%d/%Y %H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%Y %I:%M %p'],
             )
 
-            if s.notna().sum() > 0:
+            if s is not None and s.notna().sum() > 0:
 
                 return s
 
@@ -88,7 +91,7 @@ def _detect_datetime_series_for_labels(df):
                 formats=['%Y-%m-%d', '%m/%d/%Y', '%m-%d-%Y', '%Y/%m/%d', '%d/%m/%Y'],
             )
 
-            if s.notna().sum() > 0:
+            if s is not None and s.notna().sum() > 0:
 
                 return s
 
@@ -115,7 +118,7 @@ def _detect_datetime_series_for_labels(df):
                     formats=['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%m/%d/%Y %H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%Y %I:%M %p'],
                 )
 
-                if s.notna().sum() > 0:
+                if s is not None and s.notna().sum() > 0:
 
                     return s
 
@@ -2167,6 +2170,1920 @@ def _safe_df_to_records(df):
 
 
 
+
+
+def _load_pdf_font(size, bold=False):
+
+    """Load a reasonably clean truetype font for PDF rendering."""
+
+    candidates = []
+    if bold:
+        candidates.extend([
+            r"C:\Windows\Fonts\arialbd.ttf",
+            r"C:\Windows\Fonts\ARIALBD.TTF",
+            r"C:\Windows\Fonts\bahnschrift.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+        ])
+    else:
+        candidates.extend([
+            r"C:\Windows\Fonts\arial.ttf",
+            r"C:\Windows\Fonts\ARIAL.TTF",
+            r"C:\Windows\Fonts\segoeui.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        ])
+
+    for _path in candidates:
+        try:
+            if _path and Path(_path).exists():
+                return ImageFont.truetype(_path, size=size)
+        except Exception:
+            continue
+
+    try:
+        return ImageFont.truetype("arialbd.ttf" if bold else "arial.ttf", size=size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def _text_box(draw, text, font):
+
+    bbox = draw.textbbox((0, 0), str(text), font=font)
+    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+
+def _draw_wrapped_text(draw, text, x, y, font, fill, max_width, line_gap=6):
+
+    """Draw text with wrapping and return the ending y position."""
+
+    text = str(text or "").strip()
+    if not text:
+        return y
+
+    paragraphs = text.splitlines() or [text]
+    cur_y = y
+    for paragraph in paragraphs:
+        words = paragraph.split()
+        if not words:
+            cur_y += _text_box(draw, "Ag", font)[1] + line_gap
+            continue
+        line = words[0]
+        for word in words[1:]:
+            trial = f"{line} {word}"
+            if _text_box(draw, trial, font)[0] <= max_width:
+                line = trial
+            else:
+                draw.text((x, cur_y), line, font=font, fill=fill)
+                cur_y += _text_box(draw, line, font)[1] + line_gap
+                line = word
+        draw.text((x, cur_y), line, font=font, fill=fill)
+        cur_y += _text_box(draw, line, font)[1] + line_gap
+    return cur_y
+
+
+def _rounded_rect(draw, box, radius, fill, outline=None, width=1):
+
+    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
+
+
+def generate_executive_map_pdf(
+    *,
+    city,
+    state,
+    account_executive_name,
+    account_executive_email,
+    account_executive_phone,
+    active_drones,
+    station_metadata,
+    total_calls,
+    calls_covered_perc,
+    area_covered_perc,
+    area_sq_mi,
+    annual_savings,
+    avg_resp_time_min,
+):
+
+    """Render a static, clean PDF briefing focused on station placement and coverage."""
+
+    return _generate_executive_map_pdf_map_only(
+        city=city,
+        state=state,
+        active_drones=active_drones,
+        station_metadata=station_metadata,
+        total_calls=total_calls,
+        calls_covered_perc=calls_covered_perc,
+        area_covered_perc=area_covered_perc,
+        area_sq_mi=area_sq_mi,
+        annual_savings=annual_savings,
+        avg_resp_time_min=avg_resp_time_min,
+    )
+
+    page_w, page_h = 2550, 3300
+    margin = 110
+    header_h = 250
+    footer_h = 120
+    body_top = margin + header_h
+    body_bottom = page_h - margin - footer_h
+    left_w = 1580
+    gap = 60
+    right_w = page_w - (2 * margin) - left_w - gap
+    right_x = margin + left_w + gap
+
+    bg = (246, 248, 251, 255)
+    navy = (12, 25, 44, 255)
+    navy_2 = (20, 40, 66, 255)
+    ink = (17, 24, 39, 255)
+    muted = (95, 111, 134, 255)
+    line = (214, 223, 234, 255)
+    card = (255, 255, 255, 255)
+    card_soft = (241, 245, 249, 255)
+    cyan = (0, 210, 255, 255)
+    cyan_soft = (220, 250, 255, 255)
+    gold = (245, 196, 66, 255)
+    green = (18, 169, 123, 255)
+
+    city_label = f"{str(city or 'City').strip() or 'City'}, {str(state or '').strip() or 'ST'}"
+    executive_name = str(account_executive_name or "BRINC Representative").strip() or "BRINC Representative"
+    executive_email = str(account_executive_email or "sales@brincdrones.com").strip() or "sales@brincdrones.com"
+    executive_phone = str(account_executive_phone or "").strip()
+    total_calls = int(total_calls or 0)
+    calls_covered_perc = float(calls_covered_perc or 0.0)
+    area_covered_perc = float(area_covered_perc or 0.0)
+    area_sq_mi = float(area_sq_mi or 0.0)
+    annual_savings = float(annual_savings or 0.0)
+    avg_resp_time_min = float(avg_resp_time_min or 0.0)
+
+    stations = []
+    station_metadata = list(station_metadata or [])
+    for idx, d in enumerate(active_drones or []):
+        try:
+            s_idx = int(d.get("idx", idx))
+        except Exception:
+            s_idx = idx
+        meta = station_metadata[s_idx] if 0 <= s_idx < len(station_metadata) else {}
+        d_type = str(d.get("type", "") or "").upper()
+        name = str(d.get("name", "") or meta.get("name", f"Station {idx + 1}")).strip()
+        lat = float(d.get("lat", meta.get("lat", 0.0)) or 0.0)
+        lon = float(d.get("lon", meta.get("lon", 0.0)) or 0.0)
+        radius_m = float(d.get("radius_m", 0.0) or 0.0)
+        radius_mi = radius_m / 1609.34 if radius_m > 0 else 0.0
+        raw_calls = float(meta.get("raw_calls_g" if d_type == "GUARDIAN" else "raw_calls_r", d.get("raw_zone_calls_annual", 0)) or 0.0)
+        call_pct = (raw_calls / total_calls * 100.0) if total_calls > 0 else 0.0
+        clip_geom = meta.get("clipped_guard" if d_type == "GUARDIAN" else "clipped_2m")
+        land_pct = 0.0
+        if area_sq_mi > 0 and clip_geom is not None:
+            try:
+                land_sq_mi = float(clip_geom.area) / 2589988.11
+                land_pct = land_sq_mi / area_sq_mi * 100.0
+            except Exception:
+                land_pct = 0.0
+        stations.append({
+            "rank": len(stations) + 1,
+            "name": name,
+            "type": d_type or "STATION",
+            "lat": lat,
+            "lon": lon,
+            "radius_mi": radius_mi,
+            "call_pct": round(call_pct, 1),
+            "land_pct": round(land_pct, 1),
+            "avg_time_min": float(d.get("avg_time_min", 0.0) or 0.0),
+        })
+
+    if not stations:
+        stations = [{
+            "rank": 1,
+            "name": "No stations available",
+            "type": "STATION",
+            "lat": 0.0,
+            "lon": 0.0,
+            "radius_mi": 0.0,
+            "call_pct": 0.0,
+            "land_pct": 0.0,
+            "avg_time_min": 0.0,
+        }]
+
+    stations.sort(key=lambda s: (s["call_pct"], s["land_pct"], s["name"]), reverse=True)
+    for i, s in enumerate(stations, start=1):
+        s["rank"] = i
+
+    page = Image.new("RGBA", (page_w, page_h), bg)
+    draw = ImageDraw.Draw(page)
+
+    font_title = _load_pdf_font(52, bold=True)
+    font_sub = _load_pdf_font(22, bold=False)
+    font_small = _load_pdf_font(18, bold=False)
+    font_small_bold = _load_pdf_font(18, bold=True)
+    font_metric = _load_pdf_font(30, bold=True)
+    font_metric_label = _load_pdf_font(15, bold=True)
+    font_table = _load_pdf_font(17, bold=False)
+    font_table_bold = _load_pdf_font(17, bold=True)
+    font_pin = _load_pdf_font(20, bold=True)
+    font_pin_small = _load_pdf_font(14, bold=True)
+
+    _rounded_rect(draw, (margin, margin, page_w - margin, margin + header_h), 34, card, outline=line, width=3)
+    draw.rounded_rectangle((margin, margin, page_w - margin, margin + 82), radius=34, fill=navy)
+    draw.rectangle((margin, margin + 58, page_w - margin, margin + 66), fill=cyan)
+    draw.text((margin + 36, margin + 18), "Static Deployment Map", font=font_metric_label, fill=(188, 220, 233, 255))
+    draw.text((margin + 36, margin + 88), city_label, font=font_title, fill=ink)
+    draw.text((margin + 36, margin + 156), "Station placement, call and land coverage legend, and account executive contact details.", font=font_sub, fill=muted)
+    draw.text((page_w - margin - 680, margin + 94), f"Prepared for {city_label}", font=font_metric, fill=navy)
+    draw.text((page_w - margin - 680, margin + 150), f"{len(stations)} deployed station{'s' if len(stations) != 1 else ''}", font=font_sub, fill=muted)
+
+    chip_y = body_top - 20
+    chip_h = 92
+    chip_w = (left_w - 40) // 3
+    chip_gap = 18
+    chips = [
+        ("Call coverage", f"{calls_covered_perc:.1f}%", cyan_soft, cyan),
+        ("Land coverage", f"{area_covered_perc:.1f}%", (244, 242, 216, 255), gold),
+        ("Annual savings", f"${annual_savings:,.0f}", (230, 248, 241, 255), green),
+    ]
+    for i, (label, value, fill, accent) in enumerate(chips):
+        x0 = margin + i * (chip_w + chip_gap)
+        _rounded_rect(draw, (x0, chip_y, x0 + chip_w, chip_y + chip_h), 26, fill, outline=accent, width=3)
+        draw.text((x0 + 20, chip_y + 16), label.upper(), font=font_metric_label, fill=muted)
+        draw.text((x0 + 20, chip_y + 42), value, font=font_metric, fill=ink)
+
+    map_box = (margin, body_top + 98, margin + left_w, body_bottom - 18)
+    _rounded_rect(draw, map_box, 32, card, outline=line, width=3)
+    map_x0, map_y0, map_x1, map_y1 = map_box
+    draw.text((map_x0 + 30, map_y0 + 24), f"Station placement map - {city_label}", font=font_small_bold, fill=ink)
+    draw.text((map_x0 + 30, map_y0 + 58), "Coverage rings are schematic and sized to the deployed station radius.", font=font_small, fill=muted)
+
+    legend_items = [
+        ("Responder", cyan),
+        ("Guardian", gold),
+        ("Station pin", navy_2),
+    ]
+    legend_x = map_x1 - 460
+    legend_y = map_y0 + 18
+    for i, (label, color) in enumerate(legend_items):
+        lx = legend_x + i * 150
+        draw.rounded_rectangle((lx, legend_y, lx + 130, legend_y + 34), radius=16, fill=(246, 248, 251, 255), outline=line, width=2)
+        draw.ellipse((lx + 10, legend_y + 8, lx + 26, legend_y + 24), fill=color, outline=color)
+        draw.text((lx + 36, legend_y + 7), label, font=font_pin_small, fill=ink)
+
+    inner = (map_x0 + 34, map_y0 + 108, map_x1 - 34, map_y1 - 34)
+    draw.rounded_rectangle(inner, radius=24, fill=card_soft, outline=line, width=2)
+    for frac in (0.25, 0.5, 0.75):
+        x = inner[0] + int((inner[2] - inner[0]) * frac)
+        y = inner[1] + int((inner[3] - inner[1]) * frac)
+        draw.line((x, inner[1] + 16, x, inner[3] - 16), fill=(225, 231, 239, 255), width=2)
+        draw.line((inner[0] + 16, y, inner[2] - 16, y), fill=(225, 231, 239, 255), width=2)
+
+    lats = [s["lat"] for s in stations if math.isfinite(s["lat"])]
+    lons = [s["lon"] for s in stations if math.isfinite(s["lon"])]
+    if not lats or not lons:
+        lats = [0.0]
+        lons = [0.0]
+    lat_min, lat_max = min(lats), max(lats)
+    lon_min, lon_max = min(lons), max(lons)
+    lat_span = max(lat_max - lat_min, 0.01)
+    lon_span = max(lon_max - lon_min, 0.01)
+    pad_lat = max(lat_span * 0.22, 0.02)
+    pad_lon = max(lon_span * 0.22, 0.02)
+    lat_min -= pad_lat
+    lat_max += pad_lat
+    lon_min -= pad_lon
+    lon_max += pad_lon
+    center_lat = (lat_min + lat_max) / 2.0
+    mi_per_deg_lat = 69.0
+    mi_per_deg_lon = max(1.0, 69.0 * max(math.cos(math.radians(center_lat)), 0.25))
+    px_per_mi_x = (inner[2] - inner[0] - 60) / max((lon_max - lon_min) * mi_per_deg_lon, 0.1)
+    px_per_mi_y = (inner[3] - inner[1] - 60) / max((lat_max - lat_min) * mi_per_deg_lat, 0.1)
+    px_per_mi = max(1.0, min(px_per_mi_x, px_per_mi_y))
+
+    def _map_xy(lon, lat):
+        x = inner[0] + 30 + (lon - lon_min) * mi_per_deg_lon * px_per_mi
+        y = inner[3] - 30 - (lat - lat_min) * mi_per_deg_lat * px_per_mi
+        return x, y
+
+    bbox = (inner[0] + 70, inner[1] + 70, inner[2] - 70, inner[3] - 70)
+    draw.rounded_rectangle(bbox, radius=34, outline=(183, 196, 210, 255), width=4)
+
+    type_palette = {
+        "RESPONDER": (0, 210, 255, 42),
+        "GUARDIAN": (245, 196, 66, 42),
+        "STATION": (17, 24, 39, 42),
+    }
+    type_stroke = {
+        "RESPONDER": cyan,
+        "GUARDIAN": gold,
+        "STATION": navy_2,
+    }
+    for station in stations:
+        x, y = _map_xy(station["lon"], station["lat"])
+        radius_px = max(26, int(station["radius_mi"] * px_per_mi))
+        accent = type_stroke.get(station["type"], navy_2)
+        fill = type_palette.get(station["type"], (17, 24, 39, 38))
+        draw.ellipse((x - radius_px, y - radius_px, x + radius_px, y + radius_px), outline=accent, width=5, fill=fill)
+        pin_r = 28
+        draw.ellipse((x - pin_r, y - pin_r, x + pin_r, y + pin_r), fill=card, outline=accent, width=5)
+        draw.ellipse((x - 11, y - 11, x + 11, y + 11), fill=accent, outline=accent)
+        num = str(station["rank"])
+        num_w, num_h = _text_box(draw, num, font_pin)
+        draw.text((x - num_w / 2, y - num_h / 2 - 2), num, font=font_pin, fill=card)
+        label = station["name"]
+        label = label[:28] + "..." if len(label) > 31 else label
+        label_w, label_h = _text_box(draw, label, font_small_bold)
+        lx = min(max(x + 40, bbox[0] + 8), bbox[2] - label_w - 12)
+        ly = max(min(y - 52, bbox[3] - label_h - 12), bbox[1] + 8)
+        draw.rounded_rectangle((lx - 10, ly - 6, lx + label_w + 10, ly + label_h + 8), radius=14, fill=(255, 255, 255, 230), outline=(219, 226, 235, 255), width=2)
+        draw.text((lx, ly), label, font=font_small_bold, fill=ink)
+
+    info_box = (right_x, body_top + 98, right_x + right_w, body_bottom - 18)
+    _rounded_rect(draw, info_box, 32, card, outline=line, width=3)
+    ix0, iy0, ix1, iy1 = info_box
+    draw.text((ix0 + 26, iy0 + 24), "Placement legend", font=font_small_bold, fill=ink)
+    draw.text((ix0 + 26, iy0 + 58), "Percent of calls and land covered by each deployed station.", font=font_small, fill=muted)
+
+    stat_top = iy0 + 104
+    stat_row_h = 144
+    stat_max = 8
+    display_stations = stations[:stat_max]
+    for i, station in enumerate(display_stations):
+        row_y = stat_top + i * stat_row_h
+        row_fill = card_soft if i % 2 == 0 else (248, 250, 252, 255)
+        draw.rounded_rectangle((ix0 + 20, row_y, ix1 - 20, row_y + 128), radius=20, fill=row_fill, outline=line, width=2)
+        badge = station["type"][:1] or "S"
+        badge_fill = gold if station["type"] == "GUARDIAN" else cyan if station["type"] == "RESPONDER" else navy_2
+        draw.ellipse((ix0 + 34, row_y + 32, ix0 + 82, row_y + 80), fill=badge_fill, outline=badge_fill)
+        bw, bh = _text_box(draw, badge, font_pin_small)
+        draw.text((ix0 + 58 - bw / 2, row_y + 56 - bh / 2 - 2), badge, font=font_pin_small, fill=card)
+        name = station["name"][:24] + "..." if len(station["name"]) > 27 else station["name"]
+        draw.text((ix0 + 100, row_y + 26), name, font=font_table_bold, fill=ink)
+        draw.text((ix0 + 100, row_y + 56), f"{station['lat']:.4f}, {station['lon']:.4f}", font=font_table, fill=muted)
+        call_fill = (228, 250, 255, 255)
+        land_fill = (251, 244, 215, 255)
+        draw.rounded_rectangle((ix0 + 100, row_y + 84, ix0 + 254, row_y + 112), radius=14, fill=call_fill, outline=(180, 225, 236, 255), width=2)
+        draw.rounded_rectangle((ix0 + 270, row_y + 84, ix0 + 424, row_y + 112), radius=14, fill=land_fill, outline=(230, 214, 156, 255), width=2)
+        draw.text((ix0 + 114, row_y + 88), f"Calls {station['call_pct']:.1f}%", font=font_pin_small, fill=ink)
+        draw.text((ix0 + 284, row_y + 88), f"Land {station['land_pct']:.1f}%", font=font_pin_small, fill=ink)
+
+    if len(stations) > stat_max:
+        extra = len(stations) - stat_max
+        extra_y = stat_top + stat_max * stat_row_h + 14
+        draw.rounded_rectangle((ix0 + 20, extra_y, ix1 - 20, extra_y + 66), radius=18, fill=(239, 246, 255, 255), outline=(191, 219, 254, 255), width=2)
+        draw.text((ix0 + 38, extra_y + 18), f"+ {extra} more station{'s' if extra != 1 else ''} in the fleet", font=font_small_bold, fill=navy)
+
+    contact_y = iy1 - 320
+    _rounded_rect(draw, (ix0 + 20, contact_y, ix1 - 20, iy1 - 20), 26, navy, outline=navy_2, width=3)
+    draw.text((ix0 + 42, contact_y + 26), "Account Executive", font=font_metric_label, fill=(168, 215, 232, 255))
+    draw.text((ix0 + 42, contact_y + 58), executive_name, font=font_metric, fill=card)
+    draw.text((ix0 + 42, contact_y + 120), executive_email, font=font_small_bold, fill=cyan)
+    if executive_phone:
+        draw.text((ix0 + 42, contact_y + 160), executive_phone, font=font_small_bold, fill=(230, 236, 242, 255))
+    draw.text((ix0 + 42, contact_y + 214), f"Prepared for {city_label}", font=font_small, fill=(200, 209, 219, 255))
+    draw.text((ix0 + 42, contact_y + 244), f"{avg_resp_time_min:.1f} min average response", font=font_small_bold, fill=(230, 236, 242, 255))
+
+    draw.line((margin, page_h - margin - 58, page_w - margin, page_h - margin - 58), fill=line, width=2)
+    footer_text = f"Static PDF briefing for {city_label}  ·  {total_calls:,} calls modeled  ·  {calls_covered_perc:.1f}% call coverage  ·  {area_covered_perc:.1f}% land coverage"
+    draw.text((margin, page_h - margin - 40), footer_text, font=font_small, fill=muted)
+    draw.text((page_w - margin - 380, page_h - margin - 40), "Generated from the live deployment plan", font=font_small, fill=muted)
+
+    output = io.BytesIO()
+    page.convert("RGB").save(output, format="PDF", resolution=300.0)
+    return output.getvalue()
+
+
+# ── Full multi-page HTML → PDF via Playwright ────────────────────────────────
+
+# CSS injected before </style> to override layout for landscape PDF rendering.
+# This does NOT touch the on-screen or browser-print styles — it only applies
+# when Playwright renders via page.pdf() (which triggers @media print).
+_PDF_LANDSCAPE_CSS = """
+/* ── PDF-ONLY OVERRIDES (injected by render_executive_html_to_pdf) ──── */
+@page {
+  size: 11in 8.5in;           /* landscape US Letter */
+  margin: 0.35in 0.45in;
+}
+@media print {
+  /* ── Hide interactive-only elements ─────────────────────────────── */
+  .doc-sidebar { display: none !important; }
+  .copy-section-btn { display: none !important; }
+
+  /* ── Reset layout for full-width landscape ──────────────────────── */
+  .doc-main { margin-left: 0 !important; }
+  html, body {
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Section spacing tuned for landscape pages ──────────────────── */
+  .doc-section {
+    padding: 36px 48px !important;
+    page-break-after: always;
+    page-break-inside: avoid;
+    break-after: page;
+    border-bottom: none;
+    min-height: 0;
+    box-shadow: none !important;
+  }
+  .doc-section:last-child { page-break-after: auto; break-after: auto; }
+
+  /* ── Cover page — fill landscape, keep dark background ──────────── */
+  .cover-page {
+    padding: 30px 42px !important;
+    height: 7.8in !important;
+    max-height: 7.8in !important;
+    min-height: 0 !important;
+    page-break-after: always;
+    break-after: page;
+  }
+  .cover-headline { margin: 24px 0 20px !important; }
+  .cover-headline h1 { font-size: 38px !important; margin-bottom: 10px !important; }
+  .cover-population { font-size: 12px !important; margin-bottom: 8px !important; }
+  .cover-body { gap: 24px !important; margin: 20px 0 !important; align-items: center !important; }
+  .cover-right { width: 280px !important; }
+  .product-img { max-height: 3.35in !important; object-fit: contain !important; }
+  .cover-meta-cell { padding: 10px 12px !important; }
+  .cover-bottom { margin-top: 12px !important; padding-top: 12px !important; }
+  .pdf-prepared-by {
+    position: absolute !important;
+    top: 30px !important;
+    right: 42px !important;
+    max-width: 340px !important;
+    padding: 10px 14px !important;
+    border: 1px solid rgba(255, 255, 255, 0.16) !important;
+    border-radius: 8px !important;
+    background: rgba(255, 255, 255, 0.07) !important;
+    color: rgba(255, 255, 255, 0.82) !important;
+    text-align: right !important;
+    font-size: 11px !important;
+    line-height: 1.35 !important;
+  }
+  .pdf-prepared-by .label {
+    color: var(--cyan) !important;
+    font-size: 9px !important;
+    font-weight: 800 !important;
+    letter-spacing: 1.3px !important;
+    text-transform: uppercase !important;
+    margin-bottom: 3px !important;
+  }
+  .pdf-prepared-by .name {
+    color: #fff !important;
+    font-weight: 800 !important;
+  }
+  .pdf-prepared-by .email {
+    color: rgba(255, 255, 255, 0.68) !important;
+    word-break: break-word !important;
+  }
+
+  /* ── Metrics grid — wider cells in landscape ────────────────────── */
+  .metrics-hero {
+    grid-template-columns: repeat(4, 1fr) !important;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+  .metric-cell .m-value { font-size: 24px !important; }
+
+  /* ── Fleet cards — let them breathe in landscape ────────────────── */
+  .fleet-split {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 20px !important;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  /* ── Tables — full width, avoid breaks ──────────────────────────── */
+  table {
+    width: 100% !important;
+    table-layout: fixed;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  /* ── Map — respect aspect ratio, avoid break ────────────────────── */
+  .map-wrap {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+  .map-wrap img {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+  #map.doc-section {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+  #map .map-wrap {
+    margin-bottom: 0 !important;
+  }
+  #map .map-wrap img {
+    width: 100% !important;
+    max-height: 6.55in !important;
+    object-fit: contain !important;
+    background: #0b1320 !important;
+  }
+
+  /* ── Keep headers with their content ────────────────────────────── */
+  .section-eyebrow, .cover-headline, .sh,
+  h1, h2, h3, h4 {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  /* ── Grant layout — stack in landscape for cleaner flow ──────────── */
+  .grant-layout {
+    grid-template-columns: 1fr 260px !important;
+    break-inside: avoid-page;
+  }
+
+  /* ── Infrastructure grid ────────────────────────────────────────── */
+  .infra-grid {
+    grid-template-columns: 1fr 1fr !important;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  /* ── ROI strip ──────────────────────────────────────────────────── */
+  .roi-strip {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  /* ── Images / SVG / canvas ──────────────────────────────────────── */
+  img, svg, canvas {
+    max-width: 100% !important;
+    height: auto !important;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  /* ── Footer ─────────────────────────────────────────────────────── */
+  .doc-footer {
+    padding: 20px 48px !important;
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  /* ── Links — clean for print ────────────────────────────────────── */
+  a { color: inherit !important; text-decoration: none !important; }
+
+  /* ── Eliminate scrollable containers ─────────────────────────────── */
+  * { overflow: visible !important; }
+  .cover-page { overflow: hidden !important; }
+
+  /* ── Version line ───────────────────────────────────────────────── */
+  .doc-version {
+    margin-top: 18px; padding-top: 10px;
+    border-top: 1px solid #e5e7eb;
+    color: #6b7280 !important;
+  }
+
+  /* ── Crime box — keep together ──────────────────────────────────── */
+  .crime-box {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  /* ── Disclaimer ─────────────────────────────────────────────────── */
+  .disc {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  /* ── Cover meta grid — slightly smaller for landscape ───────────── */
+  .cover-meta {
+    grid-template-columns: repeat(4, 1fr) !important;
+    break-inside: avoid;
+  }
+  .cover-meta-cell .value { font-size: 12px !important; }
+}
+"""
+
+
+def _inject_pdf_prepared_by(html: str, prepared_by_name=None, prepared_by_email=None) -> str:
+    name = str(prepared_by_name or "").strip()
+    email = str(prepared_by_email or "").strip()
+    if not name and not email:
+        return html
+    if 'class="pdf-prepared-by"' in html:
+        return html
+
+    parts = ['<div class="pdf-prepared-by"><div class="label">Prepared by</div>']
+    if name:
+        parts.append(f'<div class="name">{html_lib.escape(name)}</div>')
+    if email:
+        parts.append(f'<div class="email">{html_lib.escape(email)}</div>')
+    parts.append('</div>')
+    prepared_by_html = "".join(parts)
+
+    cover_logo = re.search(r'(<div class="cover-logo">.*?</div>)', html, flags=re.DOTALL | re.IGNORECASE)
+    if cover_logo:
+        return html[:cover_logo.end()] + "\n" + prepared_by_html + html[cover_logo.end():]
+
+    cover_section = re.search(r'(<section\b[^>]*\bid=["\']cover["\'][^>]*>)', html, flags=re.IGNORECASE)
+    if cover_section:
+        return html[:cover_section.end()] + "\n" + prepared_by_html + html[cover_section.end():]
+
+    return prepared_by_html + html
+
+
+def _trim_executive_pdf_html_to_map(html: str) -> str:
+    """Keep the executive PDF scoped to cover, executive summary, fleet, and map."""
+
+    map_section_match = re.search(
+        r'<section\b(?=[^>]*\bid=["\']map["\'])(?=[^>]*\bclass=["\'][^"\']*\bdoc-section\b)[^>]*>.*?</section>',
+        html,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if not map_section_match:
+        return html
+
+    return html[:map_section_match.end()] + "\n</main>\n</body></html>"
+
+
+def _render_executive_pdf_inline(html: str):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("[BRINC] render_executive_html_to_pdf: playwright not installed")
+        return None
+
+    browser = None
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                ],
+            )
+            page = browser.new_page(viewport={"width": 1400, "height": 900})
+            page.set_content(html, wait_until="load", timeout=60000)
+            page.wait_for_timeout(1500)
+            pdf_bytes = page.pdf(
+                landscape=True,
+                format="Letter",
+                margin={
+                    "top": "0.35in",
+                    "bottom": "0.35in",
+                    "left": "0.45in",
+                    "right": "0.45in",
+                },
+                print_background=True,
+                prefer_css_page_size=True,
+            )
+            browser.close()
+            browser = None
+
+        if not pdf_bytes or len(pdf_bytes) < 1024:
+            print("[BRINC] Playwright PDF render produced empty output")
+            return None
+
+        return pdf_bytes
+    except Exception as exc:
+        print(f"[BRINC] Playwright PDF render error: {exc}")
+        return None
+    finally:
+        if browser is not None:
+            try:
+                browser.close()
+            except Exception:
+                pass
+
+
+def _render_executive_pdf_subprocess(html: str):
+    """Run Playwright in a fresh process to avoid Streamlit/Windows event-loop policy conflicts."""
+
+    script = r'''
+import asyncio
+import sys
+
+if sys.platform.startswith("win") and hasattr(asyncio, "WindowsProactorEventLoopPolicy"):
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+from pathlib import Path
+from playwright.sync_api import sync_playwright
+
+pdf_path = Path(sys.argv[1])
+html = sys.stdin.buffer.read().decode("utf-8")
+
+with sync_playwright() as pw:
+    browser = pw.chromium.launch(
+        headless=True,
+        args=[
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+        ],
+    )
+    try:
+        page = browser.new_page(viewport={"width": 1400, "height": 900})
+        page.set_content(html, wait_until="load", timeout=60000)
+        page.wait_for_timeout(1500)
+        pdf_bytes = page.pdf(
+            landscape=True,
+            format="Letter",
+            margin={
+                "top": "0.35in",
+                "bottom": "0.35in",
+                "left": "0.45in",
+                "right": "0.45in",
+            },
+            print_background=True,
+            prefer_css_page_size=True,
+        )
+    finally:
+        browser.close()
+
+pdf_path.write_bytes(pdf_bytes)
+'''
+
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    env = os.environ.copy()
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="brinc_pdf_") as tmp_dir:
+            pdf_path = Path(tmp_dir) / "executive_summary.pdf"
+            result = subprocess.run(
+                [sys.executable, "-c", script, str(pdf_path)],
+                input=html.encode("utf-8"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=120,
+                creationflags=creationflags,
+                env=env,
+            )
+            if result.returncode != 0:
+                stderr_text = result.stderr.decode("utf-8", errors="replace").strip()
+                if stderr_text:
+                    print(f"[BRINC] Playwright PDF subprocess failed: {stderr_text[-1500:]}")
+                else:
+                    print(f"[BRINC] Playwright PDF subprocess failed with exit code {result.returncode}")
+                return None
+            if not pdf_path.exists():
+                print("[BRINC] Playwright PDF subprocess produced no output file")
+                return None
+            pdf_bytes = pdf_path.read_bytes()
+            if not pdf_bytes or len(pdf_bytes) < 1024:
+                print("[BRINC] Playwright PDF subprocess produced empty output")
+                return None
+            return pdf_bytes
+    except Exception as exc:
+        print(f"[BRINC] Playwright PDF subprocess error: {exc}")
+        return None
+
+
+def _render_executive_pdf_with_playwright(html: str):
+    if os.name == "nt":
+        pdf_bytes = _render_executive_pdf_subprocess(html)
+        if pdf_bytes:
+            return pdf_bytes
+
+    return _render_executive_pdf_inline(html)
+
+
+def render_executive_html_to_pdf(
+    export_html: str,
+    map_png_bytes: bytes = None,
+    prepared_by_name=None,
+    prepared_by_email=None,
+):
+    """Convert the full executive-summary HTML into a multi-page landscape PDF.
+
+    Uses Playwright (Chromium) for pixel-perfect rendering with full control
+    over landscape orientation, margins, and background colours.
+
+    Strategy:
+      1. Replace the interactive Plotly map ``<div>`` with a static PNG so the
+         PDF doesn't need JavaScript.
+      2. Trim the report to the first pages through the coverage map.
+      3. Inject landscape-optimised ``@page`` / ``@media print`` CSS overrides.
+      4. Render via Playwright ``page.pdf()`` with ``landscape=True`` and
+         ``print_background=True`` so all dark backgrounds / gradients survive.
+      5. Return PDF bytes, or *None* on failure.
+    """
+
+    if not export_html or not isinstance(export_html, str):
+        return None
+
+    # ── 1. Swap interactive Plotly map for static PNG ─────────────────────
+    html = export_html
+    html = _inject_pdf_prepared_by(html, prepared_by_name, prepared_by_email)
+    if map_png_bytes:
+        map_b64 = base64.b64encode(map_png_bytes).decode("ascii")
+        static_map_tag = (
+            f'<img src="data:image/png;base64,{map_b64}" '
+            f'style="width:100%;height:auto;border-radius:8px;display:block;" '
+            f'alt="Coverage Map">'
+        )
+        html = re.sub(
+            r'(<div class="map-wrap">).*?(</div>\s*</section>)',
+            rf'\1{static_map_tag}\2',
+            html,
+            count=1,
+            flags=re.DOTALL,
+        )
+
+    # ── 2. Inject landscape PDF CSS just before closing </style> ─────────
+    html = _trim_executive_pdf_html_to_map(html)
+    html = html.replace("</style>", _PDF_LANDSCAPE_CSS + "\n</style>", 1)
+    return _render_executive_pdf_with_playwright(html)
+
+def generate_executive_summary_pdf(
+    *,
+    city,
+    state,
+    calls_covered_perc,
+    area_covered_perc,
+    annual_savings,
+    actual_k_responder,
+    actual_k_guardian,
+    guard_radius_mi,
+    resp_radius_mi,
+    guard_strategy_raw,
+    resp_strategy_raw,
+    guard_calls_perc,
+    guard_area_perc,
+    resp_calls_perc,
+    resp_area_perc,
+    map_html_str,
+):
+
+    """Render a one-page landscape PDF focused on sections 02 and 03."""
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception:
+        sync_playwright = None
+
+    city_name = str(city or "City").strip() or "City"
+    state_name = str(state or "ST").strip() or "ST"
+    city_label = f"{city_name}, {state_name}"
+    responder_count = int(actual_k_responder or 0)
+    guardian_count = int(actual_k_guardian or 0)
+    total_units = responder_count + guardian_count
+    calls_covered_perc = float(calls_covered_perc or 0.0)
+    area_covered_perc = float(area_covered_perc or 0.0)
+    annual_savings = float(annual_savings or 0.0)
+    guard_radius_mi = float(guard_radius_mi or 0.0)
+    resp_radius_mi = float(resp_radius_mi or 0.0)
+    guard_calls_perc = float(guard_calls_perc or 0.0)
+    guard_area_perc = float(guard_area_perc or 0.0)
+    resp_calls_perc = float(resp_calls_perc or 0.0)
+    resp_area_perc = float(resp_area_perc or 0.0)
+    guard_strategy_raw = str(guard_strategy_raw or "Coverage").strip() or "Coverage"
+    resp_strategy_raw = str(resp_strategy_raw or "Coverage").strip() or "Coverage"
+    guardian_cost = int(CONFIG.get("GUARDIAN_COST", 0) or 0)
+    responder_cost = int(CONFIG.get("RESPONDER_COST", 0) or 0)
+
+    map_html_str = str(map_html_str or "").strip()
+    if not map_html_str:
+        map_html_str = (
+            "<div style='height:100%;display:flex;align-items:center;justify-content:center;"
+            "color:#64748b;font-size:14px;background:#f8fafc;border:1px solid #d9e2ec;"
+            "border-radius:16px;'>Map unavailable for this export.</div>"
+        )
+
+    def _resolve_playwright_chromium_executable():
+        env_path = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", "").strip()
+        if env_path and Path(env_path).is_file():
+            return env_path
+        local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_appdata:
+            base = Path(local_appdata) / "ms-playwright"
+            if base.exists():
+                preferred = []
+                for name in ("chromium-1208", "chromium_headless_shell-1208"):
+                    preferred.extend(sorted((base / name).rglob("chrome.exe")))
+                preferred.extend(sorted(base.rglob("chrome.exe")))
+                preferred.extend(sorted(base.rglob("chromium.exe")))
+                for candidate in preferred:
+                    if candidate.is_file():
+                        return str(candidate)
+        return None
+
+    def _build_fallback_pdf_bytes():
+        page_w, page_h = 1650, 1275  # letter landscape at 150 DPI
+        bg = (245, 247, 251)
+        panel = (255, 255, 255)
+        border = (217, 226, 236)
+        text = (15, 23, 42)
+        muted = (95, 111, 130)
+        cyan = (0, 210, 255)
+        gold = (255, 213, 74)
+        green = (22, 163, 74)
+        navy = (8, 26, 45)
+        navy_2 = (13, 39, 68)
+
+        page = Image.new("RGB", (page_w, page_h), bg)
+        draw = ImageDraw.Draw(page)
+
+        try:
+            font_title = _load_pdf_font(30, bold=True)
+            font_sub = _load_pdf_font(14, bold=False)
+            font_small = _load_pdf_font(12, bold=False)
+            font_small_bold = _load_pdf_font(12, bold=True)
+            font_chip = _load_pdf_font(15, bold=True)
+            font_card = _load_pdf_font(17, bold=True)
+            font_card_small = _load_pdf_font(11, bold=False)
+        except Exception:
+            font_title = ImageFont.load_default()
+            font_sub = ImageFont.load_default()
+            font_small = ImageFont.load_default()
+            font_small_bold = ImageFont.load_default()
+            font_chip = ImageFont.load_default()
+            font_card = ImageFont.load_default()
+            font_card_small = ImageFont.load_default()
+
+        def rr(box, radius, fill, outline=None, width=1):
+            draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
+
+        def text_box(draw_obj, value, font_obj):
+            bbox = draw_obj.textbbox((0, 0), str(value), font=font_obj)
+            return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+        def wrap(draw_obj, value, font_obj, max_width):
+            words = str(value).split()
+            if not words:
+                return [""]
+            lines = []
+            line = words[0]
+            for word in words[1:]:
+                trial = f"{line} {word}"
+                if text_box(draw_obj, trial, font_obj)[0] <= max_width:
+                    line = trial
+                else:
+                    lines.append(line)
+                    line = word
+            lines.append(line)
+            return lines
+
+        # Header
+        rr((36, 34, page_w - 36, 174), 28, navy, outline=navy_2, width=2)
+        draw.text((64, 58), "Executive Summary PDF", font=font_small_bold, fill=cyan)
+        draw.text((64, 86), city_label, font=font_title, fill=(255, 255, 255))
+        draw.text((64, 132), "Sections 02 and 03 condensed into a single landscape page.", font=font_sub, fill=(208, 216, 227))
+
+        chips = [
+            ("Call coverage", f"{calls_covered_perc:.1f}%", cyan),
+            ("Area coverage", f"{area_covered_perc:.1f}%", gold),
+            ("Annual savings", f"${annual_savings:,.0f}", green),
+            ("Fleet size", f"{total_units} units", (255, 255, 255)),
+        ]
+        chip_x = 1010
+        for i, (label, value, accent) in enumerate(chips):
+            x0 = chip_x + (i % 2) * 295
+            y0 = 44 + (i // 2) * 60
+            rr((x0, y0, x0 + 275, y0 + 48), 14, (255, 255, 255, 24) if accent != (255, 255, 255) else (255, 255, 255), outline=(255, 255, 255, 28), width=1)
+            draw.text((x0 + 12, y0 + 8), label.upper(), font=font_small, fill=(200, 208, 218))
+            draw.text((x0 + 12, y0 + 24), value, font=font_chip, fill=accent if accent != (255, 255, 255) else (255, 255, 255))
+
+        # Left panel
+        left = (36, 202, 690, 1239)
+        rr(left, 22, panel, outline=border, width=2)
+        draw.text((60, 226), "02  Fleet & Coverage", font=font_small_bold, fill=cyan)
+        draw.text((60, 250), "Two-fleet architecture, operational radius, and the modeled coverage split for the active deployment.", font=font_small, fill=muted)
+
+        guardian_box = (60, 300, 666, 616)
+        responder_box = (60, 644, 666, 960)
+        rr(guardian_box, 20, (7, 17, 31), outline=(255, 213, 74), width=2)
+        rr(responder_box, 20, (0, 19, 29), outline=cyan, width=2)
+
+        def draw_fleet_card(box, emoji, name, unit_count, radius, strategy, capex, call_pct, area_pct, accent, header_fill):
+            x0, y0, x1, y1 = box
+            draw.rounded_rectangle((x0 + 16, y0 + 16, x0 + 58, y0 + 58), radius=12, fill=(255, 255, 255, 18), outline=(255, 255, 255, 30), width=1)
+            draw.text((x0 + 24, y0 + 22), emoji, font=font_card, fill=(255, 255, 255))
+            draw.text((x0 + 78, y0 + 20), name, font=font_small_bold, fill=header_fill)
+            draw.text((x0 + 78, y0 + 42), f"{unit_count} Unit{'s' if unit_count != 1 else ''}", font=font_card, fill=accent)
+            sub = f"{radius:g}-mile operational radius · {strategy}"
+            draw.text((x0 + 20, y0 + 90), sub, font=font_card_small, fill=(210, 219, 230))
+
+            stat_y = y0 + 150
+            stat_boxes = [
+                ("Unit CapEx", f"${capex:,}"),
+                ("Call Coverage", f"{call_pct:.1f}%"),
+                ("Area Coverage", f"{area_pct:.1f}%"),
+            ]
+            for idx, (k, v) in enumerate(stat_boxes):
+                sx0 = x0 + 18 + idx * 190
+                rr((sx0, stat_y, sx0 + 170, stat_y + 122), 16, (255, 255, 255, 12), outline=(255, 255, 255, 18), width=1)
+                draw.text((sx0 + 12, stat_y + 14), k.upper(), font=font_small, fill=(180, 190, 202))
+                draw.text((sx0 + 12, stat_y + 52), v, font=font_card, fill=accent)
+
+        draw_fleet_card(guardian_box, "🦅", "BRINC Guardian", guardian_count, guard_radius_mi, guard_strategy_raw, guardian_cost, guard_calls_perc, guard_area_perc, gold, (255, 244, 196))
+        draw_fleet_card(responder_box, "🚁", "BRINC Responder", responder_count, resp_radius_mi, resp_strategy_raw, responder_cost, resp_calls_perc, resp_area_perc, cyan, (214, 248, 255))
+
+        # Right panel
+        right = (712, 202, 1614, 1239)
+        rr(right, 22, panel, outline=border, width=2)
+        draw.text((736, 226), "03  Coverage Map", font=font_small_bold, fill=cyan)
+        draw.text((736, 250), "Static export of the modelled coverage map. The layout is scaled to stay on one landscape page.", font=font_small, fill=muted)
+        map_box = (736, 298, 1570, 1120)
+        rr(map_box, 22, (11, 19, 32), outline=(28, 44, 63), width=2)
+        for frac in (0.25, 0.5, 0.75):
+            x = map_box[0] + int((map_box[2] - map_box[0]) * frac)
+            y = map_box[1] + int((map_box[3] - map_box[1]) * frac)
+            draw.line((x, map_box[1] + 20, x, map_box[3] - 20), fill=(30, 45, 64), width=2)
+            draw.line((map_box[0] + 20, y, map_box[2] - 20, y), fill=(30, 45, 64), width=2)
+        rr((780, 372, 968, 560), 30, (18, 36, 56), outline=cyan, width=2)
+        rr((1070, 360, 1340, 620), 36, (21, 18, 5), outline=gold, width=2)
+        rr((920, 700, 1230, 930), 34, (5, 32, 22), outline=green, width=2)
+        draw.text((840, 430), "Coverage summary", font=font_card, fill=(255, 255, 255))
+        draw.text((816, 470), "Static PDF output preserved.", font=font_small, fill=(195, 206, 219))
+        draw.text((1100, 470), "Executive summary format maintained.", font=font_small, fill=(255, 244, 196))
+        draw.text((996, 800), "Map image fallback used for this export.", font=font_small, fill=(210, 219, 230))
+        draw.text((736, 1140), "Coverage rings are operational estimates. This fallback still downloads cleanly.", font=font_small, fill=muted)
+
+        output = io.BytesIO()
+        page.save(output, format="PDF", resolution=150.0)
+        return output.getvalue()
+
+    if sync_playwright is None:
+        return _build_fallback_pdf_bytes()
+
+    html_doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Executive Summary PDF - {html_lib.escape(city_label)}</title>
+  <style>
+    :root {{
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --border: #d9e2ec;
+      --text: #0f172a;
+      --muted: #5f6f82;
+      --cyan: #00d2ff;
+      --gold: #ffd54a;
+      --green: #16a34a;
+    }}
+    * {{
+      box-sizing: border-box;
+    }}
+    html, body {{
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", Arial, sans-serif;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      overflow: hidden;
+    }}
+    @page {{
+      size: letter landscape;
+      margin: 0.22in;
+    }}
+    .page {{
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }}
+    .header {{
+      background: linear-gradient(135deg, #081a2d 0%, #0d2744 100%);
+      color: #fff;
+      border-radius: 18px;
+      padding: 16px 18px 14px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: end;
+      box-shadow: 0 12px 30px rgba(8, 26, 45, 0.16);
+    }}
+    .eyebrow {{
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--cyan);
+      font-weight: 700;
+      margin-bottom: 6px;
+    }}
+    .header h1 {{
+      margin: 0;
+      font-size: 24px;
+      line-height: 1.08;
+      letter-spacing: -0.02em;
+    }}
+    .header p {{
+      margin: 7px 0 0;
+      color: rgba(255, 255, 255, 0.76);
+      font-size: 11.5px;
+      line-height: 1.45;
+      max-width: 60ch;
+    }}
+    .chip-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+      align-items: stretch;
+    }}
+    .chip {{
+      min-width: 110px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }}
+    .chip .k {{
+      font-size: 9px;
+      letter-spacing: 1.3px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.68);
+      margin-bottom: 4px;
+    }}
+    .chip .v {{
+      font-size: 16px;
+      font-weight: 800;
+      line-height: 1;
+      color: #fff;
+      white-space: nowrap;
+    }}
+    .chip.gold .v {{ color: var(--gold); }}
+    .chip.cyan .v {{ color: var(--cyan); }}
+    .chip.green .v {{ color: #8ef0b0; }}
+    .main {{
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 0.95fr 1.15fr;
+      gap: 12px;
+    }}
+    .panel {{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 14px 14px 12px;
+      box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
+      overflow: hidden;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }}
+    .section-eyebrow {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .pg-num {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(0, 210, 255, 0.28);
+      color: var(--cyan);
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      font-weight: 800;
+      background: rgba(0, 210, 255, 0.05);
+      flex-shrink: 0;
+    }}
+    .pg-title {{
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }}
+    .section-note {{
+      margin: 0 0 12px;
+      font-size: 11.5px;
+      color: var(--muted);
+      line-height: 1.45;
+    }}
+    .fleet-split {{
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      flex: 1;
+      min-height: 0;
+    }}
+    .fleet-card {{
+      border-radius: 16px;
+      padding: 14px;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+    }}
+    .fleet-card.guardian {{
+      background: linear-gradient(180deg, #07111f 0%, #04070d 100%);
+      color: #fff;
+      border: 1px solid rgba(255, 213, 74, 0.14);
+    }}
+    .fleet-card.responder {{
+      background: linear-gradient(180deg, #00131d 0%, #030c13 100%);
+      color: #fff;
+      border: 1px solid rgba(0, 210, 255, 0.14);
+    }}
+    .fc-top {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }}
+    .fc-icon {{
+      width: 34px;
+      height: 34px;
+      border-radius: 11px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      flex: 0 0 auto;
+    }}
+    .fc-type {{
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      opacity: 0.8;
+      margin-bottom: 2px;
+      font-weight: 800;
+    }}
+    .fc-val {{
+      font-size: 22px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }}
+    .fc-sub {{
+      margin-top: 6px;
+      font-size: 11.5px;
+      color: rgba(255, 255, 255, 0.72);
+      line-height: 1.4;
+    }}
+    .fc-grid {{
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }}
+    .fc-row {{
+      padding: 8px 9px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }}
+    .fc-row .k {{
+      font-size: 9px;
+      letter-spacing: 1.1px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.6);
+      margin-bottom: 3px;
+      font-weight: 700;
+    }}
+    .fc-row .v {{
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.05;
+      color: #fff;
+    }}
+    .fleet-card.guardian .fc-val,
+    .fleet-card.guardian .fc-row .v {{
+      color: var(--gold);
+    }}
+    .fleet-card.responder .fc-val,
+    .fleet-card.responder .fc-row .v {{
+      color: var(--cyan);
+    }}
+    .map-panel {{
+      background: linear-gradient(180deg, #fff 0%, #fbfdff 100%);
+    }}
+    .map-shell {{
+      background: #0b1320;
+      border-radius: 16px;
+      padding: 10px;
+      min-height: 0;
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }}
+    .map-shell .plotly, .map-shell .js-plotly-plot {{
+      height: 100% !important;
+      width: 100% !important;
+    }}
+    .map-shell .plot-container, .map-shell .svg-container {{
+      height: 100% !important;
+      width: 100% !important;
+    }}
+    .map-shell .modebar {{
+      display: none !important;
+    }}
+    .map-scale {{
+      width: 108%;
+      height: 100%;
+      transform: scale(0.93);
+      transform-origin: top left;
+    }}
+    .map-note {{
+      margin-top: 9px;
+      font-size: 10.5px;
+      line-height: 1.45;
+      color: var(--muted);
+    }}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div>
+        <div class="eyebrow">Executive Summary PDF</div>
+        <h1>{html_lib.escape(city_label)}</h1>
+        <p>Sections 02 and 03 condensed into a single landscape page for a clean static briefing.</p>
+      </div>
+      <div class="chip-row">
+        <div class="chip cyan">
+          <div class="k">Call coverage</div>
+          <div class="v">{calls_covered_perc:.1f}%</div>
+        </div>
+        <div class="chip gold">
+          <div class="k">Area coverage</div>
+          <div class="v">{area_covered_perc:.1f}%</div>
+        </div>
+        <div class="chip green">
+          <div class="k">Annual savings</div>
+          <div class="v">${annual_savings:,.0f}</div>
+        </div>
+        <div class="chip">
+          <div class="k">Fleet size</div>
+          <div class="v">{total_units} units</div>
+        </div>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="panel">
+        <div class="section-eyebrow">
+          <span class="pg-num">02</span>
+          <span class="pg-title">Fleet &amp; Coverage</span>
+        </div>
+        <p class="section-note">Two-fleet architecture, operational radius, and the modeled coverage split for the active deployment.</p>
+        <div class="fleet-split">
+          <div class="fleet-card guardian">
+            <div class="fc-top">
+              <div class="fc-icon">🦅</div>
+              <div>
+                <div class="fc-type">BRINC Guardian</div>
+                <div class="fc-val">{guardian_count} Unit{'' if guardian_count == 1 else 's'}</div>
+              </div>
+            </div>
+            <div class="fc-sub">{guard_radius_mi:g}-mile operational radius · {html_lib.escape(guard_strategy_raw)}</div>
+            <div class="fc-grid">
+              <div class="fc-row">
+                <div class="k">Unit CapEx</div>
+                <div class="v">${guardian_cost:,}</div>
+              </div>
+              <div class="fc-row">
+                <div class="k">Call Coverage</div>
+                <div class="v">{guard_calls_perc:.1f}%</div>
+              </div>
+              <div class="fc-row">
+                <div class="k">Area Coverage</div>
+                <div class="v">{guard_area_perc:.1f}%</div>
+              </div>
+            </div>
+          </div>
+          <div class="fleet-card responder">
+            <div class="fc-top">
+              <div class="fc-icon">🚁</div>
+              <div>
+                <div class="fc-type">BRINC Responder</div>
+                <div class="fc-val">{responder_count} Unit{'' if responder_count == 1 else 's'}</div>
+              </div>
+            </div>
+            <div class="fc-sub">{resp_radius_mi:g}-mile operational radius · {html_lib.escape(resp_strategy_raw)}</div>
+            <div class="fc-grid">
+              <div class="fc-row">
+                <div class="k">Unit CapEx</div>
+                <div class="v">${responder_cost:,}</div>
+              </div>
+              <div class="fc-row">
+                <div class="k">Call Coverage</div>
+                <div class="v">{resp_calls_perc:.1f}%</div>
+              </div>
+              <div class="fc-row">
+                <div class="k">Area Coverage</div>
+                <div class="v">{resp_area_perc:.1f}%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel map-panel">
+        <div class="section-eyebrow">
+          <span class="pg-num">03</span>
+          <span class="pg-title">Coverage Map</span>
+        </div>
+        <p class="section-note">Static export of the modelled coverage map. The layout is scaled to stay on one landscape page.</p>
+        <div class="map-shell">
+          <div class="map-scale">{map_html_str}</div>
+        </div>
+        <div class="map-note">Coverage rings are operational estimates. Map content is rendered statically for PDF export.</div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
+"""
+
+    try:
+        with sync_playwright() as p:
+            launch_kwargs = {"headless": True}
+            executable_path = _resolve_playwright_chromium_executable()
+            if executable_path:
+                launch_kwargs["executable_path"] = executable_path
+            browser = p.chromium.launch(**launch_kwargs)
+            try:
+                page = browser.new_page(
+                    viewport={"width": 1650, "height": 1275},
+                    device_scale_factor=2,
+                )
+                page.set_content(html_doc, wait_until="load")
+                page.wait_for_timeout(1800)
+                png_bytes = page.screenshot(type="png", full_page=False)
+            finally:
+                browser.close()
+        screenshot = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+        output = io.BytesIO()
+        screenshot.save(output, format="PDF", resolution=300.0)
+        return output.getvalue()
+    except Exception as exc:
+        print(f"[BRINC] Executive summary PDF render fallback engaged: {exc}")
+        return _build_fallback_pdf_bytes()
+
+
+def generate_executive_summary_pdf(
+    *,
+    city,
+    state,
+    calls_covered_perc,
+    area_covered_perc,
+    annual_savings,
+    actual_k_responder,
+    actual_k_guardian,
+    guard_radius_mi,
+    resp_radius_mi,
+    guard_strategy_raw,
+    resp_strategy_raw,
+    guard_calls_perc,
+    guard_area_perc,
+    resp_calls_perc,
+    resp_area_perc,
+    prepared_by_name=None,
+    prepared_date=None,
+    map_png_bytes=None,
+    map_html_str=None,
+):
+    """Render a one-page landscape PDF focused on sections 02 and 03."""
+
+    del map_html_str
+
+    city_name = str(city or "City").strip() or "City"
+    state_name = str(state or "ST").strip() or "ST"
+    city_label = f"{city_name}, {state_name}"
+    responder_count = int(actual_k_responder or 0)
+    guardian_count = int(actual_k_guardian or 0)
+    total_units = responder_count + guardian_count
+    calls_covered_perc = float(calls_covered_perc or 0.0)
+    area_covered_perc = float(area_covered_perc or 0.0)
+    annual_savings = float(annual_savings or 0.0)
+    guard_radius_mi = float(guard_radius_mi or 0.0)
+    resp_radius_mi = float(resp_radius_mi or 0.0)
+    guard_calls_perc = float(guard_calls_perc or 0.0)
+    guard_area_perc = float(guard_area_perc or 0.0)
+    resp_calls_perc = float(resp_calls_perc or 0.0)
+    resp_area_perc = float(resp_area_perc or 0.0)
+    guard_strategy_raw = str(guard_strategy_raw or "Coverage").strip() or "Coverage"
+    resp_strategy_raw = str(resp_strategy_raw or "Coverage").strip() or "Coverage"
+    guardian_cost = int(CONFIG.get("GUARDIAN_COST", 0) or 0)
+    responder_cost = int(CONFIG.get("RESPONDER_COST", 0) or 0)
+    prepared_by_name = str(prepared_by_name or "BRINC Representative").strip() or "BRINC Representative"
+    if prepared_date is None:
+        prepared_date = datetime.datetime.now().strftime("%B %d, %Y")
+    elif hasattr(prepared_date, "strftime"):
+        prepared_date = prepared_date.strftime("%B %d, %Y")
+    else:
+        prepared_date = str(prepared_date).strip() or datetime.datetime.now().strftime("%B %d, %Y")
+
+    page_w, page_h = 3300, 2550
+    margin = 88
+    header_h = 220
+    gutter = 24
+    panel_top = margin + header_h + 16
+    panel_bottom = page_h - margin
+    left_box = (margin, panel_top, 1440, panel_bottom)
+    right_box = (1472, panel_top, page_w - margin, panel_bottom)
+
+    bg = (242, 245, 249)
+    white = (255, 255, 255)
+    navy = (10, 20, 33)
+    navy_2 = (18, 34, 54)
+    ink = (18, 25, 39)
+    muted = (101, 115, 136)
+    line = (217, 226, 236)
+    cyan = (0, 210, 255)
+    cyan_soft = (214, 248, 255)
+    gold = (255, 213, 74)
+    gold_soft = (255, 245, 194)
+    green = (22, 163, 74)
+    green_soft = (228, 248, 232)
+
+    page = Image.new("RGBA", (page_w, page_h), bg + (255,))
+    draw = ImageDraw.Draw(page)
+
+    try:
+        font_kicker = _load_pdf_font(12, bold=True)
+        font_title = _load_pdf_font(42, bold=True)
+        font_sub = _load_pdf_font(17, bold=False)
+        font_panel_title = _load_pdf_font(16, bold=True)
+        font_small = _load_pdf_font(13, bold=False)
+        font_small_bold = _load_pdf_font(13, bold=True)
+        font_stat = _load_pdf_font(24, bold=True)
+        font_tile_num = _load_pdf_font(28, bold=True)
+        font_tile_label = _load_pdf_font(11, bold=True)
+        font_tile_value = _load_pdf_font(18, bold=True)
+    except Exception:
+        font_kicker = font_title = font_sub = font_panel_title = font_small = font_small_bold = font_stat = font_tile_num = font_tile_label = font_tile_value = ImageFont.load_default()
+
+    def rr(box, radius, fill, outline=None, width=1):
+        _rounded_rect(draw, box, radius, fill, outline=outline, width=width)
+
+    def text_size(value, font_obj):
+        return _text_box(draw, value, font_obj)
+
+    # page frame
+    rr((margin, margin, page_w - margin, page_h - margin), 30, white, outline=line, width=3)
+    rr((margin, margin, page_w - margin, margin + header_h), 30, navy, outline=navy_2, width=2)
+    draw.rectangle((margin, margin + 72, page_w - margin, margin + 80), fill=cyan)
+
+    # header left
+    draw.text((124, 126), "EXECUTIVE SUMMARY", font=font_kicker, fill=cyan)
+    draw.text((124, 168), city_label, font=font_title, fill=white)
+    draw.text(
+        (124, 220),
+        "Fleet coverage overview and map snapshot in a single landscape page.",
+        font=font_sub,
+        fill=(205, 216, 229),
+    )
+    draw.text(
+        (124, 250),
+        f"Prepared by {prepared_by_name} · {prepared_date}",
+        font=font_small_bold,
+        fill=(180, 191, 204),
+    )
+
+    # header right metrics
+    stat_cards = [
+        ("Call coverage", f"{calls_covered_perc:.1f}%", cyan, cyan_soft),
+        ("Area coverage", f"{area_covered_perc:.1f}%", gold, gold_soft),
+        ("Annual savings", f"${annual_savings:,.0f}", green, green_soft),
+        ("Fleet size", f"{total_units} units", (122, 147, 171), (236, 242, 247)),
+    ]
+    card_w = 300
+    card_h = 76
+    stat_x = 1940
+    stat_y = 112
+    for idx, (label, value, accent, fill_soft) in enumerate(stat_cards):
+        x0 = stat_x + (idx % 2) * (card_w + 18)
+        y0 = stat_y + (idx // 2) * (card_h + 14)
+        rr((x0, y0, x0 + card_w, y0 + card_h), 18, (255, 255, 255, 24), outline=(255, 255, 255, 28), width=1)
+        draw.rounded_rectangle((x0 + 12, y0 + 12, x0 + 48, y0 + 48), radius=11, fill=fill_soft, outline=accent, width=2)
+        draw.text((x0 + 21, y0 + 17), label[:1].upper(), font=font_small_bold, fill=accent)
+        draw.text((x0 + 60, y0 + 11), label.upper(), font=font_small, fill=(200, 210, 221))
+        draw.text((x0 + 60, y0 + 35), value, font=font_stat, fill=white)
+
+    # left panel
+    rr(left_box, 26, (250, 252, 254), outline=line, width=3)
+    draw.text((left_box[0] + 30, left_box[1] + 24), "02  FLEET COVERAGE", font=font_panel_title, fill=cyan)
+    draw.text(
+        (left_box[0] + 30, left_box[1] + 54),
+        "City-specific deployment mix, operational range, and modeled coverage performance.",
+        font=font_small,
+        fill=muted,
+    )
+
+    def draw_fleet_tile(box, label, unit_count, radius, strategy, capex, call_pct, area_pct, accent, accent_soft):
+        x0, y0, x1, y1 = box
+        rr(box, 22, white, outline=line, width=2)
+        draw.rectangle((x0, y0, x0 + 8, y1), fill=accent)
+        draw.rounded_rectangle((x0 + 22, y0 + 18, x0 + 94, y0 + 90), radius=18, fill=accent_soft, outline=accent, width=2)
+        count_w, _ = text_size(str(unit_count), font_tile_num)
+        draw.text((x0 + 58 - count_w / 2, y0 + 30), str(unit_count), font=font_tile_num, fill=accent)
+        draw.text((x0 + 114, y0 + 20), label, font=font_small_bold, fill=ink)
+        draw.text((x0 + 114, y0 + 46), f"{radius:g}-mile operational radius", font=font_small, fill=muted)
+        draw.text((x0 + 114, y0 + 70), strategy, font=font_small, fill=muted)
+
+        metric_y = y0 + 112
+        metric_w = 190
+        metric_gap = 18
+        metric_specs = [
+            ("CapEx", f"${capex:,}"),
+            ("Call coverage", f"{call_pct:.1f}%"),
+            ("Area coverage", f"{area_pct:.1f}%"),
+        ]
+        for idx, (m_label, m_value) in enumerate(metric_specs):
+            mx0 = x0 + 24 + idx * (metric_w + metric_gap)
+            rr((mx0, metric_y, mx0 + metric_w, metric_y + 136), 16, (248, 250, 252), outline=line, width=1)
+            draw.text((mx0 + 14, metric_y + 16), m_label.upper(), font=font_tile_label, fill=muted)
+            draw.text((mx0 + 14, metric_y + 52), m_value, font=font_tile_value, fill=ink)
+        draw.text((x0 + 24, y1 - 34), "Modeled deployment performance", font=font_small, fill=muted)
+
+    guardian_box = (left_box[0] + 24, left_box[1] + 116, left_box[2] - 24, left_box[1] + 392)
+    responder_box = (left_box[0] + 24, left_box[1] + 416, left_box[2] - 24, left_box[1] + 692)
+    draw_fleet_tile(
+        guardian_box,
+        "BRINC Guardian",
+        guardian_count,
+        guard_radius_mi,
+        guard_strategy_raw,
+        guardian_cost,
+        guard_calls_perc,
+        guard_area_perc,
+        gold,
+        gold_soft,
+    )
+    draw_fleet_tile(
+        responder_box,
+        "BRINC Responder",
+        responder_count,
+        resp_radius_mi,
+        resp_strategy_raw,
+        responder_cost,
+        resp_calls_perc,
+        resp_area_perc,
+        cyan,
+        cyan_soft,
+    )
+
+    # left footer callout
+    summary_top = left_box[1] + 732
+    rr((left_box[0] + 24, summary_top, left_box[2] - 24, summary_top + 126), 18, (245, 248, 251), outline=line, width=1)
+    draw.text((left_box[0] + 42, summary_top + 22), "Deployment summary", font=font_small_bold, fill=ink)
+    draw.text(
+        (left_box[0] + 42, summary_top + 52),
+        f"{city_name} is modeled at {calls_covered_perc:.1f}% call coverage and {area_covered_perc:.1f}% area coverage with {total_units} total units.",
+        font=font_small,
+        fill=muted,
+    )
+    draw.text(
+        (left_box[0] + 42, summary_top + 82),
+        "The layout keeps the hierarchy simple: city, coverage values, fleet mix, then map.",
+        font=font_small,
+        fill=muted,
+    )
+
+    # right panel
+    rr(right_box, 26, white, outline=line, width=3)
+    draw.text((right_box[0] + 30, right_box[1] + 24), "03  COVERAGE MAP", font=font_panel_title, fill=cyan)
+    draw.text(
+        (right_box[0] + 30, right_box[1] + 54),
+        "Static export of the modeled jurisdiction map, sized to fit cleanly on one page.",
+        font=font_small,
+        fill=muted,
+    )
+
+    map_shell = (right_box[0] + 20, right_box[1] + 96, right_box[2] - 20, right_box[3] - 18)
+    rr(map_shell, 22, (9, 16, 27), outline=(31, 45, 64), width=2)
+    for frac in (0.25, 0.5, 0.75):
+        x = map_shell[0] + int((map_shell[2] - map_shell[0]) * frac)
+        y = map_shell[1] + int((map_shell[3] - map_shell[1]) * frac)
+        draw.line((x, map_shell[1] + 14, x, map_shell[3] - 14), fill=(27, 42, 58), width=2)
+        draw.line((map_shell[0] + 14, y, map_shell[2] - 14, y), fill=(27, 42, 58), width=2)
+
+    map_inner = (map_shell[0] + 12, map_shell[1] + 12, map_shell[2] - 12, map_shell[3] - 12)
+    draw.rounded_rectangle(map_inner, radius=18, outline=(184, 196, 210), width=2)
+
+    map_img = None
+    if map_png_bytes:
+        try:
+            map_img = Image.open(io.BytesIO(map_png_bytes)).convert("RGBA")
+        except Exception:
+            map_img = None
+
+    if map_img is not None and map_img.width > 0 and map_img.height > 0:
+        fitted = ImageOps.contain(
+            map_img,
+            (map_inner[2] - map_inner[0] - 6, map_inner[3] - map_inner[1] - 6),
+            method=Image.LANCZOS,
+        )
+        paste_x = map_inner[0] + ((map_inner[2] - map_inner[0]) - fitted.width) // 2
+        paste_y = map_inner[1] + ((map_inner[3] - map_inner[1]) - fitted.height) // 2
+        page.paste(fitted, (paste_x, paste_y), fitted)
+    else:
+        rr((map_inner[0] + 24, map_inner[1] + 24, map_inner[2] - 24, map_inner[3] - 24), 20, (17, 24, 39), outline=cyan, width=2)
+        draw.text((map_inner[0] + 64, map_inner[1] + 78), "Map preview unavailable", font=font_tile_value, fill=white)
+        draw.text((map_inner[0] + 64, map_inner[1] + 130), "The exported PNG was not available for this run.", font=font_small, fill=(201, 210, 220))
+        draw.text((map_inner[0] + 64, map_inner[1] + 176), "A clean PDF is still produced without the browser path.", font=font_small, fill=(201, 210, 220))
+
+    draw.text(
+        (right_box[0] + 30, right_box[3] - 24),
+        "Coverage rings are operational estimates. Map content is rendered statically for PDF export.",
+        font=font_small,
+        fill=muted,
+    )
+
+    output = io.BytesIO()
+    page.convert("RGB").save(output, format="PDF", resolution=300.0)
+    return output.getvalue()
+
+
+def _generate_executive_map_pdf_map_only(
+    *,
+    city,
+    state,
+    active_drones,
+    station_metadata,
+    total_calls,
+    calls_covered_perc,
+    area_covered_perc,
+    area_sq_mi,
+    annual_savings,
+    avg_resp_time_min,
+):
+
+    """Render a clean one-page map-only PDF with all stations framed in view."""
+
+    del total_calls, calls_covered_perc, area_covered_perc, area_sq_mi, annual_savings, avg_resp_time_min
+
+    page_w, page_h = 3300, 2550
+    margin = 90
+    header_h = 150
+    footer_h = 70
+    body_top = margin + header_h
+    body_bottom = page_h - margin - footer_h
+
+    bg = (246, 248, 251, 255)
+    navy = (12, 25, 44, 255)
+    navy_2 = (20, 40, 66, 255)
+    ink = (17, 24, 39, 255)
+    muted = (95, 111, 134, 255)
+    line = (214, 223, 234, 255)
+    card = (255, 255, 255, 255)
+    card_soft = (241, 245, 249, 255)
+    cyan = (0, 210, 255, 255)
+    gold = (245, 196, 66, 255)
+
+    city_label = f"{str(city or 'City').strip() or 'City'}, {str(state or '').strip() or 'ST'}"
+
+    stations = []
+    station_metadata = list(station_metadata or [])
+    for idx, d in enumerate(active_drones or []):
+        try:
+            s_idx = int(d.get("idx", idx))
+        except Exception:
+            s_idx = idx
+        meta = station_metadata[s_idx] if 0 <= s_idx < len(station_metadata) else {}
+        d_type = str(d.get("type", "") or "").upper()
+        name = str(d.get("name", "") or meta.get("name", f"Station {idx + 1}")).strip()
+        lat = float(d.get("lat", meta.get("lat", 0.0)) or 0.0)
+        lon = float(d.get("lon", meta.get("lon", 0.0)) or 0.0)
+        radius_m = float(d.get("radius_m", 0.0) or 0.0)
+        stations.append({
+            "rank": len(stations) + 1,
+            "name": name,
+            "type": d_type or "STATION",
+            "lat": lat,
+            "lon": lon,
+            "radius_mi": radius_m / 1609.34 if radius_m > 0 else 0.0,
+        })
+
+    if not stations:
+        stations = [{
+            "rank": 1,
+            "name": "No stations available",
+            "type": "STATION",
+            "lat": 0.0,
+            "lon": 0.0,
+            "radius_mi": 0.0,
+        }]
+
+    page = Image.new("RGBA", (page_w, page_h), bg)
+    draw = ImageDraw.Draw(page)
+
+    font_title = _load_pdf_font(50, bold=True)
+    font_sub = _load_pdf_font(21, bold=False)
+    font_small = _load_pdf_font(17, bold=False)
+    font_small_bold = _load_pdf_font(17, bold=True)
+    font_pin = _load_pdf_font(20, bold=True)
+    font_pin_small = _load_pdf_font(14, bold=True)
+
+    _rounded_rect(draw, (margin, margin, page_w - margin, page_h - margin), 34, card, outline=line, width=3)
+    draw.rounded_rectangle((margin, margin, page_w - margin, margin + 86), radius=34, fill=navy)
+    draw.rectangle((margin, margin + 58, page_w - margin, margin + 66), fill=cyan)
+    draw.text((margin + 36, margin + 18), "Executive Summary Map", font=font_small_bold, fill=(188, 220, 233, 255))
+    draw.text((margin + 36, margin + 84), city_label, font=font_title, fill=ink)
+    draw.text((margin + 36, margin + 138), "All stations are shown on one page, with extra zoom-out to keep the full fleet in frame.", font=font_sub, fill=muted)
+
+    map_box = (margin + 24, body_top, page_w - margin - 24, body_bottom)
+    map_x0, map_y0, map_x1, map_y1 = map_box
+    _rounded_rect(draw, map_box, 30, card, outline=line, width=3)
+    draw.text((map_x0 + 28, map_y0 + 18), f"Station placement map - {city_label}", font=font_small_bold, fill=ink)
+    draw.text((map_x0 + 28, map_y0 + 48), "Stations are numbered in deployment order. Type colors are shown in the legend.", font=font_small, fill=muted)
+
+    legend_items = [
+        ("Responder", cyan),
+        ("Guardian", gold),
+        ("Station", navy_2),
+    ]
+    legend_x = map_x1 - 516
+    legend_y = map_y0 + 14
+    for i, (label, color) in enumerate(legend_items):
+        lx = legend_x + i * 168
+        draw.rounded_rectangle((lx, legend_y, lx + 150, legend_y + 34), radius=16, fill=card_soft, outline=line, width=2)
+        draw.ellipse((lx + 10, legend_y + 8, lx + 26, legend_y + 24), fill=color, outline=color)
+        draw.text((lx + 36, legend_y + 7), label, font=font_pin_small, fill=ink)
+
+    inner = (map_x0 + 36, map_y0 + 88, map_x1 - 36, map_y1 - 52)
+    draw.rounded_rectangle(inner, radius=24, fill=card_soft, outline=line, width=2)
+    for frac in (0.2, 0.4, 0.6, 0.8):
+        x = inner[0] + int((inner[2] - inner[0]) * frac)
+        y = inner[1] + int((inner[3] - inner[1]) * frac)
+        draw.line((x, inner[1] + 14, x, inner[3] - 14), fill=(225, 231, 239, 255), width=2)
+        draw.line((inner[0] + 14, y, inner[2] - 14, y), fill=(225, 231, 239, 255), width=2)
+
+    lats = [s["lat"] for s in stations if math.isfinite(s["lat"])]
+    lons = [s["lon"] for s in stations if math.isfinite(s["lon"])]
+    if not lats or not lons:
+        lats = [0.0]
+        lons = [0.0]
+
+    lat_min, lat_max = min(lats), max(lats)
+    lon_min, lon_max = min(lons), max(lons)
+    lat_span = max(lat_max - lat_min, 0.001)
+    lon_span = max(lon_max - lon_min, 0.001)
+    pad_boost = 0.40 + min(0.25, len(stations) * 0.012)
+    pad_lat = max(lat_span * pad_boost, 0.03)
+    pad_lon = max(lon_span * pad_boost, 0.03)
+    lat_min -= pad_lat
+    lat_max += pad_lat
+    lon_min -= pad_lon
+    lon_max += pad_lon
+
+    center_lat = (lat_min + lat_max) / 2.0
+    mi_per_deg_lat = 69.0
+    mi_per_deg_lon = max(1.0, 69.0 * max(math.cos(math.radians(center_lat)), 0.25))
+    px_per_mi_x = (inner[2] - inner[0] - 72) / max((lon_max - lon_min) * mi_per_deg_lon, 0.1)
+    px_per_mi_y = (inner[3] - inner[1] - 72) / max((lat_max - lat_min) * mi_per_deg_lat, 0.1)
+    px_per_mi = max(1.0, min(px_per_mi_x, px_per_mi_y))
+
+    def _map_xy(lon, lat):
+        x = inner[0] + 36 + (lon - lon_min) * mi_per_deg_lon * px_per_mi
+        y = inner[3] - 36 - (lat - lat_min) * mi_per_deg_lat * px_per_mi
+        return x, y
+
+    draw.rounded_rectangle((inner[0] + 10, inner[1] + 10, inner[2] - 10, inner[3] - 10), radius=22, outline=(183, 196, 210, 255), width=3)
+
+    type_palette = {
+        "RESPONDER": (0, 210, 255, 42),
+        "GUARDIAN": (245, 196, 66, 42),
+        "STATION": (17, 24, 39, 42),
+    }
+    type_stroke = {
+        "RESPONDER": cyan,
+        "GUARDIAN": gold,
+        "STATION": navy_2,
+    }
+
+    show_labels = len(stations) <= 10
+    for station in stations:
+        x, y = _map_xy(station["lon"], station["lat"])
+        radius_px = max(24, int(round(station["radius_mi"] * px_per_mi)))
+        accent = type_stroke.get(station["type"], navy_2)
+        fill = type_palette.get(station["type"], (17, 24, 39, 38))
+        draw.ellipse((x - radius_px, y - radius_px, x + radius_px, y + radius_px), outline=accent, width=5, fill=fill)
+        pin_r = 26
+        draw.ellipse((x - pin_r, y - pin_r, x + pin_r, y + pin_r), fill=card, outline=accent, width=5)
+        draw.ellipse((x - 10, y - 10, x + 10, y + 10), fill=accent, outline=accent)
+        num = str(station["rank"])
+        num_w, num_h = _text_box(draw, num, font_pin)
+        draw.text((x - num_w / 2, y - num_h / 2 - 2), num, font=font_pin, fill=card)
+
+        if show_labels:
+            label = station["name"]
+            label = label[:28] + "..." if len(label) > 31 else label
+            label_w, label_h = _text_box(draw, label, font_small_bold)
+            lx = min(max(x + 40, inner[0] + 8), inner[2] - label_w - 12)
+            ly = max(min(y - 52, inner[3] - label_h - 12), inner[1] + 8)
+            draw.rounded_rectangle((lx - 10, ly - 6, lx + label_w + 10, ly + label_h + 8), radius=14, fill=(255, 255, 255, 230), outline=(219, 226, 235, 255), width=2)
+            draw.text((lx, ly), label, font=font_small_bold, fill=ink)
+
+    footer_text = f"{city_label}  ·  {len(stations)} station{'s' if len(stations) != 1 else ''}"
+    draw.line((margin + 28, page_h - margin - 38, page_w - margin - 28, page_h - margin - 38), fill=line, width=2)
+    draw.text((margin + 32, page_h - margin - 24), footer_text, font=font_small, fill=muted)
+    draw.text((page_w - margin - 430, page_h - margin - 24), "Map-only PDF export", font=font_small, fill=muted)
+
+    output = io.BytesIO()
+    page.convert("RGB").save(output, format="PDF", resolution=300.0)
+    return output.getvalue()
 
 
 def format_3_lines(name_str):
@@ -5386,6 +7303,809 @@ if (stations.length === 0) {{
 
 </body>
 
+</html>"""
+
+    return html
+
+
+def generate_fernandina_beach_public_service_report_html(stations, *, city="Fernandina Beach", state="FL"):
+
+    """Generate a Fernandina Beach-only coastal rescue and beach safety briefing."""
+
+    import html as _html
+    import plotly.graph_objects as go
+
+    def _esc(value):
+        return _html.escape("" if value is None else str(value), quote=True)
+
+    def _num(value, digits=2):
+        try:
+            return f"{float(value):.{digits}f}"
+        except Exception:
+            return f"{0.0:.{digits}f}"
+
+    def _get_row_value(row, *keys):
+        for key in keys:
+            if key in row and row.get(key) not in (None, ""):
+                return row.get(key)
+        lowered = {str(k).strip().lower(): v for k, v in row.items()}
+        for key in keys:
+            if key.lower() in lowered and lowered[key.lower()] not in (None, ""):
+                return lowered[key.lower()]
+        return ""
+
+    def _to_float(value, default=0.0):
+        try:
+            if value in (None, ""):
+                return float(default)
+            return float(value)
+        except Exception:
+            return float(default)
+
+    def _haversine_miles(lat1, lon1, lat2, lon2):
+        r_mi = 3958.8
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        d_phi = math.radians(lat2 - lat1)
+        d_lam = math.radians(lon2 - lon1)
+        a = math.sin(d_phi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lam / 2.0) ** 2
+        return 2.0 * r_mi * math.asin(math.sqrt(max(0.0, min(1.0, a))))
+
+    station_rows = list(stations or [])
+    norm_rows = []
+    pairwise_rows = []
+    coords = []
+
+    for idx, row in enumerate(station_rows):
+        row = row or {}
+        name = str(_get_row_value(row, "name") or f"Station {idx + 1}").strip()
+        kind = str(_get_row_value(row, "type") or "Public Safety").strip()
+        address = str(_get_row_value(row, "address") or "").strip()
+        capacity = _get_row_value(row, "capacity")
+        notes = str(_get_row_value(row, "notes") or "").strip()
+        lat = _to_float(_get_row_value(row, "lat"))
+        lon = _to_float(_get_row_value(row, "lon"))
+        coords.append((name, lat, lon))
+        norm_rows.append({
+            "name": name,
+            "type": kind,
+            "address": address,
+            "capacity": capacity,
+            "notes": notes,
+            "lat": lat,
+            "lon": lon,
+        })
+
+    for i in range(len(coords)):
+        for j in range(i + 1, len(coords)):
+            a_name, a_lat, a_lon = coords[i]
+            b_name, b_lat, b_lon = coords[j]
+            pairwise_rows.append({
+                "a": a_name,
+                "b": b_name,
+                "distance": _haversine_miles(a_lat, a_lon, b_lat, b_lon),
+            })
+
+    max_span = max((item["distance"] for item in pairwise_rows), default=0.0)
+    if len(coords) >= 3:
+        centroid_lat = sum(lat for _, lat, _ in coords) / len(coords)
+        centroid_lon = sum(lon for _, _, lon in coords) / len(coords)
+    elif coords:
+        centroid_lat = sum(lat for _, lat, _ in coords) / len(coords)
+        centroid_lon = sum(lon for _, _, lon in coords) / len(coords)
+    else:
+        centroid_lat = centroid_lon = 0.0
+
+    station_cards = []
+    for idx, item in enumerate(norm_rows):
+        role_text = {
+            "Police": "Coastal rescue / patrol base",
+            "Fire": "Rescue and medical support base",
+            "EMS": "Water rescue and triage support",
+        }.get(item["type"], "Public safety node")
+        station_cards.append(
+            f"""
+            <div class="station-card">
+              <div class="station-top">
+                <div>
+                  <div class="station-name">{_esc(item["name"])}</div>
+                  <div class="station-role">{_esc(role_text)}</div>
+                </div>
+                <div class="station-index">0{idx + 1}</div>
+              </div>
+              <div class="station-meta">{_esc(item["type"])}{f' · {_esc(item["capacity"])} capacity' if item["capacity"] not in (None, "") else ""}</div>
+              <div class="station-meta">{_esc(item["address"]) if item["address"] else "Address not provided"}</div>
+              <div class="station-meta">Lat {_num(item["lat"], 6)} · Lon {_num(item["lon"], 6)}</div>
+              <div class="station-notes">{_esc(item["notes"]) if item["notes"] else "Built to support fast shoreline rescue, nearshore overwatch, and waterfront public-service response."}</div>
+            </div>
+            """
+        )
+
+    pairwise_list = "".join(
+        f"<li><strong>{_esc(item['a'])}</strong> to <strong>{_esc(item['b'])}</strong>: {_num(item['distance'], 2)} miles</li>"
+        for item in pairwise_rows
+    ) or "<li>No pairwise spacing data available.</li>"
+
+    source_items = [
+        (
+            "U.S. Coast Guard 2024 Recreational Boating Statistics",
+            "https://www.uscgboating.org/library/accident-statistics/Recreational-Boating-Statistics-2024.pdf",
+            "The Coast Guard verified 3,887 boating incidents, 556 deaths, 2,170 injuries, and about $88 million in property damage in calendar year 2024.",
+        ),
+        (
+            "U.S. Coast Guard 2025 Life Jacket Wear Rate Study",
+            "https://uscgboating.org/multimedia/news-detail.php?id=580",
+            "For 2024 fatal boating accidents where cause of death was known, 76% of victims drowned and 87% of those drowning victims were not wearing life jackets.",
+        ),
+        (
+            "NOAA Beach Safety",
+            "https://www.weather.gov/safety/beach",
+            "NOAA tells beachgoers to check surf-zone forecasts and beach advisories before entering the water.",
+        ),
+        (
+            "NOAA Rip Current Safety",
+            "https://www.weather.gov/safety/ripcurrent",
+            "NOAA advises swimmers caught in a rip current not to fight it, and to swim parallel to shore to escape the current.",
+        ),
+        (
+            "NOAA Tides and Currents",
+            "https://oceanservice.noaa.gov/navigation/tidesandcurrents/",
+            "NOAA explains that tides and currents directly affect navigation, stranded-water risk, and coastal safety planning.",
+        ),
+        (
+            "Jacksonville Area Wage Benchmark",
+            "https://www.bls.gov/regions/southeast/news-release/occupationalemploymentandwages_jacksonville.htm",
+            "BLS reported a mean hourly wage of $29.86 for workers in the Jacksonville metro area in the May 2024 OEWS release, published May 2025.",
+        ),
+        (
+            "FWC Sea Turtle Nesting",
+            "https://myfwc.com/research/about/archive/turtle-nesting/",
+            "FWC documents statewide sea turtle nesting-beach monitoring, daily survey work, and a long nesting season on Florida beaches.",
+        ),
+        (
+            "FWC Stingray Safety",
+            "https://myfwc.com/research/saltwater/sharks-rays/ray-species/",
+            "FWC says most stingray injuries require immediate medical attention and recommends caution in shallow surf-zone water.",
+        ),
+        (
+            "FWC Jellyfish",
+            "https://myfwc.com/wildlifehabitats/profiles/invertebrates/jellyfish/",
+            "FWC notes that even washed-ashore jellyfish can still sting and should not be handled.",
+        ),
+        (
+            "FWC Injured and Orphaned Wildlife",
+            "https://myfwc.com/conservation/you-conserve/wildlife/injured-orphaned/",
+            "FWC directs reports of injured, sick, orphaned, or dead marine wildlife and other protected species through the Wildlife Alert Hotline.",
+        ),
+        (
+            "FWC Raptors",
+            "https://myfwc.com/license/wildlife/protected-wildlife-permits/raptors/",
+            "FWC reports seasonal raptor dive incidents, often around nests, with some strikes occurring as far as 150 feet away from the nest.",
+        ),
+        (
+            "BRINC Responder Drone",
+            "https://brincdrones.com/responder/",
+            "Responder is BRINC's purpose-made 911 response drone with 42 minutes of flight time, 44 mph top speed, 40x total zoom, 640px thermal, 4G teleoperations, and payload-drop support for lifesaving gear.",
+        ),
+        (
+            "BRINC Guardian Drone",
+            "https://brincdrones.com/guardian/",
+            "Guardian is BRINC's next-generation DFR platform with 62 minutes of flight time, 60 mph top speed, unlimited range with satellite connectivity, and a 10-lb payload capacity.",
+        ),
+        (
+            "BRINC LiveOps",
+            "https://brincdrones.com/liveops/",
+            "LiveOps provides live streaming, real-time maps, and multi-drone visibility on a single page for coordinated operations.",
+        ),
+    ]
+
+    source_html = "".join(
+        f'<li><a href="{_esc(url)}" target="_blank" rel="noopener noreferrer">{_esc(title)}</a> - {_esc(desc)}</li>'
+        for title, url, desc in source_items
+    )
+
+    coastal_rules = [
+        "Beach rescue should start with lifeguard support, swimmer overwatch, and throw-drop flotation. NOAA instructs swimmers to follow beach-patrol guidance and rip-current safety practices before they commit themselves deeper into the surf zone.",
+        "Flotation payloads belong in the first response tier because the Coast Guard's 2025 wear-rate study found that, in 2024 fatal boating accidents where cause of death was known, 87% of drowning victims were not wearing life jackets.",
+        "Seasonal tide swings and current changes matter operationally because NOAA describes tides and currents as direct inputs to navigation, stranded-water risk, and coastal safety planning. On the water, the report should treat those conditions as demand multipliers, not background noise.",
+        "The mission framing should stay on rescue, boating safety, beach safety, and public service. The Coast Guard's national accident statistics show why that focus matters: 3,887 incidents, 556 deaths, and 2,170 injuries in 2024 alone.",
+        "Animal-encounter readiness should cover stingray stings, jellyfish contacts, turtle nesting season, raptor dive behavior, stranded marine life, and pet-related beach calls because Florida beaches routinely intersect with protected wildlife and seasonal nesting activity.",
+    ]
+
+    coastal_costs = [
+        {
+            "label": "Jacksonville labor floor",
+            "value": "$29.86/hr",
+            "support": "BLS reported a mean hourly wage of $29.86 for workers in the Jacksonville metro area in the May 2024 OEWS release, published May 2025.",
+            "source": "https://www.bls.gov/regions/southeast/news-release/occupationalemploymentandwages_jacksonville.htm",
+            "detail": "This is the local labor benchmark to anchor seasonal overwatch, beach-weekend staffing, and command coverage for Fernandina Beach.",
+        },
+        {
+            "label": "Marine ops labor",
+            "value": "$66,490/yr",
+            "support": "BLS reports a $66,490 median annual wage for water transportation workers in May 2024; motorboat operators specifically were $51,880.",
+            "source": "https://www.bls.gov/ooh/transportation-and-material-moving/water-transportation-occupations.htm",
+            "detail": "A water-patrol program often has to pay for skilled marine operators, not just land-based patrol time.",
+        },
+        {
+            "label": "Coordinated rescue response",
+            "value": "~$96.31/hr",
+            "support": "Illustrative direct labor floor built from Jacksonville area mean wage ($29.86/hr), EMT median wage ($41,340/yr, about $19.88/hr), water transportation workers ($66,490/yr, about $31.97/hr), and lifeguard median wage ($14.60/hr).",
+            "source": "https://www.bls.gov/regions/southeast/news-release/occupationalemploymentandwages_jacksonville.htm",
+            "detail": "This is the direct payroll floor for a coordinated beach rescue that combines lifeguard overwatch, a marine launch, medical response, and command oversight before fuel, overtime, or equipment replenishment.",
+        },
+        {
+            "label": "Launch / engine ops",
+            "value": "$2.03/hr",
+            "support": "FEMA's 2025 Schedule of Equipment Rates lists a 'Boat, removable engine' at $2.03 per hour for the reference outboard motor entry.",
+            "source": "https://www.fema.gov/sites/default/files/documents/fema_pa_schedule-equipment-rates_2025.pdf",
+            "detail": "This is the operating benchmark for keeping rescue craft launch-ready: fuel, engine wear, and the cost of standing by for the next swimmer rescue, flotation drop, or nearshore assist.",
+        },
+        {
+            "label": "First-aid replenishment",
+            "value": "$195.44",
+            "support": "A GSA Advantage pricing list shows an emergency first-aid kit at $195.44 per unit.",
+            "source": "https://www.gsaadvantage.gov/ref_text/GS07F0395V/0X1UT7.3SS7RW_GS-07F-0357M_TEXTFILE.PDF",
+            "detail": "This reflects the consumable side of a beach rescue mission: bandages, gloves, trauma supplies, flotation-support gear, and the routine replacement that follows repeated shoreline calls.",
+        },
+        {
+            "label": "Tide / current monitoring",
+            "value": "6-minute obs",
+            "support": "NOAA says many coastal water-level stations provide observations every six minutes and that tides/currents are important for safe navigation and stranded-water risk.",
+            "source": "https://oceanservice.noaa.gov/navigation/tidesandcurrents/",
+            "detail": "This is a staffing and supervision burden even though the data itself is free: somebody has to watch it, interpret it, and act on it.",
+        },
+        {
+            "label": "Wildlife season window",
+            "value": "May 1-Oct 31",
+            "support": "FWC says marine turtle nesting season runs May 1 to October 31 and that daily nest-survey/protection work occurs through the permitted beach area.",
+            "source": "https://myfwc.com/wildlifehabitats/wildlife/sea-turtle/beach-activities/beach-cleaning-guidelines/",
+            "detail": "That is the annual span when beach operations have to account for nesting turtles, hatchlings, and beach-access restrictions.",
+        },
+    ]
+
+    drone_mix_rows = [
+        {
+            "title": "1 Responder",
+            "mission": "Fastest single-launch beach overwatch, person location, and payload-drop option",
+            "value": "42 min / 44 mph",
+            "support": "Responder is BRINC's purpose-made 911 response drone. BRINC lists 42 minutes of flight time, 44 mph top speed, 40x total zoom, 640px thermal, and payload-drop support for lifesaving equipment.",
+            "source": "https://brincdrones.com/responder/",
+        },
+        {
+            "title": "1 Guardian",
+            "mission": "Best single-aircraft choice for peak-season crowd overwatch and person location across a larger shoreline",
+            "value": "62 min / 60 mph",
+            "support": "Guardian is BRINC's next-generation DFR drone with 62 minutes of flight time, 60 mph top speed, unlimited range with satellite connectivity, and a 10-lb payload capacity.",
+            "source": "https://brincdrones.com/guardian/",
+        },
+        {
+            "title": "2 Units",
+            "mission": "One drone flying while the other is staged, charging, or covering a second access point",
+            "value": "Coverage + redundancy",
+            "support": "BRINC's LiveOps platform supports multi-drone live streaming on a single page, which is the operational foundation for keeping one drone airborne while another is staged or charging.",
+            "source": "https://brincdrones.com/liveops/",
+        },
+        {
+            "title": "3 Units",
+            "mission": "North, center, and south coverage with surge redundancy for busy beach days",
+            "value": "Best for 24/7 posture",
+            "support": "Guardian Station is designed for 24/7 DFR operations and automatic redeploy, while BRINC says LiveOps can stream an entire fleet on a single page. Three units support a true shift-based coastal operations model.",
+            "source": "https://brincdrones.com/guardian/",
+        },
+    ]
+
+    map_points = []
+    for idx, item in enumerate(norm_rows):
+        map_points.append({
+            "name": item["name"],
+            "type": item["type"],
+            "lat": item["lat"],
+            "lon": item["lon"],
+            "address": item["address"],
+            "popup": f"{item['name']} ({item['type']})<br>{item['address'] or 'Address not provided'}",
+            "index": idx + 1,
+        })
+    map_center_lat = centroid_lat if centroid_lat else 30.637868
+    map_center_lon = centroid_lon if centroid_lon else -81.437910
+    map_zoom = 11 if max_span <= 3.0 else 10 if max_span <= 6.0 else 9
+    coverage_radius_mi = max(0.75, min(1.25, (max_span / 4.0) if max_span else 0.9))
+    station_palette = ["#58d6ff", "#f5c542", "#34d399", "#fb7185", "#a78bfa"]
+    legend_bg = "rgba(15, 23, 42, 0.92)"
+    legend_text = "#e2e8f0"
+    accent_color = "#58d6ff"
+
+    map_fig = go.Figure()
+    if map_points:
+        station_colors = []
+        station_lats = []
+        station_lons = []
+        station_text = []
+        for idx, item in enumerate(map_points):
+            color = station_palette[idx % len(station_palette)]
+            station_colors.append(color)
+            station_lats.append(item["lat"])
+            station_lons.append(item["lon"])
+            station_text.append(
+                f"<b>{_esc(item['name'])}</b><br>"
+                f"{_esc(item['type'])}<br>"
+                f"{_esc(item.get('address') or 'Address not provided')}"
+            )
+
+            clats, clons = get_circle_coords(item["lat"], item["lon"], r_mi=coverage_radius_mi)
+            map_fig.add_trace(go.Scattermap(
+                lat=list(clats) + [None, item["lat"]],
+                lon=list(clons) + [None, item["lon"]],
+                mode="lines+markers",
+                line=dict(color=color, width=3),
+                marker=dict(size=[0] * len(clats) + [0, 14], color=color),
+                fill="toself",
+                fillcolor="rgba(0,0,0,0)",
+                name="Coverage Radius" if idx == 0 else None,
+                hoverinfo="skip",
+                showlegend=(idx == 0),
+            ))
+
+        map_fig.add_trace(go.Scattermap(
+            lat=station_lats,
+            lon=station_lons,
+            mode="markers",
+            marker=dict(size=18, color=station_colors),
+            text=station_text,
+            customdata=station_text,
+            name="Station Nodes",
+            hovertemplate="%{customdata}<extra></extra>",
+            showlegend=True,
+        ))
+
+        if len(map_points) > 1:
+            map_fig.add_trace(go.Scattermap(
+                lat=station_lats,
+                lon=station_lons,
+                mode="lines",
+                line=dict(color="rgba(245,197,66,.85)", width=3),
+                name="Station Link",
+                hoverinfo="skip",
+                showlegend=True,
+            ))
+
+    map_fig.update_layout(
+        map=dict(
+            center=dict(lat=map_center_lat, lon=map_center_lon),
+            zoom=map_zoom,
+            style="carto-darkmatter",
+        ),
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=500,
+        showlegend=True,
+        legend=dict(
+            yanchor="top",
+            y=0.98,
+            xanchor="left",
+            x=0.02,
+            bgcolor=legend_bg,
+            bordercolor=accent_color,
+            borderwidth=1,
+            font=dict(size=12, color=legend_text),
+            itemclick="toggle",
+        ),
+    )
+    map_html = map_fig.to_html(
+        full_html=False,
+        include_plotlyjs="cdn",
+        default_height="500px",
+        default_width="100%",
+        config={"displayModeBar": False, "responsive": True},
+    )
+
+    report_title = f"{_esc(city)}, {_esc(state)} Coastal Rescue & Beach Safety Briefing"
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{report_title}</title>
+<style>
+  :root {{
+    --bg: #08131f;
+    --panel: #0f1f2f;
+    --panel-2: #13283c;
+    --text: #eff6ff;
+    --muted: #a8b6c7;
+    --accent: #58d6ff;
+    --accent-2: #7dd3fc;
+    --gold: #f5c542;
+    --line: rgba(255,255,255,.08);
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: linear-gradient(180deg, #06111b 0%, #0a1724 28%, #f5f7fb 28%, #f5f7fb 100%);
+    color: #101828;
+  }}
+  .wrap {{ max-width: 1180px; margin: 0 auto; padding: 28px 20px 44px; }}
+  .hero {{
+    background: radial-gradient(circle at top right, rgba(88,214,255,.12), transparent 35%), linear-gradient(135deg, var(--bg), #0b1a28 70%);
+    color: var(--text);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 24px;
+    padding: 30px;
+    box-shadow: 0 24px 64px rgba(2, 6, 23, .28);
+  }}
+  .eyebrow {{
+    text-transform: uppercase;
+    letter-spacing: .18em;
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 800;
+  }}
+  h1 {{ margin: 10px 0 10px; font-size: 38px; line-height: 1.05; }}
+  .subtitle {{ margin: 0; max-width: 820px; font-size: 17px; line-height: 1.7; color: var(--muted); }}
+  .meta {{
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 20px;
+  }}
+  .metric {{
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 16px;
+    padding: 16px;
+  }}
+  .metric .k {{ font-size: 11px; text-transform: uppercase; letter-spacing: .14em; color: var(--muted); font-weight: 800; }}
+  .metric .v {{ font-size: 19px; margin-top: 8px; font-weight: 900; color: #fff; line-height: 1.25; }}
+  .grid {{ display: grid; gap: 14px; margin-top: 18px; }}
+  .two {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+  .section {{
+    background: #fff;
+    border: 1px solid #d9e2ee;
+    border-radius: 22px;
+    padding: 24px;
+    box-shadow: 0 16px 30px rgba(15, 23, 42, .05);
+    margin-top: 18px;
+  }}
+  .section h2 {{ margin: 0 0 10px; font-size: 26px; line-height: 1.15; color: #0b1220; }}
+  .section p, .section li {{ color: #334155; font-size: 16px; line-height: 1.75; }}
+  .section ul {{ margin: 12px 0 0 20px; padding: 0; }}
+  .badge {{
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(88,214,255,.12);
+    color: #0b5d78;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+  }}
+  .station-grid {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 12px; }}
+  .station-card {{
+    border: 1px solid #d9e2ee;
+    background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
+    border-radius: 18px;
+    padding: 18px;
+    min-height: 220px;
+  }}
+  .station-top {{ display: flex; justify-content: space-between; gap: 12px; }}
+  .station-index {{
+    font-size: 12px;
+    font-weight: 900;
+    color: var(--gold);
+    background: #fff7d6;
+    border-radius: 999px;
+    padding: 6px 10px;
+    white-space: nowrap;
+    height: fit-content;
+  }}
+  .station-name {{ font-size: 20px; font-weight: 900; color: #0b1220; margin-bottom: 6px; }}
+  .station-role {{ font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .12em; color: #0b5d78; }}
+  .station-meta {{ margin-top: 8px; font-size: 14px; color: #475569; }}
+  .station-notes {{ margin-top: 12px; padding-top: 12px; border-top: 1px dashed #d9e2ee; color: #1e293b; font-size: 15px; line-height: 1.6; }}
+  .pairwise {{ columns: 2; column-gap: 24px; }}
+  .pairwise li {{ break-inside: avoid; margin-bottom: 8px; }}
+  .source-list a {{ color: #0b5d78; text-decoration: none; font-weight: 700; }}
+  .source-list li {{ margin-bottom: 10px; }}
+  .footer-note {{
+    margin-top: 18px;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.6;
+  }}
+  .cost-grid {{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 14px;
+  }}
+  .mix-grid {{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 14px;
+  }}
+  .mix-card {{
+    border: 1px solid #d9e2ee;
+    border-radius: 18px;
+    padding: 18px;
+    background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
+  }}
+  .mix-card .top {{
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+  }}
+  .mix-card .title {{
+    font-size: 18px;
+    font-weight: 900;
+    color: #0b1220;
+  }}
+  .mix-card .mission {{
+    margin-top: 6px;
+    color: #0b5d78;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+  }}
+  .mix-card .value {{
+    font-size: 24px;
+    font-weight: 900;
+    color: #0b1220;
+    white-space: nowrap;
+  }}
+  .mix-card .desc {{
+    margin-top: 10px;
+    color: #334155;
+    font-size: 15px;
+    line-height: 1.65;
+  }}
+  .cost-card {{
+    border: 1px solid #d9e2ee;
+    border-radius: 18px;
+    padding: 18px;
+    background: linear-gradient(180deg, #fff 0%, #f8fbff 100%);
+  }}
+  .cost-card-head {{
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: flex-start;
+  }}
+  .cost-card .label {{
+    font-size: 13px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    color: #0b5d78;
+  }}
+  .cost-card .value {{
+    font-size: 28px;
+    font-weight: 900;
+    color: #0b1220;
+    margin-top: 4px;
+  }}
+  .cost-card .desc {{
+    margin-top: 10px;
+    color: #334155;
+    font-size: 15px;
+    line-height: 1.65;
+  }}
+  .tip {{
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: rgba(88,214,255,.14);
+    border: 1px solid rgba(11,93,120,.22);
+    color: #0b5d78;
+    font-size: 11px;
+    font-weight: 900;
+    cursor: default;
+    position: relative;
+    flex: 0 0 auto;
+    margin-left: 6px;
+  }}
+  .tip:hover::after {{
+    content: attr(data-tip);
+    position: absolute;
+    left: 50%;
+    bottom: 130%;
+    transform: translateX(-50%);
+    width: 290px;
+    max-width: 70vw;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: #0f172a;
+    color: #e2e8f0;
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.5;
+    z-index: 9999;
+    box-shadow: 0 10px 24px rgba(0,0,0,.25);
+    border: 1px solid rgba(255,255,255,.08);
+  }}
+  .map-shell {{
+    border: 1px solid #d9e2ee;
+    border-radius: 18px;
+    overflow: hidden;
+    margin-top: 14px;
+    background: #fff;
+  }}
+  .map-head {{
+    padding: 14px 16px;
+    background: #f8fbff;
+    border-bottom: 1px solid #d9e2ee;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }}
+  .map-head .title {{
+    font-size: 14px;
+    font-weight: 800;
+    color: #0b1220;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+  }}
+  .map-head .note {{
+    font-size: 13px;
+    color: #475569;
+  }}
+  .recommendation-callout {{
+    margin-top: 14px;
+    padding: 16px 18px;
+    border-radius: 16px;
+    border: 1px solid rgba(88,214,255,.28);
+    background: linear-gradient(135deg, rgba(88,214,255,.12), rgba(245,197,66,.10));
+    color: #0b1220;
+    box-shadow: 0 12px 26px rgba(15, 23, 42, .08);
+  }}
+  .recommendation-callout strong {{
+    color: #083b50;
+  }}
+  @media (max-width: 980px) {{
+    .meta, .two, .station-grid {{ grid-template-columns: 1fr; }}
+    h1 {{ font-size: 30px; }}
+    .pairwise {{ columns: 1; }}
+  }}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div class="eyebrow">Fernandina Beach Only</div>
+      <h1>{report_title}</h1>
+      <p class="subtitle">A non-law-enforcement executive briefing focused on water rescue, boating safety, beach safety, seasonal tide changes, payload drops of life jackets or flotation aids, and other beach-community public service needs.</p>
+      <div class="meta">
+        <div class="metric"><div class="k">Station Count</div><div class="v">{len(norm_rows)}</div></div>
+        <div class="metric"><div class="k">Layout Span</div><div class="v">{_num(max_span, 2)} miles max separation</div></div>
+        <div class="metric"><div class="k">Centroid</div><div class="v">{_num(centroid_lat, 6)}, {_num(centroid_lon, 6)}</div></div>
+        <div class="metric"><div class="k">Mission</div><div class="v">Rescue, beach safety, public service</div></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <span class="badge">Placement Advantages</span>
+      <h2>Why the three-point layout is strong</h2>
+      <p>The three stations create a compact north-central-south coverage spine. That matters for a barrier-island environment because it reduces dead zones, keeps response travel short, and gives the operator a central command node with northern and southeastern redundancy.</p>
+      <ul>
+        <li><strong>Ocean Rescue Headquarters</strong> works as the central dispatch and staging hub, which is the right place for mission control, communications, and payload readiness.</li>
+        <li><strong>Ritz Carlton</strong> gives the north Amelia Island side a faster beach and nearshore response option where visitor density and beach exposure tend to be high.</li>
+        <li><strong>Atlantic Recreational Center</strong> adds southeast corridor reach, which helps cover beach access, recreation, and near-water public service calls on the far side of the island.</li>
+        <li>The widest station-to-station span is only <strong>{_num(max_span, 2)} miles</strong>, so the network stays tight enough to reposition quickly while still covering a meaningful shoreline footprint.</li>
+      </ul>
+      <p class="footer-note">These placement advantages come straight from the station geometry you provided. A shoreline shapefile overlay can be added later if you want to verify exact beach access coverage, waterway reach, and launch-point control against parcel geometry.</p>
+      <div class="map-shell">
+        <div class="map-head">
+          <div class="title">Rescue Coverage Map</div>
+          <div class="note">Interactive station layout for rescue staging, flotation drops, and rapid repositioning</div>
+        </div>
+        {map_html}
+      </div>
+    </section>
+
+    <section class="section">
+      <span class="badge">Station Geometry</span>
+      <h2>Station file summary</h2>
+      <div class="station-grid">
+        {''.join(station_cards) if station_cards else '<p>No station records were found.</p>'}
+      </div>
+      <div class="grid two" style="margin-top:16px;">
+        <div>
+          <h3 style="margin:0 0 8px;font-size:20px;color:#0b1220;">Spacing snapshot</h3>
+          <ul class="pairwise">{pairwise_list}</ul>
+        </div>
+        <div>
+          <h3 style="margin:0 0 8px;font-size:20px;color:#0b1220;">Customer value from the layout</h3>
+          <p>For Fernandina Beach, this geometry supports the exact use case the customer cares about: faster lifeguard overwatch, quicker swimmer verification, flotation drops before a boat launch, and short repositioning cycles when tides, surf, or tourist volume change through the day. It also gives the command team a compact north-south launch posture instead of a scattered footprint.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <span class="badge">Beach Mission</span>
+      <h2>Beach rescue priorities</h2>
+      <ul>
+        {''.join(f'<li>{_esc(item)}</li>' for item in coastal_rules)}
+      </ul>
+    </section>
+
+    <section class="section">
+      <span class="badge">Seasonal Cost Drivers</span>
+      <h2>Where beach rescue costs rise</h2>
+      <p>For a beach community, the cost pressure is seasonal readiness, not law-enforcement overhead. More patrol hours, more launches, more standby time, and more consumables are required when tides, surf, and visitor volume peak.</p>
+      <div class="cost-grid">
+        {''.join(
+            f'''
+            <div class="cost-card">
+              <div class="cost-card-head">
+                <div>
+                  <div class="label">{_esc(item["label"])}</div>
+                  <div class="value">{_esc(item["value"])}<span class="tip" data-tip="{_esc(item["support"])}">ⓘ</span></div>
+                </div>
+              </div>
+              <div class="desc">{_esc(item["detail"])}</div>
+              <div class="footer-note" style="margin-top:10px;">
+                Source: <a href="{_esc(item["source"])}" target="_blank" rel="noopener noreferrer">official reference</a>
+              </div>
+            </div>
+            '''
+            for item in coastal_costs
+        )}
+      </div>
+      <p class="footer-note">This section is the right place to layer in patrol-hour assumptions, seasonal headcount, response-time savings, avoided launch costs, and other financial inputs when you are ready to build the pricing case.</p>
+    </section>
+
+    <section class="section">
+      <span class="badge">Drone Quantity</span>
+      <h2>Recommended Drone Mix</h2>
+      <p>Fleet size drives launch speed, endurance, and redundancy. The comparison below shows what each option adds to Fernandina Beach operations.</p>
+      <div class="mix-grid">
+        {''.join(
+            f'''
+            <div class="mix-card">
+              <div class="top">
+                <div>
+                  <div class="title">{_esc(item["title"])}</div>
+                  <div class="mission">{_esc(item["mission"])}</div>
+                </div>
+                <div class="value">{_esc(item["value"])}<span class="tip" data-tip="{_esc(item["support"])}">â“˜</span></div>
+              </div>
+              <div class="desc">Source: <a href="{_esc(item["source"])}" target="_blank" rel="noopener noreferrer">official reference</a></div>
+            </div>
+            '''
+            for item in drone_mix_rows
+        )}
+      </div>
+      <ul style="margin-top:14px;">
+        <li><strong>1 Responder:</strong> best when the customer wants the fastest single-unit beach overwatch, person location, and payload-drop capability for a lower-entry deployment.</li>
+        <li><strong>1 Guardian:</strong> best when the customer wants the strongest single-aircraft endurance for peak-season crowd control, wider shoreline search, and person location during crowded beach days.</li>
+        <li><strong>2 units:</strong> best when one drone must stay available while the other is flying, charging, or staged at another beach access point.</li>
+        <li><strong>3 units:</strong> best when the customer wants a north-center-south posture with surge redundancy for peak season, special events, and bad surf days.</li>
+      </ul>
+      <div class="recommendation-callout">
+        <strong>Recommended if the customer buys only one unit:</strong> <strong>1 Guardian</strong>. The longer flight time and wider operating reach make it the strongest single-aircraft choice for peak-season overwatch, crowd monitoring, and locating a missing swimmer or beachgoer before a ground or boat response is launched.
+      </div>
+      <p class="footer-note">For a coastal community, the value of additional aircraft is not just more flights. It is faster beach overwatch, less dead time between missions, and a command posture that can keep coverage alive during busy weekends and tide-driven surges.</p>
+    </section>
+
+    <section class="section">
+      <span class="badge">USCG / NOAA Sources</span>
+      <h2>Official data base for the briefing</h2>
+      <ul class="source-list">
+        {source_html}
+      </ul>
+      <p class="footer-note">Use these sources to support the public safety framing: the Coast Guard for boating accident and life-jacket risk context, and NOAA/NWS for surf-zone, rip-current, and beach-safety guidance.</p>
+    </section>
+  </div>
+</body>
 </html>"""
 
     return html

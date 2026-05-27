@@ -4,9 +4,10 @@ import pandas as pd
 import geopandas as gpd
 import numpy as np
 import plotly.graph_objects as go
-from shapely.geometry import box, Point
+from shapely.geometry import box, Point, MultiPolygon, shape
+from shapely.ops import unary_union
 from pathlib import Path
-import os, json, math, urllib.request
+import os, json, math, random, urllib.request
 from modules.config import FAA_CEILING_COLORS, FAA_DEFAULT_COLOR, STATION_COLORS
 
 
@@ -326,10 +327,10 @@ def get_station_faa_ceiling(lat, lon, faa_geojson):
 @st.cache_data
 def fetch_airfields(minx, miny, maxx, maxy):
     """
-    Fetch airfields â€” prefers cached US dataset, falls back to Overpass API.
-    Much faster than querying Overpass per-region during app runtime.
+    Uses the pre-cached US dataset only.
+    Runtime network lookups are intentionally avoided for Path 03.
     """
-    # Try cached version first
+    # Cache-only: missing or empty parquet returns no airfield data.
     try:
         gdf_cached = load_cached_airfields()
         if not gdf_cached.empty:
@@ -352,22 +353,7 @@ def fetch_airfields(minx, miny, maxx, maxy):
     except Exception:
         pass
 
-    # Fallback: Query Overpass API (slower but works without pre-download)
-    pad = 0.2
-    query = f"""[out:json];(node["aeroway"~"aerodrome|heliport"]({miny-pad},{minx-pad},{maxy+pad},{maxx+pad});way["aeroway"~"aerodrome|heliport"]({miny-pad},{minx-pad},{maxy+pad},{maxx+pad}););out center;"""
-    try:
-        req = urllib.request.Request("https://overpass-api.de/api/interpreter", data=query.encode('utf-8'), headers={'User-Agent': 'BRINC_Optimizer'})
-        with urllib.request.urlopen(req, timeout=10) as response:
-            data = json.loads(response.read().decode('utf-8'))
-            airfields = []
-            for el in data.get('elements', []):
-                lat = el.get('lat') or el.get('center', {}).get('lat')
-                lon = el.get('lon') or el.get('center', {}).get('lon')
-                name = el.get('tags', {}).get('name', 'Unknown Airfield')
-                if lat and lon: airfields.append({'name': name, 'lat': lat, 'lon': lon})
-            return airfields
-    except Exception:
-        return []
+    return []
 
 def get_nearest_airfield(lat, lon, airfields):
     if not airfields: return "No data"

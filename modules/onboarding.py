@@ -6,6 +6,7 @@ import os
 import glob
 import time
 import re
+import sys
 import urllib.parse
 import urllib.request
 
@@ -145,7 +146,9 @@ def restore_brinc_session(session_state, save_data):
             stations_df['lon'] = pd.to_numeric(stations_df['lon'], errors='coerce')
             stations_df = stations_df.dropna(subset=['lat', 'lon']).reset_index(drop=True)
             session_state['df_stations'] = stations_df
-            session_state['stations_user_uploaded'] = True
+
+    session_state['boundary_kind'] = save_data.get('boundary_kind', 'place')
+    session_state['boundary_source_path'] = save_data.get('boundary_source_path', '')
 
     boundary_geojson = save_data.get('boundary_geojson')
     if boundary_geojson:
@@ -156,8 +159,26 @@ def restore_brinc_session(session_state, save_data):
         except Exception:
             pass
 
-    session_state['boundary_kind'] = save_data.get('boundary_kind', 'place')
-    session_state['boundary_source_path'] = save_data.get('boundary_source_path', '')
+    if session_state.get('master_gdf_override') is None and calls_data:
+        try:
+            app_mod = sys.modules.get('__main__')
+            resolver = getattr(app_mod, '_select_best_boundary_for_calls', None) if app_mod is not None else None
+            if resolver is None:
+                import app as app_mod  # Local import to avoid tightening the module dependency graph.
+                resolver = getattr(app_mod, '_select_best_boundary_for_calls', None)
+
+            if resolver is not None:
+                boundary_success, boundary_gdf, boundary_kind, _ = resolver(
+                    calls_df,
+                    session_state.get('active_city', ''),
+                    session_state.get('active_state', ''),
+                    prefer_county=bool(session_state.get('use_county_boundary', False)),
+                )
+                if boundary_success and boundary_gdf is not None and not boundary_gdf.empty:
+                    session_state['master_gdf_override'] = boundary_gdf
+                    session_state['boundary_kind'] = boundary_kind
+        except Exception:
+            pass
     session_state['boundary_overlay_gdf'] = None
     session_state['boundary_overlay_name'] = ''
     session_state['boundary_overlay_file'] = ''
@@ -312,6 +333,102 @@ def _normalize_station_columns(station_df):
     return station_df
 
 
+_STATION_COORD_ALIASES = {
+    'lat': [
+        'latitude', 'lat', 'gps_lat', 'gps_latitude', 'y', 'y coord', 'ycoord', 'ycoor',
+        'map_y', 'point_y', 'coord_y', 'northing', 'lat_wgs', 'y_coordinate', 'addressy',
+    ],
+    'lon': [
+        'longitude', 'lon', 'long', 'gps_lon', 'gps_long', 'gps_longitude', 'x',
+        'x coord', 'xcoord', 'xcoor', 'map_x', 'point_x', 'coord_x', 'easting',
+        'lon_wgs', 'x_coordinate', 'addressx',
+    ],
+}
+
+
+def _coord_column_matches(col_name, patterns):
+    norm = str(col_name or '').strip().lower()
+    normalized = norm.replace('-', ' ').replace('_', ' ')
+    compact = re.sub(r'[^a-z0-9]+', '', norm)
+    for pattern in patterns:
+        p_norm = str(pattern).strip().lower()
+        p_normalized = p_norm.replace('-', ' ').replace('_', ' ')
+        p_compact = re.sub(r'[^a-z0-9]+', '', p_norm)
+        if len(p_compact) <= 1:
+            if p_norm == norm or p_normalized == normalized:
+                return True
+            continue
+        if p_norm in norm or p_normalized in normalized or (p_compact and p_compact in compact):
+            return True
+    return False
+
+
+def _find_station_coord_column(station_df, field):
+    exact_aliases = {
+        'lat': {'lat', 'latitude', 'gps_lat', 'gps_latitude', 'y'},
+        'lon': {'lon', 'long', 'longitude', 'gps_lon', 'gps_long', 'gps_longitude', 'x'},
+    }.get(field, set())
+    if field not in _STATION_COORD_ALIASES:
+        return None
+    for column in station_df.columns:
+        col_text = str(column).strip().lower()
+        if col_text in exact_aliases or _coord_column_matches(column, _STATION_COORD_ALIASES[field]):
+            return column
+    return None
+
+
+def _extract_station_lat_lon(station_df):
+    if station_df is None or station_df.empty:
+        return station_df, None, None
+
+    work = station_df.copy()
+    lat_col = _find_station_coord_column(work, 'lat')
+    lon_col = _find_station_coord_column(work, 'lon')
+
+    if lat_col and lon_col:
+        work['lat'] = pd.to_numeric(work[lat_col], errors='coerce')
+        work['lon'] = pd.to_numeric(work[lon_col], errors='coerce')
+        return work, lat_col, lon_col
+
+    numeric_candidates = []
+    for column in work.columns:
+        series = pd.to_numeric(work[column], errors='coerce')
+        valid_count = int(series.notna().sum())
+        if valid_count >= max(2, min(10, len(work))):
+            numeric_candidates.append((column, series, valid_count))
+
+    if len(numeric_candidates) < 2:
+        return work, lat_col, lon_col
+
+    lat_candidates = []
+    lon_candidates = []
+    for column, series, valid_count in numeric_candidates:
+        mn = float(series.min())
+        mx = float(series.max())
+        if -90 <= mn and mx <= 90:
+            lat_candidates.append((column, series, valid_count))
+        if -180 <= mn and mx <= 180:
+            lon_candidates.append((column, series, valid_count))
+
+    def _score(column, hints):
+        name = str(column).strip().lower()
+        return sum(1 for hint in hints if hint in name)
+
+    if lat_candidates:
+        lat_candidates.sort(key=lambda item: (item[2], _score(item[0], ['lat', 'y', 'north'])), reverse=True)
+        lat_col = lat_candidates[0][0]
+        work['lat'] = pd.to_numeric(work[lat_col], errors='coerce')
+
+    if lon_candidates:
+        lon_candidates = [item for item in lon_candidates if item[0] != lat_col]
+        if lon_candidates:
+            lon_candidates.sort(key=lambda item: (item[2], _score(item[0], ['lon', 'long', 'x', 'east'])), reverse=True)
+            lon_col = lon_candidates[0][0]
+            work['lon'] = pd.to_numeric(work[lon_col], errors='coerce')
+
+    return work, lat_col, lon_col
+
+
 def _extract_single_column_station_addresses(station_df):
     if station_df is None or station_df.empty or len(station_df.columns) != 1:
         return station_df, None
@@ -392,7 +509,7 @@ def infer_simulation_targets_from_station_file(
         address_value = str(row[addr_col]).strip() if addr_col and pd.notna(row[addr_col]) else ''
 
         if (not city_name or not state_name) and address_value:
-            lat, lon = forward_geocode(address_value)
+            lat, lon = forward_geocode(address_value, city_name, state_name)
             if lat is not None and lon is not None:
                 geocode_used = True
                 state_full, reverse_city = reverse_geocode_state(lat, lon)
@@ -424,6 +541,7 @@ def load_station_file(station_file):
     stations_df = _read_station_upload(station_file)
     stations_df = _normalize_station_columns(stations_df)
     stations_df, single_col_note = _extract_single_column_station_addresses(stations_df)
+    stations_df, lat_col, lon_col = _extract_station_lat_lon(stations_df)
 
     if 'lat' not in stations_df.columns or 'lon' not in stations_df.columns:
         if single_col_note:
@@ -654,43 +772,125 @@ def resolve_uploaded_boundaries(
     session_state['master_gdf_override'] = None
 
     calls_for_boundary = df_calls_full if df_calls_full is not None and len(df_calls_full) > 0 else df_calls
-    set_stage(35, "Looking for a boundary in the local cache…")
-    coord_gdf = find_jurisdictions_by_coordinates(calls_for_boundary)
+    file_meta = session_state.get('file_meta') or {}
+    file_city = str(file_meta.get('file_inferred_city', '') or '').strip()
+    file_state = str(file_meta.get('file_inferred_state', '') or '').strip().upper()
+    prefer_file_boundary = str(session_state.get('location_detection_source', '') or '').strip().lower() == 'file'
 
-    if coord_gdf is not None and not coord_gdf.empty:
-        set_stage(100, "Boundary resolved from local coordinates.")
-        session_state['master_gdf_override'] = coord_gdf
-        session_state['boundary_source_path'] = 'local_parquet'
-        session_state['boundary_kind'] = 'place'
-        session_state['active_city'] = str(coord_gdf.iloc[0]['DISPLAY_NAME']).title()
+    def _name_based_candidate():
+        if not file_city or not file_state or file_state not in state_fips:
+            return None
+        set_stage(35, "Using the file-inferred city/state to resolve the boundary…")
+        boundary_success, boundary_gdf, boundary_kind, boundary_hits = select_best_boundary_for_calls(
+            calls_for_boundary,
+            file_city,
+            file_state,
+            prefer_county=False,
+        )
+        if not boundary_success or boundary_gdf is None:
+            return None
+        return {
+            'source': 'file_name',
+            'name': file_city,
+            'state': file_state,
+            'kind': boundary_kind,
+            'gdf': boundary_gdf,
+            'hits': int(boundary_hits or 0),
+        }
+
+    def _coord_based_candidate():
+        set_stage(35, "Looking for a boundary in the local cache…")
+        coord_gdf = find_jurisdictions_by_coordinates(calls_for_boundary)
+        if coord_gdf is None or coord_gdf.empty:
+            return None
+        top = coord_gdf.iloc[0]
+        display_name = str(top.get('DISPLAY_NAME', '') or '').strip()
+        if not display_name:
+            return None
+        boundary_kind = str(top.get('boundary_kind', '') or '').strip().lower()
+        if boundary_kind not in {'place', 'county', 'state'}:
+            boundary_kind = 'county' if display_name.lower().endswith(' county') else 'place'
+        return {
+            'source': 'coordinates',
+            'name': display_name,
+            'state': file_state or str(session_state.get('active_state', '') or '').strip().upper(),
+            'kind': boundary_kind,
+            # Preserve call counts so the sidebar can show the true jurisdiction
+            # share instead of falling back to equal weights.
+            'gdf': coord_gdf[['DISPLAY_NAME', 'data_count', 'geometry']].copy()
+            if 'data_count' in coord_gdf.columns
+            else coord_gdf[['DISPLAY_NAME', 'geometry']].copy(),
+            'hits': int(top.get('data_count', 0) or 0),
+        }
+
+    name_candidate = _name_based_candidate() if prefer_file_boundary else None
+    coord_candidate = _coord_based_candidate()
+
+    chosen_candidate = None
+    if name_candidate and coord_candidate:
+        name_hits = int(name_candidate.get('hits', 0) or 0)
+        coord_hits = int(coord_candidate.get('hits', 0) or 0)
+        coord_name = str(coord_candidate.get('name', '') or '').strip().lower()
+        name_name = str(name_candidate.get('name', '') or '').strip().lower()
+        if coord_hits > name_hits or (coord_hits == name_hits and coord_name and name_name and coord_name != name_name):
+            chosen_candidate = coord_candidate
+            set_stage(70, f"Coordinates confirmed {coord_candidate['name']} with {coord_hits:,} matching call(s).")
+        else:
+            chosen_candidate = name_candidate
+            set_stage(70, f"File name confirmed {name_candidate['name']} with {name_hits:,} matching call(s).")
+    else:
+        chosen_candidate = coord_candidate or name_candidate
+
+    if chosen_candidate is None:
+        detected_city = session_state.get('active_city', '')
+        detected_state = session_state.get('active_state', '')
+        if not detected_city or not detected_state or detected_state not in state_fips:
+            set_stage(100, "No active city/state was available for boundary resolution.")
+            stage_progress.empty()
+            stage_box.empty()
+            return
+
+        city_text = str(detected_city).strip()
+        prefer_county = str(session_state.get('location_detection_source', '')) == 'centroid'
+        set_stage(55, "Selecting the best county or place boundary for the current jurisdiction…")
+        boundary_success, boundary_gdf, boundary_kind, _ = select_best_boundary_for_calls(
+            calls_for_boundary,
+            city_text,
+            detected_state,
+            prefer_county=prefer_county,
+        )
+        session_state['boundary_kind'] = boundary_kind
+        session_state['boundary_detection_mode'] = 'detected_city_fallback'
+        if boundary_success and boundary_gdf is not None:
+            set_stage(85, "Saving the resolved boundary for faster reuse next time…")
+            saved_path = save_boundary_gdf(boundary_gdf, boundary_kind, city_text, detected_state)
+            session_state['boundary_source_path'] = saved_path or ''
+            session_state['active_city'] = city_text
+            session_state['active_state'] = detected_state
+            session_state['master_gdf_override'] = boundary_gdf.copy()
+        set_stage(100, "Boundary resolution complete.")
         stage_progress.empty()
         stage_box.empty()
         return
 
-    session_state['master_gdf_override'] = None
-    detected_city = session_state.get('active_city', '')
-    detected_state = session_state.get('active_state', '')
-    if not detected_city or not detected_state or detected_state not in state_fips:
-        set_stage(100, "No active city/state was available for boundary resolution.")
-        stage_progress.empty()
-        stage_box.empty()
-        return
-
-    city_text = str(detected_city).strip()
-    prefer_county = str(session_state.get('location_detection_source', '')) == 'centroid'
-    set_stage(55, "Selecting the best county or place boundary for the current jurisdiction…")
-    boundary_success, boundary_gdf, boundary_kind, _ = select_best_boundary_for_calls(
-        calls_for_boundary,
-        city_text,
-        detected_state,
-        prefer_county=prefer_county,
+    chosen_gdf = chosen_candidate['gdf']
+    chosen_kind = chosen_candidate['kind']
+    chosen_name = chosen_candidate['name']
+    chosen_state = chosen_candidate['state']
+    session_state['boundary_detection_mode'] = chosen_candidate['source']
+    session_state['boundary_kind'] = chosen_kind
+    session_state['active_city'] = chosen_name
+    if chosen_state:
+        session_state['active_state'] = chosen_state
+    set_stage(85, "Saving the resolved boundary for faster reuse next time…")
+    saved_path = save_boundary_gdf(
+        chosen_gdf,
+        chosen_kind,
+        chosen_name,
+        chosen_state or file_state or str(session_state.get('active_state', '') or '').strip().upper(),
     )
-    session_state['boundary_kind'] = boundary_kind
-    if boundary_success and boundary_gdf is not None:
-        set_stage(85, "Saving the resolved boundary for faster reuse next time…")
-        saved_path = save_boundary_gdf(boundary_gdf, boundary_kind, city_text, detected_state)
-        session_state['boundary_source_path'] = saved_path or ''
-
+    session_state['boundary_source_path'] = saved_path or ''
+    session_state['master_gdf_override'] = chosen_gdf.copy()
     set_stage(100, "Boundary resolution complete.")
     stage_progress.empty()
     stage_box.empty()
@@ -745,8 +945,7 @@ def load_simulation_custom_stations(sim_uploader, active_targets, forward_geocod
     station_df = _read_station_upload(sim_uploader)
     station_df = _normalize_station_columns(station_df)
     station_df, _single_col_note = _extract_single_column_station_addresses(station_df)
-    lat_col = next((c for c in station_df.columns if c in ['lat', 'latitude', 'y']), None)
-    lon_col = next((c for c in station_df.columns if c in ['lon', 'long', 'longitude', 'x']), None)
+    station_df, lat_col, lon_col = _extract_station_lat_lon(station_df)
     addr_col = next((c for c in station_df.columns if any(a in c for a in ['address', 'street', 'location'])), None)
     name_col = next((c for c in station_df.columns if any(n in c for n in ['name', 'station', 'facility', 'dept'])), None)
     type_col = next((c for c in station_df.columns if any(t in c for t in ['type', 'category'])), None)
@@ -775,13 +974,13 @@ def load_simulation_custom_stations(sim_uploader, active_targets, forward_geocod
         )
         station_type = str(row[type_col]) if type_col and pd.notna(row[type_col]) else 'Custom'
         station_lat, station_lon = None, None
+        city_hint = active_targets[0]['city'] if active_targets else ''
+        state_hint = active_targets[0]['state'] if active_targets else ''
 
-        if lat_col and lon_col and pd.notna(row[lat_col]) and pd.notna(row[lon_col]):
-            station_lat, station_lon = float(row[lat_col]), float(row[lon_col])
+        if lat_col and lon_col and pd.notna(row.get('lat')) and pd.notna(row.get('lon')):
+            station_lat, station_lon = float(row['lat']), float(row['lon'])
         elif addr_col and pd.notna(row[addr_col]):
             if search_public_facility_candidates and station_type in public_facility_types:
-                city_hint = active_targets[0]['city'] if active_targets else ''
-                state_hint = active_targets[0]['state'] if active_targets else ''
                 public_matches = search_public_facility_candidates(
                     addr_str,
                     station_type,
@@ -792,22 +991,26 @@ def load_simulation_custom_stations(sim_uploader, active_targets, forward_geocod
                 if public_matches:
                     station_lat, station_lon = float(public_matches[0]['lat']), float(public_matches[0]['lon'])
                 elif _looks_like_street_address(addr_str):
-                    station_lat, station_lon = forward_geocode(addr_str)
+                    station_lat, station_lon = forward_geocode(addr_str, city_hint, state_hint)
                     if station_lat is None and active_targets:
                         station_lat, station_lon = forward_geocode(
-                            f"{addr_str}, {active_targets[0]['city']}, {active_targets[0]['state']}"
+                            f"{addr_str}, {active_targets[0]['city']}, {active_targets[0]['state']}",
+                            active_targets[0]['city'],
+                            active_targets[0]['state'],
                         )
             else:
-                station_lat, station_lon = forward_geocode(addr_str)
+                station_lat, station_lon = forward_geocode(addr_str, city_hint, state_hint)
                 if station_lat is None and active_targets:
                     station_lat, station_lon = forward_geocode(
-                        f"{addr_str}, {active_targets[0]['city']}, {active_targets[0]['state']}"
+                        f"{addr_str}, {active_targets[0]['city']}, {active_targets[0]['state']}",
+                        active_targets[0]['city'],
+                        active_targets[0]['state'],
                     )
             if station_lat is None:
                 ungeocoded.append(addr_str)
             time.sleep(1)
 
-        if station_lat and station_lon:
+        if station_lat is not None and station_lon is not None:
             parsed_stations.append({
                 'name': station_label,
                 'lat': station_lat,
@@ -846,9 +1049,19 @@ def resolve_demo_stations(
             notices.extend([f"Could not geocode: {addr_str}" for addr_str in ungeocoded_addresses])
             if custom_station_df is not None and not custom_station_df.empty:
                 return custom_station_df, True, notices, warnings
-            warnings.append("Could not geocode or parse your custom stations. Falling back to generated stations.")
+            warnings.append(
+                "Uploaded stations file did not yield any usable station rows. "
+                "When a stations file is present, Path 01 uses only that file and does not "
+                "generate replacement stations."
+            )
+            return pd.DataFrame(), True, notices, warnings
         except Exception as exc:
-            warnings.append(f"Error reading custom stations: {exc}. Falling back to generated stations.")
+            warnings.append(
+                f"Error reading custom stations: {exc}. "
+                "When a stations file is present, Path 01 uses only that file and does not "
+                "generate replacement stations."
+            )
+            return pd.DataFrame(), True, notices, warnings
 
     try:
         stations_df, osm_note = generate_stations_from_calls(df_calls)
@@ -896,7 +1109,9 @@ def build_demo_boundaries(
         city_name = loc['city'].strip()
         state_name = loc['state']
         is_state = not city_name and state_name in state_fips
-        is_county = city_name.lower().endswith(' county')
+        city_name_lower = city_name.lower()
+        is_county = city_name_lower.endswith(' county')
+        is_township = city_name_lower.endswith(' township')
         boundary_kind = 'state' if is_state else ('county' if is_county else 'place')
 
         if is_state:
@@ -910,6 +1125,10 @@ def build_demo_boundaries(
                 success, temp_gdf = fetch_county_boundary_local(state_name, city_name + ' County')
             if success:
                 boundary_kind = 'county'
+        elif is_township:
+            success, temp_gdf = fetch_place_boundary_local(state_name, city_name)
+            if success:
+                boundary_kind = 'place'
         else:
             success, temp_gdf = fetch_place_boundary_local(state_name, city_name)
             if success:
@@ -944,7 +1163,7 @@ def build_demo_boundaries(
                 all_populations_verified = False
                 gdf_proj = temp_gdf.to_crs(epsg=3857)
                 area_sq_mi = gdf_proj.geometry.area.sum() / 2589988.11
-                default_density = 35 if is_state else 3500
+                default_density = 35 if is_state else (120 if is_county else 3500)
                 estimated_pop = known_populations.get(city_name or state_name, int(area_sq_mi * default_density))
                 total_estimated_pop += estimated_pop
                 boundary_messages.append(f"⚠️ {city_name or state_name} population estimated: {estimated_pop:,}")
@@ -995,7 +1214,45 @@ def _allocate_demo_counts(weights, total_count):
     return counts
 
 
-def build_demo_calls(city_poly, total_estimated_pop, generate_clustered_calls, boundary_records=None):
+def _estimate_demo_preview_points(total_estimated_pop, boundary_records=None, max_preview_points=None):
+    """Return a lightweight preview size for simulated call dots.
+
+    The annual call estimate still follows the 60% rule, but the rendered dot
+    cloud only needs to be dense enough to read as a city-level pattern. This
+    keeps large metros like Chicago visually credible without materializing the
+    full annual call volume.
+    """
+    try:
+        pop = max(int(round(float(total_estimated_pop or 0))), 0)
+    except Exception:
+        pop = 0
+
+    if max_preview_points is not None:
+        try:
+            return max(0, int(max_preview_points))
+        except Exception:
+            pass
+
+    if pop <= 25_000:
+        return 250
+    if pop <= 50_000:
+        return 400
+    if pop <= 100_000:
+        return 600
+    if pop <= 250_000:
+        return 1_000
+    if pop <= 500_000:
+        return 1_800
+    if pop <= 1_000_000:
+        return 3_000
+    if pop <= 2_500_000:
+        return 5_000
+    if pop <= 5_000_000:
+        return 7_000
+    return 10_000
+
+
+def build_demo_calls(city_poly, total_estimated_pop, generate_clustered_calls, boundary_records=None, max_preview_points=None):
     annual_cfs = int(total_estimated_pop * 0.6)
     if boundary_records:
         boundary_weights = [int(record.get('population', 0) or 0) * 0.6 for record in boundary_records]
@@ -1003,8 +1260,15 @@ def build_demo_calls(city_poly, total_estimated_pop, generate_clustered_calls, b
         if weighted_annual_cfs > 0:
             annual_cfs = weighted_annual_cfs
     simulated_points_count = max(int(round(annual_cfs)), 0)
-    # Cap simulated points to prevent Streamlit Cloud crashes (limit 5000 max)
-    simulated_points_count = min(simulated_points_count, 5000)
+    preview_cap = _estimate_demo_preview_points(
+        total_estimated_pop,
+        boundary_records=boundary_records,
+        max_preview_points=max_preview_points,
+    )
+    if preview_cap:
+        # Keep the live preview responsive while preserving the annual call
+        # estimate in annual_cfs.
+        simulated_points_count = min(simulated_points_count, preview_cap)
     np.random.seed(42)
     random.seed(42)
     call_points = []

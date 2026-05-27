@@ -9,6 +9,7 @@ import streamlit as st
 import pandas as pd
 import os
 import sys
+import shutil
 import textwrap
 # Set CWD to the project root so every relative asset path (parquets, shapefiles,
 # logos, etc.) resolves correctly regardless of how the process was launched.
@@ -19,7 +20,7 @@ import plotly.graph_objects as go
 from shapely.geometry import Point, Polygon, MultiPolygon, box, shape
 from shapely.ops import unary_union
 from shapely.wkb import loads as _wkb_loads
-import itertools, glob, math, simplekml, heapq, re, random, json, io, datetime, base64, smtplib, uuid, traceback, tempfile, hashlib, hmac, time, html
+import itertools, glob, math, simplekml, heapq, re, random, json, io, datetime, base64, smtplib, uuid, traceback, tempfile, hashlib, hmac, time, html, zoneinfo
 import concurrent.futures as cf
 from concurrent.futures import ThreadPoolExecutor
 import threading
@@ -74,6 +75,17 @@ def _load_local_module(module_name: str):
         sys.modules[full_name] = module
         module_spec.loader.exec_module(module)
         return module
+
+
+def _load_fernandina_beach_station_rows(station_rows=None, session_state=None):
+    if isinstance(station_rows, list) and station_rows:
+        return station_rows
+    if session_state is not None:
+        for key in ("df_stations", "custom_stations"):
+            station_df = session_state.get(key)
+            if isinstance(station_df, pd.DataFrame) and not station_df.empty:
+                return station_df.to_dict("records")
+    return []
 
 # ── Module imports ────────────────────────────────────────────────────────────
 from modules.config import (
@@ -130,6 +142,7 @@ _versioning_mod = _load_local_module("versioning")
 __version__ = _versioning_mod.__version__
 __build_revision__ = _versioning_mod.__build_revision__
 __build_datetime__ = _versioning_mod.__build_datetime__
+__build_timestamp__ = _versioning_mod.__build_timestamp__
 __build_line_count__ = _versioning_mod.__build_line_count__
 _render_version_badge = _versioning_mod._render_version_badge
 _public_reports_mod = _load_local_module("public_reports")
@@ -213,12 +226,15 @@ from modules.geospatial import (
     _count_points_within_boundary, find_jurisdictions_by_coordinates
 )
 from modules import faa_rf, optimization, html_reports
+_transient_notice_mod = _load_local_module("transient_notice")
+render_transient_build_notice = _transient_notice_mod.render_transient_build_notice
 _session_state_mod = _load_local_module("session_state")
 init_session_state = _session_state_mod.init_session_state
+_compliance_guard_mod = _load_local_module("compliance_guard")
+get_export_disclaimer_text = _compliance_guard_mod.get_export_disclaimer_text
 _dashboard_helpers_mod = _load_local_module("dashboard_helpers")
-if not hasattr(_dashboard_helpers_mod, "render_station_suggestions_grid"):
-    import importlib as _importlib
-    _dashboard_helpers_mod = _importlib.reload(_dashboard_helpers_mod)
+import importlib as _importlib
+_dashboard_helpers_mod = _importlib.reload(_dashboard_helpers_mod)
 log_map_build_event_once = _dashboard_helpers_mod.log_map_build_event_once
 resolve_master_boundary = _dashboard_helpers_mod.resolve_master_boundary
 render_sidebar_jurisdiction_selector = _dashboard_helpers_mod.render_sidebar_jurisdiction_selector
@@ -230,6 +246,7 @@ manage_custom_stations = _dashboard_helpers_mod.manage_custom_stations
 prepare_runtime_context = _dashboard_helpers_mod.prepare_runtime_context
 optimize_fleet_selection = _dashboard_helpers_mod.optimize_fleet_selection
 compute_station_suggestions = _dashboard_helpers_mod.compute_station_suggestions
+station_suggestion_display_metrics = _dashboard_helpers_mod.station_suggestion_display_metrics
 sync_station_suggestion_modes = _dashboard_helpers_mod.sync_station_suggestion_modes
 render_station_suggestions_grid = _dashboard_helpers_mod.render_station_suggestions_grid
 _onboarding_mod = _load_local_module("onboarding")
@@ -240,6 +257,9 @@ from modules.highway_corridor import (
     estimate_corridor_calls,
     build_corridor_demo,
 )
+
+FAST_DEMO_STATION_COUNT = 10
+FAST_DEMO_CACHE_VERSION = "2026-05-15-fast-demo-v1"
 
 
 detect_brinc_file = _onboarding_mod.detect_brinc_file
@@ -312,6 +332,8 @@ def _reset_census_state(session_state):
 def _render_public_report_route():
     _params = _get_query_params_dict()
     _report_id = str(_params.get("public_report", "")).strip()
+    if not _report_id:
+        _report_id = str(_params.get("report_id", "")).strip()
     _sig = str(_params.get("sig", "")).strip()
     if not _report_id:
         return False
@@ -1476,18 +1498,15 @@ def _get_geocoder_provider_signature():
 def _search_address_candidates_cached(address_str, limit=6, preferred_city="", preferred_state="", provider_signature=""):
     address_str = str(address_str or '').strip()
     if not address_str:
-        try:
-            st.session_state['_last_geocode_trace'] = {
-                'input': '',
-                'preferred_city': str(preferred_city or '').strip(),
-                'preferred_state': str(preferred_state or '').strip().upper(),
-                'queries': [],
-                'providers': [],
-                'candidate_count': 0,
-            }
-        except Exception:
-            pass
-        return []
+        return [], {
+            'input': '',
+            'preferred_city': str(preferred_city or '').strip(),
+            'preferred_state': str(preferred_state or '').strip().upper(),
+            'queries': [],
+            'providers': [],
+            'candidate_count': 0,
+            'top_candidate': '',
+        }
 
     limit = max(1, min(int(limit or 6), 10))
     preferred_city = str(preferred_city or '').strip()
@@ -1758,29 +1777,31 @@ def _search_address_candidates_cached(address_str, limit=6, preferred_city="", p
     for _candidate in candidates:
         _candidate['_score'] = _candidate_score(_candidate)
     candidates.sort(key=lambda _item: (-_item.get('_score', 0), _item.get('matched_address', '')))
-    try:
-        st.session_state['_last_geocode_trace'] = {
-            'input': address_str,
-            'preferred_city': preferred_city,
-            'preferred_state': preferred_state,
-            'queries': _queries,
-            'providers': _provider_trace,
-            'candidate_count': len(candidates),
-            'top_candidate': candidates[0]['matched_address'] if candidates else '',
-        }
-    except Exception:
-        pass
-    return [{k: v for k, v in _candidate.items() if k != '_score'} for _candidate in candidates[:limit]]
+    trace = {
+        'input': address_str,
+        'preferred_city': preferred_city,
+        'preferred_state': preferred_state,
+        'queries': _queries,
+        'providers': _provider_trace,
+        'candidate_count': len(candidates),
+        'top_candidate': candidates[0]['matched_address'] if candidates else '',
+    }
+    return ([{k: v for k, v in _candidate.items() if k != '_score'} for _candidate in candidates[:limit]], trace)
 
 
 def search_address_candidates(address_str, limit=6, preferred_city="", preferred_state=""):
-    return _search_address_candidates_cached(
+    matches, trace = _search_address_candidates_cached(
         address_str,
         limit=limit,
         preferred_city=preferred_city,
         preferred_state=preferred_state,
         provider_signature=_get_geocoder_provider_signature(),
     )
+    try:
+        st.session_state['_last_geocode_trace'] = trace
+    except Exception:
+        pass
+    return matches
 
 _PUBLIC_FACILITY_QUERY_TERMS = {
     'Police': ['police department', 'police station', 'sheriff office', 'public safety'],
@@ -1980,21 +2001,51 @@ def _public_facility_candidate_score(candidate, facility_type, preferred_city=""
 
 
 @st.cache_data(show_spinner=False)
-def search_public_facility_candidates(query_str, facility_type, limit=6, preferred_city="", preferred_state=""):
+def _search_public_facility_candidates_cached(query_str, facility_type, limit=6, preferred_city="", preferred_state=""):
     query_str = str(query_str or '').strip()
     if not query_str:
-        return []
+        return [], {
+            'input': '',
+            'facility_type': '',
+            'preferred_city': str(preferred_city or '').strip(),
+            'preferred_state': str(preferred_state or '').strip().upper(),
+            'queries': [],
+            'providers': [],
+            'candidate_count': 0,
+            'top_candidate': '',
+            'public_facility_lookup': True,
+        }
 
     facility_key = _normalize_public_facility_type(facility_type)
     if not facility_key:
-        return []
+        return [], {
+            'input': query_str,
+            'facility_type': '',
+            'preferred_city': str(preferred_city or '').strip(),
+            'preferred_state': str(preferred_state or '').strip().upper(),
+            'queries': [],
+            'providers': [],
+            'candidate_count': 0,
+            'top_candidate': '',
+            'public_facility_lookup': True,
+        }
 
     limit = max(1, min(int(limit or 6), 10))
     preferred_city = str(preferred_city or '').strip()
     preferred_state = str(preferred_state or '').strip().upper()
     queries = _public_facility_query_variants(query_str, facility_key, preferred_city, preferred_state)
     if not queries:
-        return []
+        return [], {
+            'input': query_str,
+            'facility_type': facility_key,
+            'preferred_city': preferred_city,
+            'preferred_state': preferred_state,
+            'queries': [],
+            'providers': [],
+            'candidate_count': 0,
+            'top_candidate': '',
+            'public_facility_lookup': True,
+        }
 
     candidates = []
     seen = set()
@@ -2104,34 +2155,60 @@ def search_public_facility_candidates(query_str, facility_type, limit=6, preferr
 
     candidates.sort(key=lambda item: (-item.get('_score', 0), item.get('matched_address', '')))
 
+    trace = {
+        'input': query_str,
+        'facility_type': facility_key,
+        'preferred_city': preferred_city,
+        'preferred_state': preferred_state,
+        'queries': queries,
+        'providers': provider_trace,
+        'candidate_count': len(candidates),
+        'top_candidate': candidates[0]['matched_address'] if candidates else '',
+        'public_facility_lookup': True,
+    }
+
+    return ([{k: v for k, v in _candidate.items() if k != '_score'} for _candidate in candidates[:limit]], trace)
+
+
+def search_public_facility_candidates(query_str, facility_type, limit=6, preferred_city="", preferred_state=""):
+    matches, trace = _search_public_facility_candidates_cached(
+        query_str,
+        facility_type,
+        limit=limit,
+        preferred_city=preferred_city,
+        preferred_state=preferred_state,
+    )
     try:
-        st.session_state['_last_geocode_trace'] = {
-            'input': query_str,
-            'facility_type': facility_key,
-            'preferred_city': preferred_city,
-            'preferred_state': preferred_state,
-            'queries': queries,
-            'providers': provider_trace,
-            'candidate_count': len(candidates),
-            'top_candidate': candidates[0]['matched_address'] if candidates else '',
-            'public_facility_lookup': True,
-        }
+        st.session_state['_last_geocode_trace'] = trace
     except Exception:
         pass
+    return matches
 
-    return [{k: v for k, v in _candidate.items() if k != '_score'} for _candidate in candidates[:limit]]
+def forward_geocode(address_str):
+    return forward_geocode_with_context(
+        address_str,
+        st.session_state.get('active_city', ''),
+        st.session_state.get('active_state', ''),
+    )
+
 
 @st.cache_data(show_spinner=False)
-def forward_geocode(address_str):
+def _forward_geocode_with_context_cached(address_str, preferred_city='', preferred_state=''):
     _matches = search_address_candidates(
         address_str,
         limit=1,
-        preferred_city=st.session_state.get('active_city', ''),
-        preferred_state=st.session_state.get('active_state', ''),
+        preferred_city=preferred_city or '',
+        preferred_state=preferred_state or '',
     )
     if _matches:
         return float(_matches[0]['lat']), float(_matches[0]['lon'])
     return None, None
+
+
+def forward_geocode_with_context(address_str, preferred_city='', preferred_state=''):
+    preferred_city = preferred_city or st.session_state.get('active_city', '')
+    preferred_state = preferred_state or st.session_state.get('active_state', '')
+    return _forward_geocode_with_context_cached(address_str, preferred_city, preferred_state)
 
 @st.cache_data(show_spinner=False)
 def lookup_zip_code(zip_code: str):
@@ -2172,7 +2249,7 @@ def lookup_county_for_city(city_name, state_abbr):
     """Use Nominatim reverse-geocode to find the county name for a city that
     doesn't directly match a county name in the local parquet."""
     try:
-        lat, lon = forward_geocode(f"{city_name}, {state_abbr}, USA")
+        lat, lon = forward_geocode_with_context(f"{city_name}, {state_abbr}, USA", city_name, state_abbr)
         if lat is None: return None
         url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=8&addressdetails=1"
         req = urllib.request.Request(url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
@@ -2251,9 +2328,7 @@ def fetch_county_boundary_local(state_abbr, county_name_input):
         gdf = gpd.read_parquet(local_file)
 
         # Filter for the exact State FIPS code and County Name
-        # Normalize database NAME for fair comparison with search_name
-        gdf['NAME_NORM'] = gdf['NAME'].str.lower().apply(normalize_jurisdiction_name)
-        match = gdf[(gdf['STATEFP'] == state_fips) & (gdf['NAME_NORM'] == search_name)]
+        match = gdf[(gdf['STATEFP'] == state_fips) & (gdf['NAME'].str.lower() == search_name)]
 
         if not match.empty:
             # Put the word "County" back on for the UI displays
@@ -2265,14 +2340,43 @@ def fetch_county_boundary_local(state_abbr, county_name_input):
 
     return False, None
 
+def _match_local_boundary_rows(gdf, state_fips, search_name):
+    state_rows = gdf[gdf["STATEFP"].astype(str) == str(state_fips)].copy()
+    if state_rows.empty:
+        return None
+
+    state_rows['_norm_name'] = state_rows['NAME'].astype(str).apply(normalize_jurisdiction_name)
+    if 'NAMELSAD' in state_rows.columns:
+        state_rows['_norm_lsad'] = state_rows['NAMELSAD'].astype(str).apply(normalize_jurisdiction_name)
+    else:
+        state_rows['_norm_lsad'] = state_rows['_norm_name']
+
+    match = state_rows[(state_rows['_norm_name'] == search_name) | (state_rows['_norm_lsad'] == search_name)]
+    if match.empty:
+        match = state_rows[
+            state_rows['_norm_name'].str.startswith(search_name) |
+            state_rows['_norm_lsad'].str.startswith(search_name)
+        ]
+        if not match.empty:
+            match = match.copy()
+            match['_diff'] = match['NAME'].astype(str).str.len() - len(search_name)
+            match = match.sort_values('_diff').head(1)
+
+    if match.empty:
+        return None
+
+    result = match.copy()
+    name_col = "NAMELSAD" if "NAMELSAD" in result.columns else "NAME"
+    result["NAME"] = result[name_col].astype(str)
+    return result[["NAME", "geometry"]]
+
 @st.cache_data
 def fetch_place_boundary_local(state_abbr, place_name_input):
-    """Look up a city/town/CDP boundary from the local places_lite.parquet.
-    Returns (True, GeoDataFrame) on success, (False, None) if not found or
-    the file doesn't exist yet (falls back to county lookup in caller)."""
-    local_file = "places_lite.parquet"
-    if not os.path.exists(local_file):
-        return False, None   # file not yet added — caller falls back to county
+    """Look up a city/town/CDP boundary from local parquet caches.
+    Connecticut towns fall back to county-subdivision data when needed."""
+    local_files = ["places_lite.parquet"]
+    if str(state_abbr or '').strip().upper() == "CT":
+        local_files.append("county_subdivisions_lite.parquet")
 
     state_fips = STATE_FIPS.get(state_abbr)
     if not state_fips: return False, None
@@ -2280,41 +2384,17 @@ def fetch_place_boundary_local(state_abbr, place_name_input):
     search_name = normalize_jurisdiction_name(place_name_input)
 
     try:
-        gdf = gpd.read_parquet(local_file)
-        state_rows = gdf[gdf["STATEFP"] == state_fips]
-
-        state_rows = state_rows.copy()
-        state_rows['_norm_name'] = state_rows['NAME'].astype(str).apply(normalize_jurisdiction_name)
-        if 'NAMELSAD' in state_rows.columns:
-            state_rows['_norm_lsad'] = state_rows['NAMELSAD'].astype(str).apply(normalize_jurisdiction_name)
-        else:
-            state_rows['_norm_lsad'] = state_rows['_norm_name']
-
-        # Exact normalized match first
-        match = state_rows[(state_rows['_norm_name'] == search_name) | (state_rows['_norm_lsad'] == search_name)]
-
-        # Partial normalized match fallback (e.g. Fort Worth / Fort Worth city)
-        if match.empty:
-            match = state_rows[
-                state_rows['_norm_name'].str.startswith(search_name) |
-                state_rows['_norm_lsad'].str.startswith(search_name)
-            ]
-            if not match.empty:
-                match = match.copy()
-                match['_diff'] = match['NAME'].astype(str).str.len() - len(search_name)
-                match = match.sort_values('_diff').head(1)
-
-        if match.empty:
-            return False, None
-
-        result = match.copy()
-        # Use NAMELSAD for display if available (e.g. "Rockford city"), else NAME
-        name_col = "NAMELSAD" if "NAMELSAD" in result.columns else "NAME"
-        result["NAME"] = result[name_col].astype(str)
-        return True, result[["NAME", "geometry"]]
+        for local_file in local_files:
+            if not os.path.exists(local_file):
+                continue
+            gdf = gpd.read_parquet(local_file)
+            match = _match_local_boundary_rows(gdf, state_fips, search_name)
+            if match is not None and not match.empty:
+                return True, match
 
     except Exception:
         return False, None
+    return False, None
 
 @st.cache_data
 def reverse_geocode_state(lat, lon):
@@ -2379,6 +2459,24 @@ def _lookup_known_population(place_name):
     return None
 
 
+def _get_census_api_key():
+    try:
+        for key_name in ("CENSUS_API_KEY", "CENSUS_KEY"):
+            secret_value = st.secrets.get(key_name) if hasattr(st, "secrets") else None
+            if secret_value:
+                secret_text = str(secret_value or "").strip()
+                if secret_text:
+                    return secret_text
+    except Exception:
+        pass
+
+    for key_name in ("CENSUS_API_KEY", "CENSUS_KEY"):
+        env_value = str(os.getenv(key_name, "") or "").strip()
+        if env_value:
+            return env_value
+    return ""
+
+
 def _lookup_population_for_boundary(state_abbr, city_name, boundary_kind='place'):
     state_fips = STATE_FIPS.get(str(state_abbr or '').strip().upper(), '')
     if not state_fips:
@@ -2437,10 +2535,16 @@ def _refresh_reference_population(session_state, selected_names=None):
 
 @st.cache_data
 def fetch_census_population(state_fips, place_name, is_county=False):
+    params = {"get": "P1_001N,NAME"}
     if is_county:
-        url = f"https://api.census.gov/data/2020/dec/pl?get=P1_001N,NAME&for=county:*&in=state:{state_fips}"
+        params["for"] = "county:*"
     else:
-        url = f"https://api.census.gov/data/2020/dec/pl?get=P1_001N,NAME&for=place:*&in=state:{state_fips}"
+        params["for"] = "place:*"
+    params["in"] = f"state:{state_fips}"
+    census_api_key = _get_census_api_key()
+    if census_api_key:
+        params["key"] = census_api_key
+    url = f"https://api.census.gov/data/2020/dec/pl?{urllib.parse.urlencode(params)}"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=15) as response:
@@ -2474,7 +2578,11 @@ def fetch_census_population(state_fips, place_name, is_county=False):
 
 @st.cache_data
 def fetch_census_state_population(state_fips):
-    url = f"https://api.census.gov/data/2020/dec/pl?get=P1_001N,NAME&for=state:{state_fips}"
+    params = {"get": "P1_001N,NAME", "for": f"state:{state_fips}"}
+    census_api_key = _get_census_api_key()
+    if census_api_key:
+        params["key"] = census_api_key
+    url = f"https://api.census.gov/data/2020/dec/pl?{urllib.parse.urlencode(params)}"
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=10) as response:
@@ -2501,6 +2609,33 @@ def save_boundary_gdf(boundary_gdf, kind, name, state_abbr):
     """Save boundary to a type-specific shapefile base so place/county do not overwrite each other."""
     try:
         base = _boundary_shp_base(kind, name, state_abbr)
+        boundary_to_save = boundary_gdf.copy()
+        rename_map = {}
+        used_names = set()
+        for column in boundary_to_save.columns:
+            if column == boundary_to_save.geometry.name:
+                continue
+            if len(column) <= 10 and column not in used_names:
+                used_names.add(column)
+                continue
+
+            if column == "DISPLAY_NAME":
+                safe_name = "DISPLAY_NA"
+            else:
+                safe_name = re.sub(r"[^A-Za-z0-9_]", "_", str(column).upper())[:10] or "FIELD"
+
+            safe_base = safe_name[:10]
+            safe_name = safe_base
+            suffix = 1
+            while safe_name in used_names or safe_name == boundary_to_save.geometry.name:
+                suffix_text = str(suffix)
+                safe_name = f"{safe_base[:10 - len(suffix_text)]}{suffix_text}"
+                suffix += 1
+            rename_map[column] = safe_name
+            used_names.add(safe_name)
+
+        if rename_map:
+            boundary_to_save = boundary_to_save.rename(columns=rename_map)
         # Remove older files for this exact base so a fresh write wins cleanly
         for ext in [".shp", ".shx", ".dbf", ".prj", ".cpg"]:
             fp = base + ext
@@ -2509,7 +2644,7 @@ def save_boundary_gdf(boundary_gdf, kind, name, state_abbr):
                     os.remove(fp)
                 except Exception as e:
                     print(f"[BRINC] Could not remove old shapefile {fp}: {e}")
-        boundary_gdf.to_file(base + ".shp")
+        boundary_to_save.to_file(base + ".shp")
         return base + ".shp"
     except Exception as e:
         print(f"[BRINC] save_boundary_gdf failed for {kind}/{name}/{state_abbr}: {e}")
@@ -2521,6 +2656,8 @@ def load_saved_boundary(kind, name, state_abbr):
         exact = _boundary_shp_base(kind, name, state_abbr) + ".shp"
         if os.path.exists(exact):
             gdf = gpd.read_file(exact)
+            if "DISPLAY_NA" in gdf.columns and "DISPLAY_NAME" not in gdf.columns:
+                gdf = gdf.rename(columns={"DISPLAY_NA": "DISPLAY_NAME"})
             if gdf.crs is None:
                 gdf = gdf.set_crs(epsg=4269)
             return gdf.to_crs(epsg=4326)
@@ -2773,7 +2910,7 @@ def generate_clustered_calls(polygon, num_points):
     sigma_x = max((maxx - minx) / 18.0, 1e-4)
     sigma_y = max((maxy - miny) / 18.0, 1e-4)
 
-    for _ in range(max(int(target * 0.60), 2000)):
+    for _ in range(max(target * 60, 2000)):
         if len(points) >= target_clustered:
             break
         hx, hy = random.choice(hotspots)
@@ -2789,6 +2926,92 @@ def generate_clustered_calls(polygon, num_points):
         points = points[:target]
     np.random.shuffle(points)
     return points
+
+
+@st.cache_data(show_spinner=False)
+def load_fast_demo_payload(city_name, state_name, station_count=FAST_DEMO_STATION_COUNT, cache_version=FAST_DEMO_CACHE_VERSION):
+    """Build and cache the smallest useful payload for Path 03."""
+    city_name = str(city_name or "").strip()
+    state_name = str(state_name or "").strip().upper()
+    if not city_name or not state_name:
+        return None
+
+    success, temp_gdf = fetch_place_boundary_local(state_name, city_name)
+    boundary_kind = "place"
+    if not success:
+        success, temp_gdf = fetch_county_boundary_local(state_name, city_name)
+        if not success:
+            success, temp_gdf = fetch_county_boundary_local(state_name, f"{city_name} County")
+        if success:
+            boundary_kind = "county"
+
+    if not success or temp_gdf is None or temp_gdf.empty:
+        return None
+
+    boundary_gdf = temp_gdf.copy()
+    city_poly = boundary_gdf.geometry.union_all()
+    population = int(KNOWN_POPULATIONS.get(city_name, 0) or 0)
+    boundary_records = [{
+        "name": city_name or state_name,
+        "state": state_name,
+        "boundary_kind": boundary_kind,
+        "population": population,
+        "geometry": city_poly,
+    }]
+    boundary_messages = [f"✅ {city_name or state_name} population loaded from local cache: {population:,}"]
+    boundary_warnings = []
+    saved_path = save_boundary_gdf(boundary_gdf, boundary_kind, city_name, state_name)
+
+    selected_name_col = next(
+        (column for column in ["NAME", "DISTRICT", "NAMELSAD"] if column in boundary_gdf.columns),
+        None,
+    )
+    master_gdf_override = boundary_gdf.copy()
+    if selected_name_col is None:
+        master_gdf_override["DISPLAY_NAME"] = city_name or state_name
+    else:
+        master_gdf_override["DISPLAY_NAME"] = master_gdf_override[selected_name_col].astype(str)
+    master_gdf_override["data_count"] = 1
+    master_gdf_override = master_gdf_override[["DISPLAY_NAME", "data_count", "geometry"]].copy()
+
+    total_estimated_pop = population
+    df_demo, annual_cfs, simulated_points_count = build_demo_calls(
+        city_poly,
+        total_estimated_pop,
+        generate_clustered_calls,
+        boundary_records=boundary_records,
+    )
+
+    station_target = max(1, min(int(station_count or FAST_DEMO_STATION_COUNT), FAST_DEMO_STATION_COUNT))
+    station_points = generate_random_points_in_polygon(city_poly, station_target)
+    station_types = (["Police", "Fire", "EMS"] * ((station_target + 2) // 3))[:station_target]
+    stations_df = pd.DataFrame({
+        "name": [f"Preloaded Demo Station {i + 1}" for i in range(len(station_points))],
+        "lat": [point[0] for point in station_points],
+        "lon": [point[1] for point in station_points],
+        "type": station_types[:len(station_points)],
+        "source": ["PRELOADED_DEMO"] * len(station_points),
+    })
+
+    return {
+        "all_gdfs": [boundary_gdf],
+        "boundary_records": boundary_records,
+        "total_estimated_pop": total_estimated_pop,
+        "boundary_messages": boundary_messages,
+        "boundary_warnings": boundary_warnings,
+        "rerun_demo_target": None,
+        "all_populations_verified": True,
+        "boundary_source_path": saved_path or "",
+        "master_gdf_override": master_gdf_override,
+        "city_poly": city_poly,
+        "df_demo": df_demo,
+        "annual_cfs": annual_cfs,
+        "simulated_points_count": simulated_points_count,
+        "stations_df": stations_df,
+        "stations_user_uploaded": False,
+        "station_notices": ["Loaded 10 precomputed demo stations from local cache."],
+        "station_warnings": [],
+    }
 
 def estimate_grants(population):
     if population > 1000000: return "$1.5M - $3.0M+"
@@ -3051,23 +3274,34 @@ def _build_carrier_mini_map(cinfo, boundary_geom, center_lat, center_lon, zoom, 
 
 def _get_terrain_cache():
     """Global cache dict for DEM tiles to avoid re-downloading."""
-    return {}
+    global _TERRAIN_CACHE
+    try:
+        return _TERRAIN_CACHE
+    except NameError:
+        _TERRAIN_CACHE = {}
+        return _TERRAIN_CACHE
 
 def _estimate_elevation_simple(lat, lon, cache=None):
     """Fetch elevation for a point (cached) — fallback to 100 ft if unavailable."""
     if cache is None:
-        cache = {}
+        cache = _get_terrain_cache()
     key = (round(lat, 2), round(lon, 2))
     if key in cache:
         return cache[key]
+    elev = None
     try:
-        # Try OpenDEM API (no key required, open access)
-        import urllib.request as _ur
-        url = f"https://cloud.sdsc.edu/v1/AUTH_opentopography/Raster/SRTM_GL30/SRTM_GL30_Ellip/SRTM_GL30_Ellip_srtm.tif"
-        # Fallback: use simple rule based on typical coastal vs inland
-        elev = max(0, 100 + (lon % 1) * 50 - (lat % 1) * 30)  # Mock variation
+        _params = urllib.parse.urlencode({'locations': f'{float(lat)},{float(lon)}'})
+        _url = f"https://api.open-elevation.com/api/v1/lookup?{_params}"
+        _req = urllib.request.Request(_url, headers={'User-Agent': 'BRINC_COS_Optimizer/1.0'})
+        with urllib.request.urlopen(_req, timeout=8) as _resp:
+            _data = json.loads(_resp.read().decode('utf-8'))
+        _results = _data.get('results', []) or []
+        if _results:
+            elev = float(_results[0].get('elevation', 100.0))
     except Exception:
-        elev = 100.0  # Default 100 ft mean elevation
+        elev = None
+    if elev is None:
+        elev = max(0.0, 100.0 + (float(lon) % 1) * 50 - (float(lat) % 1) * 30)
     cache[key] = elev
     return elev
 
@@ -3273,7 +3507,9 @@ def find_relevant_jurisdictions(calls_df, shapefile_dir, preferred_shp=None):
                 hits = gpd.sjoin(gdf_chunk, points_gdf, how="inner", predicate="intersects")
                 if not hits.empty:
                     subset = gdf_chunk.loc[hits.index.unique()].copy()
-                    subset['data_count'] = hits.index.value_counts()
+                    # Count calls per jurisdiction by grouping on the hit index
+                    call_counts = hits.index.value_counts()
+                    subset['data_count'] = subset.index.map(call_counts)
                     name_col = next((c for c in ['NAME','DISTRICT','NAMELSAD'] if c in subset.columns), subset.columns[0])
                     subset['DISPLAY_NAME'] = subset[name_col].astype(str)
                     relevant_polys.append(subset)
@@ -3291,7 +3527,7 @@ def find_relevant_jurisdictions(calls_df, shapefile_dir, preferred_shp=None):
     return master_gdf
 
 @st.cache_data(show_spinner=False)
-def build_display_calls(df_calls_full, _city_m, epsg_code, max_points=3000, seed=42, bounds_hash=''):
+def build_display_calls(df_calls_full, _city_m, epsg_code, max_points=300000, seed=42, bounds_hash=''):
     if df_calls_full is None or len(df_calls_full) == 0:
         return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
 
@@ -3304,6 +3540,13 @@ def build_display_calls(df_calls_full, _city_m, epsg_code, max_points=3000, seed
     df = df.dropna(subset=['lat', 'lon']).reset_index(drop=True)
     if df.empty:
         return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+
+    # Keep visible point clouds bounded on very large uploads. The full
+    # dataframe still flows into analytics and exports; this only limits the
+    # rendered map layer.
+    effective_max_points = min(int(max_points or 0), 25000) if len(df) > 25000 else int(max_points or 0)
+    if effective_max_points <= 0:
+        effective_max_points = 25000
 
     gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df.lon, df.lat), crs="EPSG:4326")
     try:
@@ -3318,14 +3561,14 @@ def build_display_calls(df_calls_full, _city_m, epsg_code, max_points=3000, seed
     if calls_in_city.empty:
         return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
 
-    if len(calls_in_city) <= max_points:
+    if len(calls_in_city) <= effective_max_points:
         return calls_in_city.to_crs(epsg=4326)
 
     sampled = calls_in_city.copy()
     minx, miny, maxx, maxy = sampled.total_bounds
     span_x = max(maxx - minx, 1.0)
     span_y = max(maxy - miny, 1.0)
-    target_cells = max(25, int(np.sqrt(max_points) * 0.7))
+    target_cells = max(25, int(np.sqrt(effective_max_points) * 0.7))
     nx = max(25, min(120, target_cells))
     ny = max(25, min(120, int(target_cells * (span_y / span_x))))
 
@@ -3334,10 +3577,10 @@ def build_display_calls(df_calls_full, _city_m, epsg_code, max_points=3000, seed
     sampled['_cell'] = sampled['_gx'].astype(str) + '_' + sampled['_gy'].astype(str)
 
     counts = sampled['_cell'].value_counts()
-    alloc = np.maximum(1, np.floor(counts / counts.sum() * max_points).astype(int))
-    shortfall = int(max_points - alloc.sum())
+    alloc = np.maximum(1, np.floor(counts / counts.sum() * effective_max_points).astype(int))
+    shortfall = int(effective_max_points - alloc.sum())
     if shortfall > 0:
-        remainders = (counts / counts.sum() * max_points) - np.floor(counts / counts.sum() * max_points)
+        remainders = (counts / counts.sum() * effective_max_points) - np.floor(counts / counts.sum() * effective_max_points)
         for cell in remainders.sort_values(ascending=False).index[:shortfall]:
             alloc.loc[cell] += 1
 
@@ -3350,11 +3593,11 @@ def build_display_calls(df_calls_full, _city_m, epsg_code, max_points=3000, seed
             parts.append(group.sample(take, random_state=seed))
 
     if not parts:
-        display_calls = sampled.sample(max_points, random_state=seed)
+        display_calls = sampled.sample(effective_max_points, random_state=seed)
     else:
         display_calls = pd.concat(parts, ignore_index=False)
-        if len(display_calls) > max_points:
-            display_calls = display_calls.sample(max_points, random_state=seed)
+        if len(display_calls) > effective_max_points:
+            display_calls = display_calls.sample(effective_max_points, random_state=seed)
 
     display_calls = display_calls.drop(columns=['_gx', '_gy', '_cell'], errors='ignore')
     return display_calls.to_crs(epsg=4326)
@@ -3539,6 +3782,12 @@ except Exception:
 # ============================================================
 # This MUST run before any st.session_state checks to prevent KeyError
 init_session_state(st.session_state, _slugify, _build_public_report_url)
+
+# ============================================================
+# TRANSIENT BUILD NOTICE
+# ============================================================
+# Show splash screen with build info for target user
+render_transient_build_notice(__version__, __build_datetime__, __build_timestamp__)
 
 # ============================================================
 # APP FLOW
@@ -3894,6 +4143,10 @@ def _render_live_admin_dashboard():
             font-size: 0.9rem;
             font-weight: 800;
         }}
+        .live-admin-stat-value.chicago-time {{
+            color: #ff4444;
+            font-weight: 900;
+        }}
         .live-admin-row {{
             display: flex;
             justify-content: space-between;
@@ -3973,7 +4226,7 @@ def _render_live_admin_dashboard():
                                 </div>
                                 <div class="live-admin-stat">
                                     <div class="live-admin-stat-label">Updated</div>
-                                    <div class="live-admin-stat-value">{html.escape(datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S"))} UTC</div>
+                                    <div class="live-admin-stat-value chicago-time">{html.escape(datetime.datetime.now(zoneinfo.ZoneInfo("America/Chicago")).strftime("%H:%M:%S"))} CST</div>
                                 </div>
                             </div>
                             {_rows_html}
@@ -4875,6 +5128,28 @@ def main():
                         st.session_state['census_download_notice'] = True
                         st.rerun()
 
+            @st.cache_resource
+            def _get_app_boot_time():
+                return datetime.datetime.now(datetime.timezone.utc)
+
+
+            def _format_app_uptime():
+                elapsed = datetime.datetime.now(datetime.timezone.utc) - _get_app_boot_time()
+                total_seconds = max(0, int(elapsed.total_seconds()))
+                days, rem = divmod(total_seconds, 86400)
+                hours, rem = divmod(rem, 3600)
+                minutes, seconds = divmod(rem, 60)
+                parts = []
+                if days:
+                    parts.append(f"{days}d")
+                if hours or days:
+                    parts.append(f"{hours}h")
+                if minutes or hours or days:
+                    parts.append(f"{minutes}m")
+                parts.append(f"{seconds}s")
+                return " ".join(parts)
+
+
             if uploaded_files and len(uploaded_files) >= 1 and not (
                 st.session_state.get('census_pending') and
                 current_upload_signature == st.session_state.get('census_source_signature') and
@@ -4902,6 +5177,7 @@ def main():
     +'#brinc-flo .fl-city{{font-size:20px;font-weight:900;letter-spacing:3px;color:#fff}}'
     +'#brinc-flo .fl-stline{{font-size:10px;letter-spacing:2px;color:rgba(0,210,255,0.7);text-transform:uppercase;margin-top:7px}}'
     +'#brinc-flo .fl-made{{margin-top:12px;font-size:11px;font-weight:800;letter-spacing:2.6px;color:rgba(255,255,255,0.92);text-transform:uppercase}}'
+    +'#brinc-flo .fl-uptime{{margin-top:7px;font-size:10px;letter-spacing:1.4px;color:rgba(255,255,255,0.58);text-transform:uppercase}}'
     +'#brinc-flo .fl-copy{{margin-top:8px;font-size:11px;line-height:1.55;color:rgba(255,255,255,0.62)}}'
     +'#brinc-flo .fl-prog-wrap{{margin:14px auto 0;max-width:520px}}'
     +'#brinc-flo .fl-prog-meta{{display:flex;justify-content:space-between;gap:12px;font-size:10px;letter-spacing:1.6px;color:rgba(255,255,255,0.62);text-transform:uppercase}}'
@@ -4936,9 +5212,10 @@ def main():
     + '<div class="fl-city">CAD UPLOAD</div>'
     + '<div class="fl-stline" id="fl-stl">INGESTING INCIDENT DATA<span class="fl-dots"></span></div>'
     + '<div class="fl-made">MADE IN THE USA</div>'
+    + '<div class="fl-uptime">UPTIME SINCE REBOOT: {_upload_uptime}</div>'
     + '<div class="fl-copy">Parsing calls, resolving boundaries, and preparing deployment analysis.</div>'
     + '<div class="fl-prog-wrap"><div class="fl-prog-meta"><span id="fl-prog-label">Progress</span><span id="fl-prog-pct">0%</span></div><div class="fl-prog"><div class="fl-prog-bar" id="fl-prog-bar"></div></div></div>'
-    + '<div class="fl-log" id="fl-log">Waiting to start…</div>'
+    + '<div class="fl-log" id="fl-log">Preparing upload details…</div>'
     + '</div>';
   doc.body.appendChild(wrap);
   var statusEl = wrap.querySelector('#fl-stl');
@@ -4956,6 +5233,7 @@ def main():
                     _upload_overlay_html
                     .replace("{_upload_logo_b64}", _upload_logo_b64)
                     .replace("{_upload_gigs_b64}", _upload_gigs_b64)
+                    .replace("{_upload_uptime}", _format_app_uptime())
                     .replace("{{", "{")
                     .replace("}}", "}")
                 )
@@ -5006,7 +5284,7 @@ def main():
   if(progPct) progPct.textContent = '{_progress_val}%';
   if(logEl){{
     var _lines = {_logs_js};
-    logEl.innerHTML = _lines && _lines.length ? _lines.join('<br>') : 'Waiting to start…';
+    logEl.innerHTML = _lines && _lines.length ? _lines.join('<br>') : 'Preparing upload details…';
     if({_error_js}) logEl.classList.add('error'); else logEl.classList.remove('error');
   }}
   if(parent._brincFloMsgs){{ parent.clearInterval(parent._brincFloMsgs); parent._brincFloMsgs = null; }}
@@ -5030,6 +5308,18 @@ def main():
                 def _push_upload_log(message):
                     _upload_logs.append(str(message))
                     return list(_upload_logs[-8:])
+
+                def _get_upload_file_label(files):
+                    _names = [
+                        str(getattr(_file, 'name', '') or '').strip()
+                        for _file in (files or [])
+                        if str(getattr(_file, 'name', '') or '').strip()
+                    ]
+                    if not _names:
+                        return "uploaded file"
+                    if len(_names) == 1:
+                        return _names[0]
+                    return f"{_names[0]} (+{len(_names) - 1} more)"
 
                 def _mark_upload_step(step_name):
                     st.session_state['_upload_crash_step'] = str(step_name)
@@ -5140,6 +5430,7 @@ def main():
                         _is_boundary_sidecar,
                         _looks_like_stations,
                     )
+                    _upload_file_label = _get_upload_file_label(call_files or uploaded_files)
                     st.session_state['boundary_overlay_gdf'] = None
                     st.session_state['boundary_overlay_name'] = ''
                     st.session_state['boundary_overlay_file'] = ''
@@ -5147,12 +5438,12 @@ def main():
                     if call_files:
                         census_auto_processed = False
                         _mark_upload_step("inspecting call files for coordinates")
-                        _push_upload_log("Starting coordinate inspection.")
+                        _push_upload_log(f"Reading {_upload_file_label}.")
                         _set_upload_overlay_status(
                             title="CAD UPLOAD",
-                            status="CHECKING FOR COORDINATES",
-                            copy="Inspecting headers and cell values for usable latitude and longitude fields. This usually takes a few seconds.",
-                            progress=8,
+                            status="READING FILE",
+                            copy=f"Opening {_upload_file_label} and checking headers for usable latitude and longitude fields.",
+                            progress=6,
                             logs=_upload_logs,
                         )
                         with st.spinner("🔍 Detecting column types in CAD export…"):
@@ -5166,6 +5457,19 @@ def main():
                             elif _pq_in > 0:
                                 _pq_yield = round(100 * _pq_out / _pq_in)
                                 _push_upload_log(f"{_pq_item['file']}: {_pq_in:,} rows in → {_pq_out:,} usable ({_pq_yield}%)")
+
+                        if df_c is not None and not df_c.empty:
+                            _push_upload_log(f"Coordinates detected in {_upload_file_label}. Skipping Census geocoding.")
+                            _set_upload_overlay_status(
+                                title="UPLOAD PROCESSING",
+                                status="COORDINATES FOUND",
+                                copy=(
+                                    f"Latitude/Longitude columns were found in {_upload_file_label}. "
+                                    f"{len(df_c):,} usable coordinate rows are moving straight to the stations workflow."
+                                ),
+                                progress=55,
+                                logs=_upload_logs,
+                            )
 
                         if df_c is None or df_c.empty:
                             _push_upload_log("No usable coordinates found. Switching to automated Census batch geocoding.")
@@ -5718,7 +6022,7 @@ def main():
             <div class="demo-check">
                 <span>✓</span>Real Census boundaries<br>
                 <span>✓</span>Clustered 911 simulation<br>
-                <span>✓</span>100 station candidates<br>
+                <span>✓</span>{FAST_DEMO_STATION_COUNT} preloaded station candidates<br>
                 <span>✓</span>Full optimization & export
             </div>
             """, unsafe_allow_html=True)
@@ -6202,19 +6506,62 @@ body{{background:transparent;overflow:hidden}}
                 st.toast(f"✅ {_active_hw} · {_hw_state} · {_corridor_miles:.0f} mi · {annual_cfs:,} calls/yr")
 
             else:
-                all_gdfs, boundary_records, total_estimated_pop, boundary_messages, boundary_warnings, rerun_demo_target, all_populations_verified = build_demo_boundaries(
-                    st.session_state,
-                    active_targets,
-                    STATE_FIPS,
-                    KNOWN_POPULATIONS,
-                    DEMO_CITIES,
-                    fetch_county_boundary_local,
-                    fetch_place_boundary_local,
-                    fetch_tiger_state_shapefile,
-                    save_boundary_gdf,
-                    fetch_census_population,
-                    fetch_census_state_population,
+                fast_demo_target_set = {(city, state) for city, state in FAST_DEMO_CITIES}
+                is_fast_demo_path = bool(active_targets) and all(
+                    (str(loc.get('city', '') or '').strip(), str(loc.get('state', '') or '').strip().upper())
+                    in fast_demo_target_set
+                    for loc in active_targets
                 )
+                if is_fast_demo_path:
+                    city_name = str(active_targets[0].get('city', '') or '').strip()
+                    state_name = str(active_targets[0].get('state', '') or '').strip().upper()
+                    fast_payload = load_fast_demo_payload(city_name, state_name)
+                    if not fast_payload:
+                        prog.empty()
+                        components.html("""<!DOCTYPE html><html><head></head><body><script>
+(function(){
+  var doc=parent.document;
+  if(parent._brincFloWd){parent.clearInterval(parent._brincFloWd);parent._brincFloWd=null;}
+  var el=doc.getElementById('brinc-flo');
+  if(el){el.style.transition='opacity 0.35s ease';el.style.opacity='0';
+    parent.setTimeout(function(){
+      var e=doc.getElementById('brinc-flo');if(e&&e.parentNode)e.parentNode.removeChild(e);
+      var s=doc.getElementById('brinc-flo-css');if(s&&s.parentNode)s.parentNode.removeChild(s);
+    },360);}
+})();
+</script></body></html>""", height=0, scrolling=False)
+                        st.error("❌ Could not load the preloaded demo boundaries.")
+                        st.stop()
+                    all_gdfs = fast_payload['all_gdfs']
+                    boundary_records = fast_payload['boundary_records']
+                    total_estimated_pop = fast_payload['total_estimated_pop']
+                    boundary_messages = fast_payload['boundary_messages']
+                    boundary_warnings = fast_payload['boundary_warnings']
+                    rerun_demo_target = fast_payload['rerun_demo_target']
+                    all_populations_verified = fast_payload['all_populations_verified']
+                    st.session_state['boundary_source_path'] = fast_payload['boundary_source_path']
+                    st.session_state['master_gdf_override'] = fast_payload['master_gdf_override']
+                    demo_names = [
+                        str(name).strip()
+                        for name in fast_payload['master_gdf_override']['DISPLAY_NAME'].tolist()
+                        if str(name).strip()
+                    ]
+                    st.session_state['saved_jurisdiction_names'] = list(dict.fromkeys(demo_names))
+                    st.session_state['population_reference_targets'] = list(dict.fromkeys(demo_names))
+                else:
+                    all_gdfs, boundary_records, total_estimated_pop, boundary_messages, boundary_warnings, rerun_demo_target, all_populations_verified = build_demo_boundaries(
+                        st.session_state,
+                        active_targets,
+                        STATE_FIPS,
+                        KNOWN_POPULATIONS,
+                        DEMO_CITIES,
+                        fetch_county_boundary_local,
+                        fetch_place_boundary_local,
+                        fetch_tiger_state_shapefile,
+                        save_boundary_gdf,
+                        fetch_census_population,
+                        fetch_census_state_population,
+                    )
                 for _msg in boundary_messages:
                     st.toast(_msg)
                 for _warn in boundary_warnings:
@@ -6265,38 +6612,44 @@ body{{background:transparent;overflow:hidden}}
 
                 prog.progress(35, text="💙 Boundaries loaded — honoring the officers who know every street…")
                 active_city_gdf = pd.concat(all_gdfs, ignore_index=True)
-                city_poly = active_city_gdf.geometry.union_all()
+                city_poly = fast_payload['city_poly'] if is_fast_demo_path else active_city_gdf.geometry.union_all()
                 st.session_state['estimated_pop'] = total_estimated_pop
                 st.session_state['_pop_resolved'] = all_populations_verified
 
-                prog.progress(55, text="🚔 Modeling 911 calls — every one represents someone who needed help…")
-                df_demo, annual_cfs, simulated_points_count = build_demo_calls(
-                    city_poly,
-                    total_estimated_pop,
-                    generate_clustered_calls,
-                    boundary_records=boundary_records,
-                )
+                if is_fast_demo_path:
+                    df_demo = fast_payload['df_demo']
+                    annual_cfs = fast_payload['annual_cfs']
+                    simulated_points_count = fast_payload['simulated_points_count']
+                else:
+                    prog.progress(55, text="🚔 Modeling 911 calls — every one represents someone who needed help…")
+                    df_demo, annual_cfs, simulated_points_count = build_demo_calls(
+                        city_poly,
+                        total_estimated_pop,
+                        generate_clustered_calls,
+                        boundary_records=boundary_records,
+                    )
             st.session_state['total_original_calls'] = annual_cfs
             st.session_state['df_calls'] = df_demo
             st.session_state['df_calls_full'] = df_demo.copy()
             st.session_state['total_modeled_calls'] = len(df_demo)
-            # Create downsampled version for map display (max 3000 dots to prevent Streamlit Cloud crashes)
-            if len(df_demo) > 3000:
-                st.session_state['df_calls_display'] = df_demo.sample(n=3000, random_state=42)
-            else:
-                st.session_state['df_calls_display'] = df_demo.copy()
 
             prog.progress(80, text="Loading simulation stations...")
-            stations_df, stations_user_uploaded, station_notices, station_warnings = resolve_demo_stations(
-                st.session_state['df_calls'],
-                city_poly,
-                _sim_station_file,
-                active_targets,
-                forward_geocode,
-                search_public_facility_candidates,
-                generate_stations_from_calls,
-                generate_random_points_in_polygon,
-            )
+            if is_fast_demo_path:
+                stations_df = fast_payload['stations_df']
+                stations_user_uploaded = fast_payload['stations_user_uploaded']
+                station_notices = fast_payload['station_notices']
+                station_warnings = fast_payload['station_warnings']
+            else:
+                stations_df, stations_user_uploaded, station_notices, station_warnings = resolve_demo_stations(
+                    st.session_state['df_calls'],
+                    city_poly,
+                    _sim_station_file,
+                    active_targets,
+                    forward_geocode,
+                    search_public_facility_candidates,
+                    generate_stations_from_calls,
+                    generate_random_points_in_polygon,
+                )
             for _notice in station_notices:
                 st.toast(_notice)
             for _warning in station_warnings:
@@ -6525,25 +6878,6 @@ body{{background:transparent;overflow:hidden}}
         r_resp_est = st.session_state.get('r_resp', 2.0)
         r_guard_est = st.session_state.get('r_guard', 8.0)
         df_curve = pd.DataFrame()
-        _prior_suggestions = st.session_state.get('_station_suggestions', []) or []
-        if _prior_suggestions:
-            _prior_modes = sync_station_suggestion_modes(st.session_state, _prior_suggestions)
-            _prior_resp_selected = sum(1 for mode in _prior_modes.values() if mode == 'Responder')
-            _prior_guard_selected = sum(1 for mode in _prior_modes.values() if mode == 'Guardian')
-            _prev_resp_selected = int(st.session_state.get('_suggestion_selected_resp_count', 0) or 0)
-            _prev_guard_selected = int(st.session_state.get('_suggestion_selected_guard_count', 0) or 0)
-            _resp_delta = _prior_resp_selected - _prev_resp_selected
-            _guard_delta = _prior_guard_selected - _prev_guard_selected
-            if _resp_delta:
-                _current_resp_count = int(st.session_state.get('_fleet_k_resp', st.session_state.get('k_resp', 0)) or 0)
-                st.session_state['_pending_k_resp'] = max(0, _current_resp_count + _resp_delta)
-            if _guard_delta:
-                _current_guard_count = int(st.session_state.get('_fleet_k_guard', st.session_state.get('k_guard', 0)) or 0)
-                st.session_state['_pending_k_guard'] = max(0, _current_guard_count + _guard_delta)
-            st.session_state['_suggestion_selected_resp_count'] = _prior_resp_selected
-            st.session_state['_suggestion_selected_guard_count'] = _prior_guard_selected
-
-
         _custom_station_state = manage_custom_stations(
             st,
             st.session_state,
@@ -6633,7 +6967,14 @@ body{{background:transparent;overflow:hidden}}
                 rank_by='land' if resp_strategy_raw == 'Land Coverage' else 'call',
             )
             st.session_state['_station_suggestions'] = _suggestions
-            _current_modes = sync_station_suggestion_modes(st.session_state, _suggestions)
+            _current_modes = sync_station_suggestion_modes(
+                st.session_state,
+                _suggestions,
+                k_guardian=k_guardian,
+                k_responder=k_responder,
+            )
+            if st.session_state.pop('_suggestion_card_change_pending', False):
+                st.rerun()
             st.session_state['_suggestion_selected_resp_count'] = sum(1 for mode in _current_modes.values() if mode == 'Responder')
             st.session_state['_suggestion_selected_guard_count'] = sum(1 for mode in _current_modes.values() if mode == 'Guardian')
             locked_g_pins = list(dict.fromkeys(locked_g_pins + [
@@ -7800,13 +8141,17 @@ body{{background:transparent;overflow:hidden}}
             # ── Suggestion "?" markers on map ─────────────────────────────
             if _suggestions and show_station_suggestions and st.session_state.get('show_suggestion_markers', True):
                 _stg_map = st.session_state.get('suggestion_toggles', {})
+                _stg_modes = st.session_state.get('suggestion_modes', {})
                 _sug_on_lat, _sug_on_lon, _sug_on_text = [], [], []
                 _sug_off_lat, _sug_off_lon, _sug_off_text = [], [], []
                 for _s in _suggestions:
+                    _mode = _stg_modes.get(_s['station_idx'], _s.get('role', 'Off'))
+                    _display_metrics = station_suggestion_display_metrics(_s, _mode)
                     _tip = (
                         f"<b>#{_s['rank']} {_s['name']}</b><br>"
-                        f"{_s['role']} suggestion<br>"
-                        f"📞 {_s['call_pct']}% calls · 🗺️ {_s['land_pct']}% land"
+                        f"{_mode} suggestion<br>"
+                        f"📞 {_display_metrics['call_count']:,} calls · "
+                        f"{_display_metrics['call_pct']}% of city calls · 🗺️ {_display_metrics['land_pct']}% land"
                     )
                     if _stg_map.get(_s['station_idx']):
                         _sug_on_lat.append(_s['lat'])
@@ -7957,6 +8302,8 @@ body{{background:transparent;overflow:hidden}}
             _sug_changed = render_station_suggestions_grid(
                 st, st.session_state, _suggestions,
                 text_main, text_muted, card_bg, card_border, accent_color,
+                k_guardian=k_guardian,
+                k_responder=k_responder,
             )
 
         # ── UNIT ECONOMICS CARDS (directly below map, no toggle) ─────────────────
@@ -8920,8 +9267,18 @@ body{{background:transparent;overflow:hidden}}
             _fallback_qr_url = f"{_qr_base}/?view=mobile&{_qr_params}"
             _tracked_report_id = str(st.session_state.get("public_report_id", "")).strip()
             _stored_public_url = str(st.session_state.get("public_report_url", "")).strip()
-            _tracked_qr_url = _build_public_report_url(_tracked_report_id) if _tracked_report_id else ""
-            _qr_url = _tracked_qr_url or _stored_public_url or _fallback_qr_url
+            _public_report_url_error = str(st.session_state.get("public_report_url_error", "") or "").strip()
+            _tracked_qr_url = ""
+            if _tracked_report_id:
+                try:
+                    _tracked_qr_url = _build_public_report_url(_tracked_report_id)
+                except ValueError as _qr_link_err:
+                    _public_report_url_error = str(_qr_link_err).strip() or _public_report_url_error
+            _qr_url = _tracked_qr_url or _stored_public_url
+            if not _qr_url and not _public_report_url_error:
+                _qr_url = _fallback_qr_url
+            if not _qr_url and _public_report_url_error:
+                raise ValueError(_public_report_url_error)
 
             # ── QR code image — high readability with BRINC logo overlay ──────────
             # Use highest error correction (H) for better phone scanning reliability
@@ -9389,6 +9746,8 @@ body{{background:transparent;overflow:hidden}}
                 '</div>'
             )
             st.markdown(_qr_banner, unsafe_allow_html=True)
+        except ValueError as _qr_err:
+            st.warning(f"📱 QR code unavailable: {_qr_err}")
         except Exception as _qr_err:
             st.caption(f"📱 QR code unavailable — install `qrcode` package. ({_qr_err})")
 
@@ -9484,6 +9843,8 @@ body{{background:transparent;overflow:hidden}}
         _report_notice_slot = st.sidebar.empty()
         _brinc_export_slot = st.sidebar.empty()
         _html_export_slot = st.sidebar.empty()
+        _pdf_export_slot = st.sidebar.empty()
+        _fernandina_export_slot = st.sidebar.empty()
         _kml_export_slot = st.sidebar.empty()
 
         _report_notice_slot.info(_report_wait_note)
@@ -9504,6 +9865,17 @@ body{{background:transparent;overflow:hidden}}
                 else _report_wait_note
             ),
         )
+        _pdf_export_slot.button(
+            f"📑 {prop_city}, {prop_state} — Executive Summary PDF",
+            disabled=True,
+            width="stretch",
+            key="pdf_export_wait_btn",
+            help=(
+                "Deploy at least one drone to generate the executive summary PDF."
+                if not active_drones
+                else _report_wait_note
+            ),
+        )
         _kml_export_slot.button(
             "🌏 Google Earth Briefing File",
             disabled=True,
@@ -9515,6 +9887,49 @@ body{{background:transparent;overflow:hidden}}
                 else _report_wait_note
             ),
         )
+
+        _is_fernandina_beach = (
+            str(prop_city or "").strip().lower() == "fernandina beach"
+            and str(prop_state or "").strip().lower() in {"fl", "florida"}
+        )
+        if _is_fernandina_beach:
+            _fernandina_ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            _fernandina_version_slug = _safe_export_slug(__version__, "version")
+            _fernandina_station_rows = _load_fernandina_beach_station_rows(
+                station_metadata if isinstance(station_metadata, list) else None,
+                st.session_state,
+            )
+            _fernandina_report_html = ""
+            _fernandina_report_ready = False
+            if _fernandina_station_rows:
+                try:
+                    _fernandina_report_html = html_reports.generate_fernandina_beach_public_service_report_html(
+                        _fernandina_station_rows,
+                        city=prop_city,
+                        state=prop_state,
+                    )
+                    _fernandina_report_ready = isinstance(_fernandina_report_html, str) and bool(_fernandina_report_html.strip())
+                except Exception as _fb_exc:
+                    _fernandina_report_html = ""
+                    print(f"[BRINC] Fernandina Beach report export failed: {_fb_exc}")
+            if _fernandina_report_ready:
+                if _fernandina_export_slot.download_button(
+                    f"🌊 {prop_city}, {prop_state} — Coastal Rescue Briefing",
+                    data=_fernandina_report_html,
+                    file_name=f"Fernandina_Beach_Coastal_Rescue_Briefing_{_safe_city_base}_{_fernandina_version_slug}_{_fernandina_ts}.html",
+                    mime="text/html",
+                    width="stretch",
+                ):
+                    st.session_state['export_event_log'] = st.session_state.get('export_event_log', []) + ['FERNANDINA_PUBLIC_SERVICE']
+                    st.session_state['export_count'] = st.session_state.get('export_count', 0) + 1
+            else:
+                _fernandina_export_slot.button(
+                    f"🌊 {prop_city}, {prop_state} — Coastal Rescue Briefing",
+                    disabled=True,
+                    width="stretch",
+                    key="fernandina_public_service_not_ready_btn",
+                    help="Fernandina Beach station data is not available yet.",
+                )
 
         def _load_recent_crash_notice():
             crash_dir = APP_DIR / "crash_logs"
@@ -9607,6 +10022,13 @@ body{{background:transparent;overflow:hidden}}
                     _acknowledge_crash_notice(_recent_crash_notice)
                     st.session_state["_show_recent_crash_notice"] = False
                     st.rerun()
+        _mgdf_export = st.session_state.get('master_gdf_override')
+        _boundary_geojson_export = None
+        if _mgdf_export is not None and not _mgdf_export.empty:
+            try:
+                _boundary_geojson_export = _mgdf_export.to_crs(epsg=4326).to_json()
+            except Exception:
+                _boundary_geojson_export = None
         export_dict = {
             "city": prop_city,
             "state": prop_state,
@@ -9637,7 +10059,7 @@ body{{background:transparent;overflow:hidden}}
             ),
             "stations_data": html_reports._safe_df_to_records(st.session_state.get('df_stations')),
             "faa_geojson": faa_geojson,
-            "boundary_geojson": None,
+            "boundary_geojson": _boundary_geojson_export,
             "boundary_kind": st.session_state.get('boundary_kind', 'place'),
             "boundary_source_path": st.session_state.get('boundary_source_path', ''),
             "brinc_user": st.session_state.get('brinc_user', ''),
@@ -9787,14 +10209,6 @@ body{{background:transparent;overflow:hidden}}
                     "annual_savings":  d.get('annual_savings', 0),
                 } for d in active_drones],
             }
-
-            _mgdf_export = st.session_state.get('master_gdf_override')
-            _boundary_geojson_export = None
-            if _mgdf_export is not None and not _mgdf_export.empty:
-                try:
-                    _boundary_geojson_export = _mgdf_export.to_crs(epsg=4326).to_json()
-                except Exception:
-                    _boundary_geojson_export = None
 
             _custom_export_df = st.session_state.get('custom_stations', pd.DataFrame())
             _stations_export_df = st.session_state.get('df_stations')
@@ -9978,7 +10392,48 @@ body{{background:transparent;overflow:hidden}}
                         font=dict(color=legend_text, size=11)
                     )
                 )
-                map_html_str = fig_for_export.to_html(full_html=False, include_plotlyjs='cdn', default_height='500px', default_width='100%')
+                map_html_str = fig_for_export.to_html(full_html=False, include_plotlyjs='inline', default_height='500px', default_width='100%')
+                fig_for_pdf_export = go.Figure(fig_for_export)
+                _pdf_zoom = round(max(5, float(dynamic_zoom or 0) - 1.1), 2)
+                fig_for_pdf_export.update_layout(
+                    map=dict(center=dict(lat=center_lat, lon=center_lon), zoom=_pdf_zoom, style="carto-darkmatter"),
+                    margin=dict(l=0, r=0, t=0, b=0), height=720, showlegend=True,
+                    legend=dict(
+                        yanchor="top", y=0.98, xanchor="left", x=0.02,
+                        bgcolor=legend_bg, bordercolor="#444444", borderwidth=1,
+                        font=dict(color=legend_text, size=11)
+                    )
+                )
+                def _ensure_kaleido_browser():
+                    browser_path = os.environ.get("BROWSER_PATH", "").strip()
+                    if browser_path and Path(browser_path).is_file():
+                        return browser_path
+                    for candidate in (
+                        shutil.which("chromium"),
+                        shutil.which("chromium-browser"),
+                        shutil.which("google-chrome"),
+                        shutil.which("google-chrome-stable"),
+                    ):
+                        if candidate and Path(candidate).is_file():
+                            os.environ["BROWSER_PATH"] = candidate
+                            browser_dir = str(Path(candidate).parent)
+                            os.environ["PATH"] = browser_dir + os.pathsep + os.environ.get("PATH", "")
+                            return candidate
+                    return None
+
+                try:
+                    map_png_bytes = fig_for_pdf_export.to_image(format='png', width=1400, height=900, scale=2)
+                except Exception as _png_exc:
+                    _chrome_path = _ensure_kaleido_browser()
+                    if _chrome_path:
+                        try:
+                            map_png_bytes = fig_for_pdf_export.to_image(format='png', width=1400, height=900, scale=2)
+                        except Exception as _retry_exc:
+                            print(f"[BRINC] Executive summary map PNG retry failed: {_retry_exc}")
+                            map_png_bytes = None
+                    else:
+                        print(f"[BRINC] Executive summary map PNG render unavailable: {_png_exc}")
+                        map_png_bytes = None
                 _visible_export_rows = [d for d in active_drones if not _is_call_density_station(d)]
                 station_rows = "".join(
                     f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>{d['faa_ceiling']}</td><td>${d['cost']:,}</td></tr>"
@@ -11485,7 +11940,7 @@ body{{background:transparent;overflow:hidden}}
     
         <!-- ── DISCLAIMER ─────────────────────────────────────────────── -->
         <div style="background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:20px 60px;margin:0;font-size:11px;color:#7a5a00;line-height:1.7">
-          <strong>&#9888; SIMULATION TOOL DISCLAIMER</strong> — All figures are model estimates based on user inputs and publicly available data. Not a legal recommendation, binding proposal, contract, or guarantee. Deployments require FAA authorization and formal procurement.
+          <strong>&#9888; SIMULATION TOOL DISCLAIMER</strong> — {html.escape(get_export_disclaimer_text())}
         </div>
     
         <!-- ── FOOTER ─────────────────────────────────────────────────── -->
@@ -11721,6 +12176,18 @@ body{{background:transparent;overflow:hidden}}
                            prop_name, prop_email, details=export_details)
         # 2. Executive Summary / proposal HTML export
         _export_html_ready = isinstance(export_html, str) and export_html.lstrip().lower().startswith("<!doctype html")
+        _executive_pdf_bytes = None
+        if fleet_capex > 0 and _export_html_ready:
+            try:
+                _executive_pdf_bytes = html_reports.render_executive_html_to_pdf(
+                    export_html,
+                    map_png_bytes=map_png_bytes,
+                    prepared_by_name=prop_name,
+                    prepared_by_email=prop_email,
+                )
+            except Exception as _pdf_full_exc:
+                _executive_pdf_bytes = None
+                print(f"[BRINC] Executive HTML-to-PDF render failed: {_pdf_full_exc}")
         if fleet_capex > 0:
             if _export_html_ready and _html_export_slot.download_button(f"📄 {prop_city}, {prop_state} — Executive Summary",
                                                                         data=export_html,
@@ -11744,6 +12211,28 @@ body{{background:transparent;overflow:hidden}}
                     key="html_export_not_ready_btn",
                     help="Executive summary data is not ready for this run.",
                 )
+            if _executive_pdf_bytes:
+                if _pdf_export_slot.download_button(f"📑 {prop_city}, {prop_state} — Executive Summary PDF",
+                                                    data=_executive_pdf_bytes,
+                                                    file_name=f"BRINC_Executive_Summary_{_safe_city}_{_version_slug}_{_ts}.pdf",
+                                                    mime="application/pdf",
+                                                    width="stretch"):
+                    st.session_state['export_event_log'] = st.session_state.get('export_event_log', []) + ['PDF']
+                    st.session_state['export_count'] = st.session_state.get('export_count', 0) + 1
+                    _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                                  "PDF", k_responder, k_guardian, calls_covered_perc,
+                                  prop_name, prop_email, details=export_details)
+                    _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                                   "PDF", k_responder, k_guardian, calls_covered_perc,
+                                   prop_name, prop_email, details=export_details)
+            else:
+                _pdf_export_slot.button(
+                    f"📑 {prop_city}, {prop_state} — Executive Summary PDF",
+                    disabled=True,
+                    width="stretch",
+                    key="pdf_export_not_ready_btn",
+                    help="Executive summary PDF data is not ready for this run.",
+                )
         else:
             _html_export_slot.button(
                 f"📄 {prop_city}, {prop_state} — Executive Summary",
@@ -11751,6 +12240,13 @@ body{{background:transparent;overflow:hidden}}
                 width="stretch",
                 key="html_export_no_drones_btn",
                 help="Deploy at least one drone to generate the executive summary.",
+            )
+            _pdf_export_slot.button(
+                f"📑 {prop_city}, {prop_state} — Executive Summary PDF",
+                disabled=True,
+                width="stretch",
+                key="pdf_export_no_drones_btn",
+                help="Deploy at least one drone to generate the executive summary PDF.",
             )
 
         # 3. Google Earth KML — only when drones are placed
@@ -11779,6 +12275,9 @@ body{{background:transparent;overflow:hidden}}
                 _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
                                "KML", k_responder, k_guardian, calls_covered_perc,
                                prop_name, prop_email, details=export_details)
+            st.sidebar.caption(
+                "By downloading this file, you confirm your use complies with all applicable company policy and U.S. law."
+            )
         elif active_drones:
             _kml_export_slot.button(
                 "🌏 Google Earth Briefing File",
@@ -11789,6 +12288,9 @@ body{{background:transparent;overflow:hidden}}
             )
             if _kml_error:
                 st.sidebar.caption(f"Google Earth export issue: {_kml_error}")
+            st.sidebar.caption(
+                "By downloading this file, you confirm your use complies with all applicable company policy and U.S. law."
+            )
         else:
             _kml_export_slot.button(
                 "🌏 Google Earth Briefing File",
@@ -11796,6 +12298,9 @@ body{{background:transparent;overflow:hidden}}
                 width="stretch",
                 key="kml_export_no_drones_btn",
                 help="Deploy at least one drone to generate the KML file.",
+            )
+            st.sidebar.caption(
+                "By downloading this file, you confirm your use complies with all applicable company policy and U.S. law."
             )
 
 
