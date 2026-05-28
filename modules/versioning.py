@@ -108,13 +108,17 @@ def _resolve_build_meta():
     """
     _git_revision_value = _git_revision()
     _git_timestamp_value = _git_commit_timestamp()
-
-    if _git_revision_value is not None and _git_timestamp_value is not None:
-        return _git_timestamp_value, _git_revision_value
-
     _stored_mtime, _stored_revision = _read_build_meta()
+
+    if _git_timestamp_value is not None:
+        return _git_timestamp_value, (
+            _git_revision_value if _git_revision_value is not None else _stored_revision
+        )
+
     if _stored_mtime > 0:
-        return _stored_mtime, _stored_revision
+        return _stored_mtime, (
+            _git_revision_value if _git_revision_value is not None else _stored_revision
+        )
 
     _fallback_timestamp = float(datetime.datetime.now().timestamp())
     return _fallback_timestamp, 1
