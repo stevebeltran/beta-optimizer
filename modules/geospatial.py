@@ -106,16 +106,17 @@ def _count_points_within_boundary(df_calls, boundary_geom_4326):
         return 0
 
 
-def find_jurisdictions_by_coordinates(df_calls, min_call_share=0.001, min_call_count=3):
+def find_jurisdictions_by_coordinates(df_calls, min_call_share=0.10, min_call_count=3):
     """
     Purely coordinate-driven jurisdiction lookup.
 
     Spatially joins call points against places_lite.parquet (and
     counties_lite.parquet as fallback) to find every jurisdiction that
     contains at least `min_call_share` of the uploaded calls OR at least
-    `min_call_count` absolute calls.  Returns a GeoDataFrame with columns
-    [DISPLAY_NAME, data_count, geometry] sorted descending by data_count,
-    or None if nothing is found.
+    `min_call_count` absolute calls. The default share threshold is 10% so
+    small spillover clusters do not distort multi-jurisdiction station lookup.
+    Returns a GeoDataFrame with columns [DISPLAY_NAME, data_count, geometry]
+    sorted descending by data_count, or None if nothing is found.
     """
     import traceback as _tb
     _debug_msgs = []
@@ -171,7 +172,7 @@ def find_jurisdictions_by_coordinates(df_calls, min_call_share=0.001, min_call_c
 
                 total = hit_counts.sum()
                 for jname, cnt in hit_counts.items():
-                    if cnt / total < min_call_share and cnt < min_call_count:
+                    if cnt / total <= min_call_share:
                         continue
                     row = poly_gdf[poly_gdf[name_col] == jname].copy()
                     if row.empty:

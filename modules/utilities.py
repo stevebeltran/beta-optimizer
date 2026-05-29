@@ -122,7 +122,7 @@ def find_relevant_jurisdictions(calls_df, shapefile_dir, preferred_shp=None):
     if master_gdf['data_count'].sum() > 0:
         master_gdf['pct_share'] = master_gdf['data_count'] / master_gdf['data_count'].sum()
         master_gdf['cum_share'] = master_gdf['pct_share'].cumsum()
-        mask = (master_gdf['cum_share'] <= 0.98) | (master_gdf['pct_share'] > 0.01)
+        mask = (master_gdf['cum_share'] <= 0.98) | (master_gdf['pct_share'] > 0.10)
         mask.iloc[0] = True
         return master_gdf[mask]
     return master_gdf

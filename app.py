@@ -1320,83 +1320,8 @@ def _fetch_hifld_stations_cached(min_lat: float, min_lon: float, max_lat: float,
 
 
 def generate_stations_from_calls(df_calls, max_stations=100):
-    """Query OSM and HIFLD in parallel; merge results; fall back to call density."""
-    lats = df_calls['lat'].dropna().values
-    lons = df_calls['lon'].dropna().values
-    if len(lats) == 0:
-        return None, "No coordinates available to generate stations."
-
-    q1_la, q3_la = np.percentile(lats, 25), np.percentile(lats, 75)
-    q1_lo, q3_lo = np.percentile(lons, 25), np.percentile(lons, 75)
-    iqr_la, iqr_lo = q3_la - q1_la, q3_lo - q1_lo
-    mask = (
-        (lats >= q1_la - 2.5 * iqr_la) & (lats <= q3_la + 2.5 * iqr_la) &
-        (lons >= q1_lo - 2.5 * iqr_lo) & (lons <= q3_lo + 2.5 * iqr_lo)
-    )
-    if not np.any(mask):
-        mask = np.ones(len(lats), dtype=bool)
-    cen_lat_r = round(float(lats[mask].mean()), 2)
-    cen_lon_r = round(float(lons[mask].mean()), 2)
-
-    # Derive bbox from the actual data spread so the search covers the entire
-    # city/jurisdiction instead of a fixed radius around the centroid.
-    _pad = 0.05  # small buffer (~5.5 km) beyond the outermost calls
-    min_lat_r = round(float(lats[mask].min()) - _pad, 2)
-    max_lat_r = round(float(lats[mask].max()) + _pad, 2)
-    min_lon_r = round(float(lons[mask].min()) - _pad, 2)
-    max_lon_r = round(float(lons[mask].max()) + _pad, 2)
-
-    osm_rows, osm_note = None, "OSM unavailable"
-    hifld_rows, hifld_note = None, "HIFLD unavailable"
-
-    pool = cf.ThreadPoolExecutor(max_workers=2)
-    try:
-        futures = {
-            'OSM': pool.submit(_fetch_osm_stations_cached, cen_lat_r, cen_lon_r, max_stations,
-                               min_lat_r, min_lon_r, max_lat_r, max_lon_r),
-            'HIFLD': pool.submit(_fetch_hifld_stations_cached, min_lat_r, min_lon_r, max_lat_r, max_lon_r),
-        }
-        _, not_done = cf.wait(futures.values(), timeout=12)
-
-        for name, fut in futures.items():
-            if fut in not_done:
-                fut.cancel()
-                print(f"[BRINC] generate_stations_from_calls: {name} timed out")
-                continue
-            try:
-                rows, note = fut.result()
-            except Exception as e:
-                rows, note = None, f"{name} unavailable"
-                print(f"[BRINC] generate_stations_from_calls: {name} raised {e}")
-            if name == 'OSM':
-                osm_rows, osm_note = rows, note
-            else:
-                hifld_rows, hifld_note = rows, note
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
-
-    combined = []
-    if osm_rows:
-        combined.extend(osm_rows)
-    if hifld_rows:
-        combined.extend(hifld_rows)
-
-    if combined:
-        df_combined = pd.DataFrame(combined)
-        df_combined = df_combined.round({'lat': 3, 'lon': 3})
-        df_combined = df_combined.drop_duplicates(subset=['lat', 'lon']).reset_index(drop=True)
-        _pri_map = {'Police': 0, 'Fire': 1, 'School': 2, 'Hospital': 3, 'Government': 4, 'Library': 5}
-        df_combined['_pri'] = df_combined['type'].map(_pri_map).fillna(9)
-        df_combined = df_combined.sort_values('_pri').head(max_stations).drop(columns='_pri').reset_index(drop=True)
-        sources = [s for s, r in [('OSM', osm_rows), ('HIFLD', hifld_rows)] if r]
-        note = f"Found {len(df_combined)} candidate sites from {' + '.join(sources)}."
-        return df_combined, note
-
-    df_fallback = _make_random_stations(df_calls, n=40)
-    if not df_fallback.empty:
-        notes = [n for n in [osm_note, hifld_note] if n]
-        return df_fallback, "Fallback stations generated from call data. " + " | ".join(notes)
-    return None, "Could not generate stations ? no valid call coordinates."
+    from modules.stations import generate_stations_from_calls as _shared_generate_stations_from_calls
+    return _shared_generate_stations_from_calls(df_calls, max_stations=max_stations)
 
 # ============================================================
 # CACHED DATA FUNCTIONS

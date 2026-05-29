@@ -18,6 +18,7 @@ from modules.boundaries import (
     fetch_tiger_city_shapefile,
     normalize_jurisdiction_name,
 )
+from modules.geocoding import search_public_facility_candidates
 from modules.geospatial import _count_points_within_boundary as _count_points_within_geometry
 
 SHAPEFILE_DIR = "jurisdiction_data"
@@ -33,6 +34,24 @@ def _count_points_within_boundary(df_calls, boundary_gdf_or_geom):
     except Exception:
         boundary_geom = boundary_gdf_or_geom
     return _count_points_within_geometry(df_calls, boundary_geom)
+
+
+def _standardize_lat_lon_columns(df):
+    """Return a copy with canonical lat/lon columns when aliases exist."""
+    if df is None:
+        return pd.DataFrame()
+    work = df.copy()
+    if 'lat' not in work.columns:
+        for alias in ['latitude', 'Latitude', 'LATITUDE', 'y']:
+            if alias in work.columns:
+                work['lat'] = work[alias]
+                break
+    if 'lon' not in work.columns:
+        for alias in ['longitude', 'Longitude', 'LONGITUDE', 'long', 'lng', 'x']:
+            if alias in work.columns:
+                work['lon'] = work[alias]
+                break
+    return work
 
 def _select_best_boundary_for_calls(df_calls, city_text, state_abbr, prefer_county=False):
     """Try place and county boundaries and keep the candidate containing the most uploaded calls."""
@@ -84,6 +103,206 @@ def _select_best_boundary_for_calls(df_calls, city_text, state_abbr, prefer_coun
     best_kind, best_gdf, best_hits = candidates[0]
     return True, best_gdf, best_kind, int(best_hits)
 
+
+def _derive_jurisdiction_lookup_contexts(df_calls, min_call_share=0.10):
+    """Return city/state groups that deserve their own real-location lookup."""
+    if df_calls is None or df_calls.empty:
+        return []
+
+    work = _standardize_lat_lon_columns(df_calls)
+    city_col = next((c for c in ['city', 'city_name', 'jurisdiction', 'municipality'] if c in work.columns), None)
+    state_col = next((c for c in ['state', 'state_name'] if c in work.columns), None)
+    if not city_col:
+        return []
+
+    work['lat'] = pd.to_numeric(work['lat'], errors='coerce')
+    work['lon'] = pd.to_numeric(work['lon'], errors='coerce')
+    work = work.dropna(subset=['lat', 'lon']).copy()
+    if work.empty:
+        return []
+
+    work['_city_key'] = work[city_col].astype(str).apply(normalize_jurisdiction_name)
+    work = work[work['_city_key'].ne('')].copy()
+    if work.empty:
+        return []
+
+    if state_col:
+        work['_state_key'] = work[state_col].astype(str).str.strip().str.upper()
+    else:
+        work['_state_key'] = ''
+
+    grouped = work.groupby(['_city_key', '_state_key'], dropna=False).size().sort_values(ascending=False)
+    total = int(grouped.sum() or 0)
+    if total <= 0:
+        return []
+
+    contexts = []
+    for (city_key, state_key), count in grouped.items():
+        share = float(count) / float(total)
+        if share <= float(min_call_share or 0.0):
+            continue
+        sample = work[(work['_city_key'] == city_key) & (work['_state_key'] == state_key)].iloc[0]
+        city_text = str(sample.get(city_col, '') or '').strip()
+        state_text = str(sample.get(state_col, '') or '').strip().upper() if state_col else ''
+        if not city_text:
+            continue
+        contexts.append({
+            'city': city_text,
+            'state': state_text,
+            'count': int(count),
+            'share': share,
+        })
+    return contexts
+
+
+def _build_public_facility_rows(df_calls, city_text, state_abbr, max_stations=100):
+    facility_types = ['Police', 'Fire', 'School', 'Government', 'Library']
+    rows = []
+    for facility_type in facility_types:
+        try:
+            matches = search_public_facility_candidates(
+                city_text,
+                facility_type,
+                limit=3,
+                preferred_city=city_text,
+                preferred_state=state_abbr,
+            )
+        except Exception:
+            matches = []
+        for match in matches or []:
+            try:
+                lat = float(match.get('lat'))
+                lon = float(match.get('lon'))
+            except Exception:
+                continue
+            rows.append({
+                'name': str(match.get('matched_address') or match.get('label') or city_text).strip(),
+                'lat': lat,
+                'lon': lon,
+                'type': facility_type,
+                'source': 'PUBLIC_FACILITY',
+                'address': str(match.get('matched_address') or match.get('label') or '').strip(),
+            })
+
+    if not rows:
+        return pd.DataFrame()
+
+    df_rows = pd.DataFrame(rows)
+    df_rows = df_rows.replace([np.inf, -np.inf], np.nan).dropna(subset=['lat', 'lon']).reset_index(drop=True)
+    if df_rows.empty:
+        return df_rows
+    df_rows = df_rows.round({'lat': 3, 'lon': 3})
+    df_rows = df_rows.drop_duplicates(subset=['lat', 'lon', 'name']).reset_index(drop=True)
+    return df_rows.head(max_stations)
+
+
+def _build_context_station_rows(df_calls, city_text, state_abbr, max_stations=100):
+    if df_calls is None or df_calls.empty:
+        return pd.DataFrame()
+
+    work = _standardize_lat_lon_columns(df_calls)
+    work['lat'] = pd.to_numeric(work['lat'], errors='coerce')
+    work['lon'] = pd.to_numeric(work['lon'], errors='coerce')
+    work = work.dropna(subset=['lat', 'lon']).copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    city_col = next((c for c in ['city', 'city_name', 'jurisdiction', 'municipality'] if c in work.columns), None)
+    state_col = next((c for c in ['state', 'state_name'] if c in work.columns), None)
+    if city_col:
+        work['_city_key'] = work[city_col].astype(str).apply(normalize_jurisdiction_name)
+        city_key = normalize_jurisdiction_name(city_text)
+        work = work[work['_city_key'] == city_key].copy()
+    if state_col and state_abbr:
+        work['_state_key'] = work[state_col].astype(str).str.strip().str.upper()
+        work = work[work['_state_key'] == str(state_abbr).strip().upper()].copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    q1_la, q3_la = np.percentile(work['lat'].values, 25), np.percentile(work['lat'].values, 75)
+    q1_lo, q3_lo = np.percentile(work['lon'].values, 25), np.percentile(work['lon'].values, 75)
+    iqr_la, iqr_lo = q3_la - q1_la, q3_lo - q1_lo
+    mask = (
+        (work['lat'].values >= q1_la - 2.5 * iqr_la) & (work['lat'].values <= q3_la + 2.5 * iqr_la) &
+        (work['lon'].values >= q1_lo - 2.5 * iqr_lo) & (work['lon'].values <= q3_lo + 2.5 * iqr_lo)
+    )
+    if np.any(mask):
+        work = work.loc[mask].copy()
+    if work.empty:
+        return pd.DataFrame()
+
+    cen_lat_r = round(float(work['lat'].mean()), 2)
+    cen_lon_r = round(float(work['lon'].mean()), 2)
+    pad = 0.05
+    min_lat_r = round(float(work['lat'].min()) - pad, 2)
+    max_lat_r = round(float(work['lat'].max()) + pad, 2)
+    min_lon_r = round(float(work['lon'].min()) - pad, 2)
+    max_lon_r = round(float(work['lon'].max()) + pad, 2)
+
+    osm_rows, hifld_rows = None, None
+    pool = cf.ThreadPoolExecutor(max_workers=2)
+    try:
+        futures = {
+            'OSM': pool.submit(
+                _fetch_osm_stations_cached,
+                cen_lat_r,
+                cen_lon_r,
+                max_stations,
+                min_lat_r,
+                min_lon_r,
+                max_lat_r,
+                max_lon_r,
+            ),
+            'HIFLD': pool.submit(
+                _fetch_hifld_stations_cached,
+                min_lat_r,
+                min_lon_r,
+                max_lat_r,
+                max_lon_r,
+            ),
+        }
+        _, not_done = cf.wait(futures.values(), timeout=12)
+        for name, fut in futures.items():
+            if fut in not_done:
+                fut.cancel()
+                continue
+            try:
+                rows, _note = fut.result()
+            except Exception:
+                rows = None
+            if name == 'OSM':
+                osm_rows = rows
+            else:
+                hifld_rows = rows
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+    combined = []
+    if osm_rows:
+        combined.extend(osm_rows)
+    if hifld_rows:
+        combined.extend(hifld_rows)
+
+    public_facility_df = _build_public_facility_rows(work, city_text, state_abbr, max_stations=max_stations)
+    if not public_facility_df.empty:
+        combined.extend(public_facility_df.to_dict('records'))
+
+    if not combined:
+        return pd.DataFrame()
+
+    df_combined = pd.DataFrame(combined)
+    df_combined = df_combined.replace([np.inf, -np.inf], np.nan).dropna(subset=['lat', 'lon']).reset_index(drop=True)
+    if df_combined.empty:
+        return df_combined
+    df_combined = df_combined.round({'lat': 3, 'lon': 3})
+    df_combined = df_combined.drop_duplicates(subset=['lat', 'lon', 'name']).reset_index(drop=True)
+    _pri_map = {'PUBLIC_FACILITY': 0, 'OSM': 1, 'HIFLD': 2, 'Police': 3, 'Fire': 4, 'School': 5, 'Government': 6, 'Library': 7, 'Hospital': 8}
+    df_combined['_pri'] = df_combined['source'].map(_pri_map).fillna(9)
+    _type_map = {'Police': 0, 'Fire': 1, 'School': 2, 'Hospital': 3, 'Government': 4, 'Library': 5}
+    df_combined['_type_pri'] = df_combined['type'].map(_type_map).fillna(9)
+    df_combined = df_combined.sort_values(['_pri', '_type_pri', 'name']).drop(columns=['_pri', '_type_pri']).reset_index(drop=True)
+    return df_combined.head(max_stations)
+
 # ============================================================
 # COMMAND CENTER ANALYTICS GENERATOR
 # ============================================================
@@ -101,7 +320,7 @@ def _make_random_stations(df_calls, n=40, boundary_geom=None, epsg_code=None):
     if df_calls is None or df_calls.empty:
         return pd.DataFrame()
 
-    work = df_calls.copy()
+    work = _standardize_lat_lon_columns(df_calls)
     work['lat'] = pd.to_numeric(work['lat'], errors='coerce')
     work['lon'] = pd.to_numeric(work['lon'], errors='coerce')
     work = work.dropna(subset=['lat', 'lon']).reset_index(drop=True)
@@ -396,12 +615,44 @@ def _fetch_hifld_stations_cached(min_lat: float, min_lon: float, max_lat: float,
 
 
 def generate_stations_from_calls(df_calls, max_stations=100):
-    """Query OSM and HIFLD in parallel; merge results; fall back to call density."""
-    lats = df_calls['lat'].dropna().values
-    lons = df_calls['lon'].dropna().values
-    if len(lats) == 0:
+    """Query real stations per qualifying jurisdiction; fall back to call density."""
+    work = _standardize_lat_lon_columns(df_calls)
+    work['lat'] = pd.to_numeric(work['lat'], errors='coerce')
+    work['lon'] = pd.to_numeric(work['lon'], errors='coerce')
+    work = work.dropna(subset=['lat', 'lon']).reset_index(drop=True)
+    if work.empty:
         return None, "No coordinates available to generate stations."
 
+    contexts = _derive_jurisdiction_lookup_contexts(work, min_call_share=0.10)
+    context_rows = []
+    context_notes = []
+    for context in contexts:
+        city_text = context['city']
+        state_abbr = context.get('state', '')
+        context_df = _build_context_station_rows(work, city_text, state_abbr, max_stations=max_stations)
+        if not context_df.empty:
+            context_rows.append(context_df)
+            context_notes.append(f"{city_text}{', ' + state_abbr if state_abbr else ''} ({context['share']*100:.1f}%)")
+
+    if context_rows:
+        df_context = pd.concat(context_rows, ignore_index=True)
+        df_context = df_context.replace([np.inf, -np.inf], np.nan).dropna(subset=['lat', 'lon']).reset_index(drop=True)
+        df_context = df_context.round({'lat': 3, 'lon': 3})
+        df_context = df_context.drop_duplicates(subset=['lat', 'lon', 'name']).reset_index(drop=True)
+        _pri_map = {'PUBLIC_FACILITY': 0, 'OSM': 1, 'HIFLD': 2, 'Police': 3, 'Fire': 4, 'School': 5, 'Government': 6, 'Library': 7, 'Hospital': 8}
+        df_context['_pri'] = df_context['source'].map(_pri_map).fillna(9)
+        _type_map = {'Police': 0, 'Fire': 1, 'School': 2, 'Hospital': 3, 'Government': 4, 'Library': 5}
+        df_context['_type_pri'] = df_context['type'].map(_type_map).fillna(9)
+        df_context = df_context.sort_values(['_pri', '_type_pri', 'name']).drop(columns=['_pri', '_type_pri']).reset_index(drop=True)
+        if not df_context.empty:
+            note = "Found {0} candidate sites from jurisdiction-specific real-location lookups: {1}.".format(
+                len(df_context),
+                ", ".join(context_notes),
+            )
+            return df_context.head(max_stations), note
+
+    lats = work['lat'].values
+    lons = work['lon'].values
     q1_la, q3_la = np.percentile(lats, 25), np.percentile(lats, 75)
     q1_lo, q3_lo = np.percentile(lons, 25), np.percentile(lons, 75)
     iqr_la, iqr_lo = q3_la - q1_la, q3_lo - q1_lo
@@ -414,9 +665,7 @@ def generate_stations_from_calls(df_calls, max_stations=100):
     cen_lat_r = round(float(lats[mask].mean()), 2)
     cen_lon_r = round(float(lons[mask].mean()), 2)
 
-    # Derive bbox from the actual data spread so the search covers the entire
-    # city/jurisdiction instead of a fixed radius around the centroid.
-    _pad = 0.05  # small buffer (~5.5 km) beyond the outermost calls
+    _pad = 0.05
     min_lat_r = round(float(lats[mask].min()) - _pad, 2)
     max_lat_r = round(float(lats[mask].max()) + _pad, 2)
     min_lon_r = round(float(lons[mask].min()) - _pad, 2)
@@ -468,7 +717,7 @@ def generate_stations_from_calls(df_calls, max_stations=100):
         note = f"Found {len(df_combined)} candidate sites from {' + '.join(sources)}."
         return df_combined, note
 
-    df_fallback = _make_random_stations(df_calls, n=40)
+    df_fallback = _make_random_stations(work, n=40)
     if not df_fallback.empty:
         notes = [n for n in [osm_note, hifld_note] if n]
         return df_fallback, "Fallback stations generated from call data. " + " | ".join(notes)
