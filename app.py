@@ -160,6 +160,7 @@ _slugify = _public_reports_mod._slugify
 from modules.image_utils import (
     get_base64_of_bin_file, get_themed_logo_base64, get_transparent_product_base64
 )
+from modules.metra_gtfs import METRA_ROUTE_LABELS, fetch_metra_geometry, is_metra_route
 NOTIFICATIONS_AVAILABLE = True
 try:
     from modules.notifications import (
@@ -4678,9 +4679,9 @@ def main():
 
             # ── Highway / State Police Mode ───────────────────────────────────
             _hw_mode_ui = st.checkbox(
-                "Highway / State Police Mode",
+                "Highway / Metra / State Police Mode",
                 key="highway_patrol_mode",
-                help="Route calls along specific interstate corridors instead of jurisdiction boundaries. Each highway runs as an independent deployment plan.",
+                help="Route calls along specific interstate corridors or Metra lines instead of jurisdiction boundaries. Each route runs as an independent deployment plan.",
             )
             if _hw_mode_ui:
                 _hw_ui_states = list(dict.fromkeys(
@@ -4689,26 +4690,28 @@ def main():
                 ))
                 _hw_ui_state = _hw_ui_states[0] if _hw_ui_states else None
                 if _hw_ui_state:
-                    _default_hws = STATE_PRIMARY_INTERSTATES.get(_hw_ui_state, [])
+                    _default_hws = list(STATE_PRIMARY_INTERSTATES.get(_hw_ui_state, []))
+                    if _hw_ui_state == "IL":
+                        _default_hws.extend(METRA_ROUTE_LABELS)
                     _hw_src = st.radio(
-                        "Corridors",
+                        "Routes",
                         ["Primary interstates (auto)", "Custom"],
                         horizontal=True,
                         key="hw_source_radio",
-                        help="Choose whether to deploy along the state's primary interstates automatically, or enter custom corridor names.",
+                        help="Choose whether to deploy along the state's primary interstates and Metra lines automatically, or enter custom route names.",
                     )
                     if _hw_src == "Primary interstates (auto)":
                         st.caption(
                             f"Will deploy: {', '.join(_default_hws)}" if _default_hws
-                            else "No primary interstates defined for this state."
+                            else "No routes defined for this state."
                         )
                         st.session_state['selected_highways'] = _default_hws
                     else:
                         _custom_hw_str = st.text_input(
-                            "Highways (comma-separated)",
+                            "Routes (comma-separated)",
                             placeholder="e.g. I-80, I-29",
                             key="custom_highways_input",
-                            help="Enter interstate or highway designations separated by commas. Each corridor runs as an independent deployment plan.",
+                            help="Enter interstate or Metra designations separated by commas. Use Metra labels like 'Metra: Rock Island'. Each route runs as an independent deployment plan.",
                         )
                         st.session_state['selected_highways'] = [
                             h.strip() for h in _custom_hw_str.split(',') if h.strip()
@@ -6393,21 +6396,26 @@ body{{background:transparent;overflow:hidden}}
             _active_hw = st.session_state.get('active_highway')
             _hw_state = active_targets[0]['state'] if active_targets else None
             _corridor_mode = _hw_exec and bool(_active_hw) and bool(_hw_state)
+            is_fast_demo_path = False
+            fast_payload = None
 
             if _corridor_mode:
-                prog.progress(20, text=f"🛣️ Fetching {_active_hw} route geometry…")
-                _hw_gdf = fetch_highway_geometry(_active_hw, _hw_state)
+                _is_metra = is_metra_route(_active_hw)
+                _route_label = _active_hw.replace("Metra: ", "") if _is_metra else _active_hw
+                _route_emoji = "🚆" if _is_metra else "🛣️"
+                prog.progress(20, text=f"{_route_emoji} Fetching {_route_label} route geometry…")
+                _hw_gdf = fetch_metra_geometry(_active_hw) if _is_metra else fetch_highway_geometry(_active_hw, _hw_state)
                 if _hw_gdf is None:
                     prog.empty()
                     st.error(
                         f"❌ Could not fetch route geometry for {_active_hw} in {_hw_state}. "
-                        "Check the highway reference (e.g. I-80) and try again."
+                        "Check the route reference and try again."
                     )
                     st.stop()
-                prog.progress(38, text=f"📐 Building {_active_hw} corridor boundary…")
+                prog.progress(38, text=f"📐 Building {_route_label} corridor boundary…")
                 _corridor_poly, _corridor_line, _corridor_miles = build_corridor_polygon(_hw_gdf)
                 city_poly = _corridor_poly
-                _corridor_label = f"{_active_hw} Corridor"
+                _corridor_label = f"{_route_label} Corridor"
                 _corridor_override = gpd.GeoDataFrame(
                     {
                         'DISPLAY_NAME': [_corridor_label],
@@ -6423,12 +6431,12 @@ body{{background:transparent;overflow:hidden}}
                 st.session_state['active_state'] = _hw_state
                 st.session_state['estimated_pop'] = 0
                 st.session_state['_pop_resolved'] = False
-                prog.progress(55, text=f"🚔 Modeling patrol calls along {_corridor_miles:.0f} miles of {_active_hw}…")
+                prog.progress(55, text=f"🚔 Modeling patrol calls along {_corridor_miles:.0f} miles of {_route_label}…")
                 annual_cfs = estimate_corridor_calls(_corridor_miles)
                 df_demo, annual_cfs, simulated_points_count = build_corridor_demo(
                     _corridor_line, _corridor_poly, annual_cfs, generate_random_points_in_polygon
                 )
-                st.toast(f"✅ {_active_hw} · {_hw_state} · {_corridor_miles:.0f} mi · {annual_cfs:,} calls/yr")
+                st.toast(f"✅ {_route_label} · {_hw_state} · {_corridor_miles:.0f} mi · {annual_cfs:,} calls/yr")
 
             else:
                 fast_demo_target_set = {(city, state) for city, state in FAST_DEMO_CITIES}
