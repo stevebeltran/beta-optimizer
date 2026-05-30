@@ -229,7 +229,8 @@ def restore_brinc_session(session_state, save_data):
     _bool_display_keys = [
         'show_satellite_b', 'show_boundaries_b', 'show_faa_b', 'show_no_fly_b',
         'show_obstacles_b', 'show_coverage_b', 'show_cell_towers_b', 'show_heatmap_b',
-        'show_dots_b', 'show_rapid_response_ring_b', 'simulate_traffic_b', 'show_health_b', 'show_financials_b',
+        'show_dots_b', 'show_rapid_response_ring_b', 'show_station_suggestions_ui',
+        '_suggest_markers_toggle', 'simulate_traffic_b', 'show_health_b', 'show_financials_b',
         'simple_cards_b',
     ]
     for _k in _bool_display_keys:

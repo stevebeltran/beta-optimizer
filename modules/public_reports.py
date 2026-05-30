@@ -143,13 +143,22 @@ def _build_public_report_url(report_id):
     except Exception:
         _public_webapp_url = ""
     if _public_webapp_url:
-        _query = urllib.parse.urlencode({
-            "report_id": report_id,
-            "public_report": report_id,
-            "sig": _sig,
-        })
-        _sep = "&" if "?" in _public_webapp_url else "?"
-        return f"{_public_webapp_url}{_sep}{_query}"
+        _parsed_public_url = urllib.parse.urlsplit(_public_webapp_url)
+        _is_apps_script_url = (
+            (_parsed_public_url.hostname or "").endswith("script.google.com")
+            and "/macros/s/" in (_parsed_public_url.path or "")
+        )
+        # Apps Script URLs do not execute the Streamlit public-report route,
+        # so they bypass the QR scan logging path. Prefer the Streamlit URL
+        # for any public report link that needs to record scans in Sheets.
+        if not _is_apps_script_url:
+            _query = urllib.parse.urlencode({
+                "report_id": report_id,
+                "public_report": report_id,
+                "sig": _sig,
+            })
+            _sep = "&" if "?" in _public_webapp_url else "?"
+            return f"{_public_webapp_url}{_sep}{_query}"
     _base_url = _get_request_base_url()
     if _is_local_or_private_base_url(_base_url):
         raise ValueError(

@@ -2759,6 +2759,120 @@ def add_no_fly_zones_layer_to_plotly(fig, minx, miny, maxx, maxy):
     except Exception as e:
         print(f"[BRINC] add_no_fly_zones_layer_to_plotly failed: {e}")
 
+
+def _iter_boundary_polygons(geometry):
+    if geometry is None or geometry.is_empty:
+        return []
+    if isinstance(geometry, Polygon):
+        return [geometry]
+    if isinstance(geometry, MultiPolygon):
+        return list(geometry.geoms)
+    geoms = getattr(geometry, "geoms", None)
+    if geoms is not None:
+        return [g for g in geoms if g is not None and not g.is_empty]
+    return []
+
+
+def _dashed_line_coords(coords, dash_length=0.018, gap_length=0.012):
+    """Convert a polyline into dash segments for Scattermap, which does not support line.dash."""
+    pts = list(coords or [])
+    if len(pts) < 2:
+        return [], []
+
+    lon_out = []
+    lat_out = []
+    period = float(dash_length + gap_length)
+    if period <= 0:
+        period = 0.03
+
+    for start_pt, end_pt in zip(pts[:-1], pts[1:]):
+        x0, y0 = float(start_pt[0]), float(start_pt[1])
+        x1, y1 = float(end_pt[0]), float(end_pt[1])
+        avg_lat = (y0 + y1) / 2.0
+        x_scale = max(0.15, math.cos(math.radians(avg_lat)))
+        seg_len = math.hypot((x1 - x0) * x_scale, y1 - y0)
+        if seg_len <= 0:
+            continue
+
+        seg_start = 0.0
+        while seg_start < seg_len:
+            seg_end = min(seg_start + dash_length, seg_len)
+            if seg_end > seg_start:
+                t0 = seg_start / seg_len
+                t1 = seg_end / seg_len
+                lon_out.extend([x0 + (x1 - x0) * t0, x0 + (x1 - x0) * t1, None])
+                lat_out.extend([y0 + (y1 - y0) * t0, y0 + (y1 - y0) * t1, None])
+            seg_start += period
+
+    return lon_out, lat_out
+
+
+def _boundary_palette(index):
+    palette = [
+        "#3CF2FF",
+        "#FFD166",
+        "#FF6B6B",
+        "#7CFF6B",
+        "#B388FF",
+        "#FF9F1C",
+        "#4CC9F0",
+        "#F72585",
+        "#90BE6D",
+        "#F9C74F",
+    ]
+    return palette[index % len(palette)]
+
+
+def _add_boundary_geometry_traces(fig, geometry, *, label, color, showlegend=False, dashed=False, halo_color="rgba(8, 15, 28, 0.95)", halo_width=5, line_width=3, legendgroup=None):
+    for part_index, part in enumerate(_iter_boundary_polygons(geometry)):
+        bx, by = part.exterior.coords.xy
+        fig.add_trace(go.Scattermap(
+            mode="lines",
+            lon=list(bx),
+            lat=list(by),
+            line=dict(color=halo_color, width=halo_width),
+            name=f"{label} Halo",
+            hoverinfo="skip",
+            showlegend=False,
+            legendgroup=legendgroup or label,
+        ))
+        if dashed:
+            dash_lon, dash_lat = _dashed_line_coords(part.exterior.coords)
+            if dash_lon and dash_lat:
+                fig.add_trace(go.Scattermap(
+                    mode="lines",
+                    lon=dash_lon,
+                    lat=dash_lat,
+                    line=dict(color=color, width=line_width),
+                    name=label,
+                    hoverinfo="skip",
+                    showlegend=bool(showlegend and part_index == 0),
+                    legendgroup=legendgroup or label,
+                ))
+            else:
+                fig.add_trace(go.Scattermap(
+                    mode="lines",
+                    lon=list(bx),
+                    lat=list(by),
+                    line=dict(color=color, width=line_width),
+                    name=label,
+                    hoverinfo="skip",
+                    showlegend=bool(showlegend and part_index == 0),
+                    legendgroup=legendgroup or label,
+                ))
+        else:
+            fig.add_trace(go.Scattermap(
+                mode="lines",
+                lon=list(bx),
+                lat=list(by),
+                line=dict(color=color, width=line_width),
+                name=label,
+                hoverinfo="skip",
+                showlegend=bool(showlegend and part_index == 0),
+                legendgroup=legendgroup or label,
+            ))
+
+
 def _prepare_sampling_polygon(polygon):
     if polygon is None:
         return None
@@ -7892,7 +8006,39 @@ body{{background:transparent;overflow:hidden}}
         with map_col:
             fig = go.Figure()
 
-            if show_boundaries and city_boundary_geom is not None and not city_boundary_geom.is_empty:
+            _multi_boundary_gdf = active_gdf if 'active_gdf' in locals() else None
+            _multi_boundary_count = 0
+            if _multi_boundary_gdf is not None and not _multi_boundary_gdf.empty:
+                try:
+                    _multi_boundary_count = int(len(_multi_boundary_gdf[['DISPLAY_NAME', 'geometry']].dropna(subset=['geometry'])))
+                except Exception:
+                    _multi_boundary_count = int(len(_multi_boundary_gdf))
+
+            if show_boundaries and _multi_boundary_count > 1:
+                _used_labels = set()
+                for gi, _row in enumerate(_multi_boundary_gdf.itertuples(index=False)):
+                    _geom = getattr(_row, "geometry", None)
+                    if _geom is None or _geom.is_empty:
+                        continue
+                    _label = str(getattr(_row, "DISPLAY_NAME", "") or getattr(_row, "NAME", "") or getattr(_row, "NAMELSAD", "") or f"Jurisdiction {gi + 1}").strip()
+                    if not _label:
+                        _label = f"Jurisdiction {gi + 1}"
+                    _color = _boundary_palette(gi)
+                    _showlegend = _label not in _used_labels
+                    _used_labels.add(_label)
+                    _add_boundary_geometry_traces(
+                        fig,
+                        _geom,
+                        label=_label,
+                        color=_color,
+                        showlegend=_showlegend,
+                        dashed=True,
+                        halo_color="rgba(8, 15, 28, 0.92)",
+                        halo_width=5,
+                        line_width=3,
+                        legendgroup=_label,
+                    )
+            elif show_boundaries and city_boundary_geom is not None and not city_boundary_geom.is_empty:
                 geoms_to_draw = [city_boundary_geom] if isinstance(city_boundary_geom, Polygon) else list(city_boundary_geom.geoms)
                 for gi, geom in enumerate(geoms_to_draw):
                     bx, by = geom.exterior.coords.xy
@@ -7911,28 +8057,30 @@ body{{background:transparent;overflow:hidden}}
 
             boundary_overlay_gdf = st.session_state.get('boundary_overlay_gdf')
             if show_boundaries and boundary_overlay_gdf is not None and not boundary_overlay_gdf.empty:
-                _overlay_parts = []
-                for _overlay_geom in boundary_overlay_gdf.geometry:
-                    if _overlay_geom is None or _overlay_geom.is_empty:
+                _overlay_rows = boundary_overlay_gdf[['DISPLAY_NAME', 'geometry']].copy()
+                _overlay_rows = _overlay_rows[_overlay_rows.geometry.notna() & ~_overlay_rows.geometry.is_empty].copy()
+                _overlay_multi = len(_overlay_rows) > 1
+                _used_overlay_labels = set()
+                for oi, _row in enumerate(_overlay_rows.itertuples(index=False)):
+                    _geom = getattr(_row, "geometry", None)
+                    if _geom is None or _geom.is_empty:
                         continue
-                    if isinstance(_overlay_geom, Polygon):
-                        _overlay_parts.append(_overlay_geom)
-                    elif isinstance(_overlay_geom, MultiPolygon):
-                        _overlay_parts.extend(list(_overlay_geom.geoms))
-                for oi, geom in enumerate(_overlay_parts):
-                    bx, by = geom.exterior.coords.xy
-                    fig.add_trace(go.Scattermap(
-                        mode="lines",
-                        lon=list(bx),
-                        lat=list(by),
-                        line=dict(color="rgba(8, 15, 28, 0.9)", width=5),
-                        name="Uploaded Boundary Overlay Halo",
-                        hoverinfo='skip',
-                        showlegend=False,
-                    ))
-                    fig.add_trace(go.Scattermap(mode="lines", lon=list(bx), lat=list(by),
-                        line=dict(color="#FFD166", width=2.5), name="Uploaded Boundary Overlay",
-                        hoverinfo='skip', showlegend=(oi==0)))
+                    _label = str(getattr(_row, "DISPLAY_NAME", "") or f"Overlay {oi + 1}").strip() or f"Overlay {oi + 1}"
+                    _showlegend = _overlay_multi and _label not in _used_overlay_labels
+                    _used_overlay_labels.add(_label)
+                    _color = _boundary_palette(oi + 3)
+                    _add_boundary_geometry_traces(
+                        fig,
+                        _geom,
+                        label=_label,
+                        color=_color,
+                        showlegend=_showlegend,
+                        dashed=_overlay_multi,
+                        halo_color="rgba(8, 15, 28, 0.9)",
+                        halo_width=5,
+                        line_width=2.5,
+                        legendgroup=_label,
+                    )
 
             if show_heatmap and not display_calls.empty:
                 fig.add_trace(go.Densitymap(lat=display_calls.geometry.y, lon=display_calls.geometry.x,
@@ -10295,7 +10443,37 @@ body{{background:transparent;overflow:hidden}}
                 fig_for_export = go.Figure()
     
                 # ── Boundary polygon ─────────────────────────────────────────────────
-                if city_boundary_geom is not None and not city_boundary_geom.is_empty:
+                _export_multi_boundary_gdf = active_gdf if 'active_gdf' in locals() else None
+                _export_multi_count = 0
+                if _export_multi_boundary_gdf is not None and not _export_multi_boundary_gdf.empty:
+                    try:
+                        _export_multi_count = int(len(_export_multi_boundary_gdf[['DISPLAY_NAME', 'geometry']].dropna(subset=['geometry'])))
+                    except Exception:
+                        _export_multi_count = int(len(_export_multi_boundary_gdf))
+                if _export_multi_count > 1:
+                    _used_labels = set()
+                    for _bi, _row in enumerate(_export_multi_boundary_gdf.itertuples(index=False)):
+                        _geom = getattr(_row, "geometry", None)
+                        if _geom is None or _geom.is_empty:
+                            continue
+                        _label = str(getattr(_row, "DISPLAY_NAME", "") or getattr(_row, "NAME", "") or getattr(_row, "NAMELSAD", "") or f"Jurisdiction {_bi + 1}").strip()
+                        if not _label:
+                            _label = f"Jurisdiction {_bi + 1}"
+                        _showlegend = _label not in _used_labels
+                        _used_labels.add(_label)
+                        _add_boundary_geometry_traces(
+                            fig_for_export,
+                            _geom,
+                            label=_label,
+                            color=_boundary_palette(_bi),
+                            showlegend=_showlegend,
+                            dashed=True,
+                            halo_color="rgba(8, 15, 28, 0.95)",
+                            halo_width=4.5,
+                            line_width=2.5,
+                            legendgroup=_label,
+                        )
+                elif city_boundary_geom is not None and not city_boundary_geom.is_empty:
                     _export_geoms = ([city_boundary_geom] if isinstance(city_boundary_geom, Polygon)
                                      else list(city_boundary_geom.geoms))
                     for _gi, _geom in enumerate(_export_geoms):
