@@ -733,17 +733,10 @@ def detect_location_from_calls(df_calls, state_fips, us_states_abbr, reverse_geo
 
 
 def clear_stale_boundary_shapefiles(shapefile_dir):
-    try:
-        for stale_path in glob.glob(os.path.join(shapefile_dir, '*.shp')):
-            for ext in ('.shp', '.shx', '.dbf', '.prj', '.cpg'):
-                candidate = stale_path.replace('.shp', ext)
-                try:
-                    if os.path.exists(candidate):
-                        os.remove(candidate)
-                except Exception:
-                    pass
-    except Exception:
-        pass
+    # Keep cached boundary shapefiles intact. Path 02 relies on the saved
+    # boundary_source_path/master_gdf_override surviving reruns, and deleting
+    # jurisdiction_data here can wipe the exact boundary we need to reuse.
+    return
 
 
 def resolve_uploaded_boundaries(
@@ -767,9 +760,10 @@ def resolve_uploaded_boundaries(
             stage_progress.progress(int(step_pct))
 
     set_stage(15, "Checking uploaded CAD coordinates for an existing boundary match…")
-    clear_stale_boundary_shapefiles('jurisdiction_data')
-    session_state['boundary_source_path'] = ''
-    session_state['master_gdf_override'] = None
+    prior_boundary_source_path = session_state.get('boundary_source_path', '')
+    prior_master_override = session_state.get('master_gdf_override')
+    prior_boundary_kind = session_state.get('boundary_kind', 'place')
+    prior_boundary_detection_mode = session_state.get('boundary_detection_mode', '')
 
     calls_for_boundary = df_calls_full if df_calls_full is not None and len(df_calls_full) > 0 else df_calls
     file_meta = session_state.get('file_meta') or {}
@@ -845,6 +839,11 @@ def resolve_uploaded_boundaries(
         detected_city = session_state.get('active_city', '')
         detected_state = session_state.get('active_state', '')
         if not detected_city or not detected_state or detected_state not in state_fips:
+            if prior_master_override is not None and not getattr(prior_master_override, 'empty', True):
+                session_state['boundary_source_path'] = prior_boundary_source_path or ''
+                session_state['master_gdf_override'] = prior_master_override.copy()
+                session_state['boundary_kind'] = prior_boundary_kind
+                session_state['boundary_detection_mode'] = prior_boundary_detection_mode
             set_stage(100, "No active city/state was available for boundary resolution.")
             stage_progress.empty()
             stage_box.empty()
@@ -868,6 +867,11 @@ def resolve_uploaded_boundaries(
             session_state['active_city'] = city_text
             session_state['active_state'] = detected_state
             session_state['master_gdf_override'] = boundary_gdf.copy()
+        elif prior_master_override is not None and not getattr(prior_master_override, 'empty', True):
+            session_state['boundary_source_path'] = prior_boundary_source_path or ''
+            session_state['master_gdf_override'] = prior_master_override.copy()
+            session_state['boundary_kind'] = prior_boundary_kind
+            session_state['boundary_detection_mode'] = prior_boundary_detection_mode
         set_stage(100, "Boundary resolution complete.")
         stage_progress.empty()
         stage_box.empty()

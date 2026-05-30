@@ -3405,28 +3405,32 @@ def find_relevant_jurisdictions(calls_df, shapefile_dir, preferred_shp=None):
     # Always scan all saved shapefiles in the directory so multi-jurisdiction
     # uploads show every boundary, not just the first one saved.
     shp_files = glob.glob(os.path.join(shapefile_dir, "*.shp"))
-    # If no shapefiles exist at all and a preferred path was given, use just that
-    if not shp_files and preferred_shp and os.path.exists(preferred_shp):
-        shp_files = [preferred_shp]
+    preferred_first = []
+    if preferred_shp and os.path.exists(preferred_shp):
+        preferred_first.append(preferred_shp)
+    shp_files = [shp for shp in shp_files if shp not in preferred_first]
+    shp_files = preferred_first + shp_files
 
     relevant_polys = []
     _calls_minx, _calls_miny, _calls_maxx, _calls_maxy = total_bounds
     for shp_path in shp_files:
         try:
-            import fiona
-            with fiona.open(shp_path) as _shp_src:
-                _shp_bounds = _shp_src.bounds
-            _no_overlap = (
-                _shp_bounds[2] < _calls_minx or _shp_bounds[0] > _calls_maxx or
-                _shp_bounds[3] < _calls_miny or _shp_bounds[1] > _calls_maxy
-            )
-            if _no_overlap:
-                continue
+            use_preferred = preferred_shp and os.path.exists(preferred_shp) and os.path.abspath(shp_path) == os.path.abspath(preferred_shp)
+            if not use_preferred:
+                import fiona
+                with fiona.open(shp_path) as _shp_src:
+                    _shp_bounds = _shp_src.bounds
+                _no_overlap = (
+                    _shp_bounds[2] < _calls_minx or _shp_bounds[0] > _calls_maxx or
+                    _shp_bounds[3] < _calls_miny or _shp_bounds[1] > _calls_maxy
+                )
+                if _no_overlap:
+                    continue
         except Exception:
             pass
 
         try:
-            gdf_chunk = gpd.read_file(shp_path, bbox=tuple(total_bounds))
+            gdf_chunk = gpd.read_file(shp_path, bbox=None if (preferred_shp and os.path.exists(preferred_shp) and os.path.abspath(shp_path) == os.path.abspath(preferred_shp)) else tuple(total_bounds))
             if not gdf_chunk.empty:
                 if gdf_chunk.crs is None: gdf_chunk.set_crs(epsg=4269, inplace=True)
                 gdf_chunk = gdf_chunk.to_crs(epsg=4326)
@@ -4890,6 +4894,24 @@ def main():
             def _is_boundary_sidecar(fname):
                 return Path(fname).suffix.lower() in {'.shp', '.shx', '.dbf', '.prj'}
 
+            def _sync_uploaded_boundary_overlay(boundary_files):
+                if not boundary_files:
+                    st.session_state['boundary_overlay_gdf'] = None
+                    st.session_state['boundary_overlay_name'] = ''
+                    st.session_state['boundary_overlay_file'] = ''
+                    return
+                try:
+                    boundary_overlay_gdf, boundary_overlay_name, boundary_overlay_file = _load_uploaded_boundary_overlay(boundary_files)
+                except Exception as boundary_exc:
+                    st.session_state['boundary_overlay_gdf'] = None
+                    st.session_state['boundary_overlay_name'] = ''
+                    st.session_state['boundary_overlay_file'] = ''
+                    st.warning(f"Boundary shapefile error: {boundary_exc}")
+                    return
+                st.session_state['boundary_overlay_gdf'] = boundary_overlay_gdf
+                st.session_state['boundary_overlay_name'] = boundary_overlay_name
+                st.session_state['boundary_overlay_file'] = boundary_overlay_file
+
             current_upload_signature = _uploaded_files_signature(uploaded_files)
             if current_upload_signature and st.session_state.get('census_source_signature') and current_upload_signature != st.session_state.get('census_source_signature'):
                 _reset_census_state(st.session_state)
@@ -4979,6 +5001,7 @@ def main():
                             _is_boundary_sidecar,
                             _looks_like_stations,
                         )
+                        _sync_uploaded_boundary_overlay(boundary_files_current)
 
                         if station_file_current is not None:
                             with st.spinner("🔍 Reading stations file…"):
@@ -5359,9 +5382,7 @@ def main():
                         _looks_like_stations,
                     )
                     _upload_file_label = _get_upload_file_label(call_files or uploaded_files)
-                    st.session_state['boundary_overlay_gdf'] = None
-                    st.session_state['boundary_overlay_name'] = ''
-                    st.session_state['boundary_overlay_file'] = ''
+                    _sync_uploaded_boundary_overlay(boundary_files)
 
                     if call_files:
                         census_auto_processed = False
@@ -6893,11 +6914,18 @@ body{{background:transparent;overflow:hidden}}
         _suggestions = []
         if _using_suggestions:
             _city_area_for_suggest = city_m.area if (city_m and not city_m.is_empty) else 1.0
-            _max_suggestions = len(station_metadata) if st.session_state.get('stations_user_uploaded', False) else 10
+            _custom_station_df = st.session_state.get('custom_stations', pd.DataFrame())
+            _has_custom_stations = isinstance(_custom_station_df, pd.DataFrame) and not _custom_station_df.empty
+            if st.session_state.get('stations_user_uploaded', False) or _has_custom_stations:
+                _max_suggestions = len(station_metadata)
+            else:
+                _max_suggestions = 10
+            _station_rank_by = 'land' if resp_strategy_raw == 'Land Coverage' else 'call'
+            st.session_state['_station_suggestion_rank_by'] = _station_rank_by
             _suggestions = compute_station_suggestions(
                 resp_matrix, guard_matrix, station_metadata,
                 total_calls, _city_area_for_suggest, max_suggestions=_max_suggestions,
-                rank_by='land' if resp_strategy_raw == 'Land Coverage' else 'call',
+                rank_by=_station_rank_by,
             )
             st.session_state['_station_suggestions'] = _suggestions
             _current_modes = sync_station_suggestion_modes(
@@ -8119,7 +8147,14 @@ body{{background:transparent;overflow:hidden}}
                         showlegend=True,
                     ))
 
-            map_cfg = dict(center=dict(lat=center_lat, lon=center_lon), zoom=dynamic_zoom, style=map_style)
+            _map_center_lat = center_lat
+            _map_center_lon = center_lon
+            _map_zoom = dynamic_zoom
+            if isinstance(_pending_pin, dict) and _pending_pin.get('lat') is not None and _pending_pin.get('lon') is not None:
+                _map_center_lat = float(_pending_pin['lat'])
+                _map_center_lon = float(_pending_pin['lon'])
+                _map_zoom = min(max(dynamic_zoom, 13.0), 15.0)
+            map_cfg = dict(center=dict(lat=_map_center_lat, lon=_map_center_lon), zoom=_map_zoom, style=map_style)
             if show_satellite:
                 map_cfg["style"] = "carto-positron"
                 map_cfg["layers"] = [{"below":"traces","sourcetype":"raster",
@@ -8190,7 +8225,7 @@ body{{background:transparent;overflow:hidden}}
                         on_select="rerun",
                         key="main_map_chart_pin_fallback",
                     )
-                    if _map_event and hasattr(_map_event, 'selection') and st.session_state.get('pending_pin') is None:
+                    if _map_event and hasattr(_map_event, 'selection'):
                         _sel = _map_event.selection
                         _clicked_lat = _clicked_lon = None
                         _box_list = getattr(_sel, 'box', None) or []

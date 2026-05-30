@@ -96,6 +96,28 @@ def resolve_master_boundary(
         except Exception:
             stage_progress.progress(int(step_pct))
 
+    def _load_exact_saved_boundary():
+        preferred_kind = str(session_state.get('boundary_kind', 'place') or 'place').strip().lower()
+        active_city = str(session_state.get('active_city', '') or '').strip()
+        active_state = str(session_state.get('active_state', '') or '').strip().upper()
+        if not active_city or not active_state:
+            return None, None
+        exact_path = boundary_shp_base(preferred_kind, active_city, active_state) + '.shp'
+        if not os.path.exists(exact_path):
+            return None, None
+        try:
+            saved_gdf = gpd.read_file(exact_path)
+            if saved_gdf.crs is None:
+                saved_gdf = saved_gdf.set_crs(epsg=4269)
+            saved_gdf = saved_gdf.to_crs(epsg=4326).copy()
+            if 'DISPLAY_NAME' not in saved_gdf.columns:
+                name_col = next((c for c in ['NAME', 'DISTRICT', 'NAMELSAD'] if c in saved_gdf.columns), saved_gdf.columns[0])
+                saved_gdf['DISPLAY_NAME'] = saved_gdf[name_col].astype(str)
+            saved_gdf['data_count'] = len(df_calls)
+            return saved_gdf[['DISPLAY_NAME', 'data_count', 'geometry']].copy(), exact_path
+        except Exception:
+            return None, None
+
     if use_county:
         active_state = session_state.get('active_state', '')
         county_cache_key = f"{active_state}|county"
@@ -146,6 +168,13 @@ def resolve_master_boundary(
 
     boundary_kind_note = session_state.get('boundary_kind', 'place')
     boundary_src_note = session_state.get('boundary_source_path', '')
+
+    if master_gdf is None or master_gdf.empty:
+        exact_gdf, exact_path = _load_exact_saved_boundary()
+        if exact_gdf is not None and not exact_gdf.empty:
+            set_stage(100, "Using saved boundary cache.")
+            master_gdf = exact_gdf
+            session_state['boundary_source_path'] = exact_path or ''
 
     if master_gdf is None or master_gdf.empty:
         shp_files = glob.glob(os.path.join(shapefile_dir, '*.shp'))
@@ -877,6 +906,29 @@ def manage_custom_stations(
         )
         return any(token in raw for token in street_tokens)
 
+    def _dedupe_matches(matches):
+        merged = []
+        seen = set()
+        for match in matches or []:
+            if not isinstance(match, dict):
+                continue
+            lat = match.get('lat')
+            lon = match.get('lon')
+            try:
+                lat_key = round(float(lat), 6)
+                lon_key = round(float(lon), 6)
+            except Exception:
+                lat_key = None
+                lon_key = None
+            label_key = str(match.get('matched_address') or match.get('label') or '').strip().lower()
+            source_key = str(match.get('source') or '').strip().lower()
+            dedupe_key = (lat_key, lon_key, label_key, source_key)
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            merged.append(match)
+        return merged
+
     def _use_public_facility_lookup():
         return bool(search_public_facility_candidates) and str(custom_type).strip() in public_facility_types
 
@@ -1165,21 +1217,30 @@ def manage_custom_stations(
         preferred_state = session_state.get('active_state', '')
         locality_hint = ", ".join([v for v in [preferred_city, preferred_state] if v])
         if len(addr_query) >= 4:
+            addr_matches = []
             if _use_public_facility_lookup():
-                addr_matches = search_public_facility_candidates(
+                addr_matches.extend(search_public_facility_candidates(
                     addr_query,
                     custom_type,
                     limit=6,
                     preferred_city=preferred_city,
                     preferred_state=preferred_state,
-                )
+                ))
+                if _looks_like_street_address(addr_query):
+                    addr_matches.extend(search_address_candidates(
+                        addr_query,
+                        limit=6,
+                        preferred_city=preferred_city,
+                        preferred_state=preferred_state,
+                    ))
             else:
-                addr_matches = search_address_candidates(
+                addr_matches.extend(search_address_candidates(
                     addr_query,
                     limit=6,
                     preferred_city=preferred_city,
                     preferred_state=preferred_state,
-                )
+                ))
+            addr_matches = _dedupe_matches(addr_matches)
         else:
             addr_matches = []
 
@@ -1319,28 +1380,30 @@ def manage_custom_stations(
                 try:
                     match = selected_match
                     if not match:
+                        fallback_matches = []
                         if _use_public_facility_lookup():
-                            fallback_matches = search_public_facility_candidates(
+                            fallback_matches.extend(search_public_facility_candidates(
                                 addr_to_geocode,
                                 custom_type,
                                 limit=1,
                                 preferred_city=preferred_city,
                                 preferred_state=preferred_state,
-                            )
-                            if not fallback_matches and _looks_like_street_address(addr_to_geocode):
-                                fallback_matches = search_address_candidates(
+                            ))
+                            if _looks_like_street_address(addr_to_geocode):
+                                fallback_matches.extend(search_address_candidates(
                                     addr_to_geocode,
                                     limit=1,
                                     preferred_city=preferred_city,
                                     preferred_state=preferred_state,
-                                )
+                                ))
                         else:
-                            fallback_matches = search_address_candidates(
+                            fallback_matches.extend(search_address_candidates(
                                 addr_to_geocode,
                                 limit=1,
                                 preferred_city=preferred_city,
                                 preferred_state=preferred_state,
-                            )
+                            ))
+                        fallback_matches = _dedupe_matches(fallback_matches)
                         match = fallback_matches[0] if fallback_matches else None
                     if match:
                         geo_lat = float(match['lat'])
@@ -1895,7 +1958,7 @@ def compute_station_suggestions(
     max_suggestions=10,
     rank_by='call',
 ):
-    """Rank stations by call coverage and return the top suggestions.
+    """Rank stations by the requested coverage objective and return the top suggestions.
 
     Each suggestion includes solo call-coverage %, solo land-coverage %, and a
     legacy default role label that is overridden by the current fleet counts.
@@ -1937,22 +2000,62 @@ def compute_station_suggestions(
             'marginal_calls': marginal_calls,
         })
 
-    # Cards are always ordered by call coverage, highest to lowest.
-    scored.sort(
-        key=lambda s: (
-            s.get('call_pct', 0),
-            s.get('land_pct', 0),
-            s['marginal_calls'],
-            -s['station_idx'],
-        ),
-        reverse=True,
-    )
+    rank_by = str(rank_by or 'call').strip().lower()
+    if rank_by not in {'call', 'land'}:
+        rank_by = 'call'
+
+    chosen = []
+    remaining = set(range(n_stations))
+    current_call_mask = np.zeros(total_calls, dtype=bool)
+    current_land_geom = None
+
+    while remaining and len(chosen) < min(max_suggestions, n_stations):
+        best_idx = None
+        best_gain = -1.0
+        best_tiebreak = None
+
+        for station_idx in remaining:
+            meta = station_metadata[station_idx]
+            if rank_by == 'land':
+                geom = meta.get('clipped_2m')
+                if geom is None or getattr(geom, 'is_empty', True):
+                    gain = 0.0
+                else:
+                    new_union = geom if current_land_geom is None else current_land_geom.union(geom)
+                    gain = float(new_union.area - (current_land_geom.area if current_land_geom is not None else 0.0))
+            else:
+                row = np.asarray(resp_matrix[station_idx], dtype=bool)
+                gain = float(np.count_nonzero(row & ~current_call_mask))
+
+            tie = (
+                scored[station_idx].get('call_pct', 0),
+                scored[station_idx].get('land_pct', 0),
+                scored[station_idx].get('marginal_calls', 0),
+                -scored[station_idx]['station_idx'],
+            )
+            if gain > best_gain or (gain == best_gain and (best_tiebreak is None or tie > best_tiebreak)):
+                best_gain = gain
+                best_tiebreak = tie
+                best_idx = station_idx
+
+        if best_idx is None:
+            break
+
+        chosen.append(best_idx)
+        remaining.remove(best_idx)
+        if rank_by == 'land':
+            geom = station_metadata[best_idx].get('clipped_2m')
+            if geom is not None and not getattr(geom, 'is_empty', True):
+                current_land_geom = geom if current_land_geom is None else current_land_geom.union(geom)
+        else:
+            current_call_mask |= np.asarray(resp_matrix[best_idx], dtype=bool)
+
+    suggestions = [scored[idx] for idx in chosen]
 
     # The current slider-driven assignment can override this label on render.
-    for rank, suggestion in enumerate(scored[:min(max_suggestions, n_stations)]):
+    for rank, suggestion in enumerate(suggestions):
         suggestion['rank'] = rank + 1
         suggestion['role'] = 'Guardian' if rank == 0 else 'Responder'
-        suggestions.append(suggestion)
 
     return suggestions
 
@@ -2014,6 +2117,13 @@ def sync_station_suggestion_modes(session_state, suggestions, k_guardian=None, k
         return {}
 
     valid_modes = {'Guardian', 'Responder', 'Off'}
+    current_rank_by = str(session_state.get('_station_suggestion_rank_by', 'call') or 'call').strip().lower()
+    if current_rank_by not in {'call', 'land'}:
+        current_rank_by = 'call'
+    prior_rank_by = str(session_state.get('_suggestion_rank_by', '') or '').strip().lower()
+    rank_by_changed = bool(prior_rank_by) and prior_rank_by != current_rank_by
+    session_state['_suggestion_rank_by'] = current_rank_by
+
     existing_modes = session_state.get('suggestion_modes', {}) or {}
     normalized_existing = {}
     for s in suggestions:
@@ -2061,10 +2171,15 @@ def sync_station_suggestion_modes(session_state, suggestions, k_guardian=None, k
             synced_modes = normalized_existing
             session_state['_suggestion_sync_source'] = 'cards'
     else:
-        synced_modes = normalized_existing or {
-            s['station_idx']: (s['role'] if s['rank'] <= 3 else 'Off')
-            for s in suggestions
-        }
+        if not existing_modes:
+            synced_modes = {
+                s['station_idx']: (s['role'] if s['rank'] <= 3 else 'Off')
+                for s in suggestions
+            }
+            session_state['_suggestion_widget_version'] = _suggestion_widget_version(session_state) + 1
+            session_state['_suggestion_manual_modes'] = {}
+        else:
+            synced_modes = normalized_existing
         session_state['_suggestion_sync_source'] = 'cards'
 
     session_state['suggestion_modes'] = synced_modes
