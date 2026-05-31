@@ -9310,89 +9310,17 @@ body{{background:transparent;overflow:hidden}}
         try:
             import qrcode as _qrcode
             from PIL import Image as _PILImage
-            import io as _io_qr, urllib.parse as _up, socket as _sock
-
-            # Build base URL from Streamlit context headers
-            try:
-                _qr_host = st.context.headers.get("host", "") or st.context.headers.get("Host", "")
-                _qr_proto = "https" if (_qr_host and ("streamlit.app" in _qr_host or "share" in _qr_host)) else "http"
-                if not _qr_host:
-                    _qr_port = str(st.get_option("server.port") or os.environ.get("STREAMLIT_SERVER_PORT") or os.environ.get("PORT") or "8501").strip() or "8501"
-                    _qr_host = f"{_sock.gethostbyname(_sock.gethostname())}:{_qr_port}"
-                _qr_base = f"{_qr_proto}://{_qr_host}"
-            except Exception:
-                try:
-                    _qr_port = str(st.get_option("server.port") or os.environ.get("STREAMLIT_SERVER_PORT") or os.environ.get("PORT") or "8501").strip() or "8501"
-                    _qr_base = f"http://{_sock.gethostbyname(_sock.gethostname())}:{_qr_port}"
-                except Exception:
-                    _qr_base = f"http://localhost:{str(st.get_option('server.port') or os.environ.get('STREAMLIT_SERVER_PORT') or os.environ.get('PORT') or '8501').strip() or '8501'}"
-
-            # Compute area inline (may not yet be in scope)
-            try:
-                _qr_df_c = df_calls_full if df_calls_full is not None else df_calls
-                _qr_lons = _qr_df_c["lon"].dropna(); _qr_lats = _qr_df_c["lat"].dropna()
-                _qr_area = max(1, int((float(_qr_lons.max()) - float(_qr_lons.min())) *
-                                       (float(_qr_lats.max()) - float(_qr_lats.min())) * 3280))
-            except Exception:
-                _qr_area = 0
-
-            # Encode active station positions compactly for mobile map
-            # Format: "lat1,lon1;lat2,lon2" (4 decimal places, ≈10m accuracy)
-            try:
-                _stn_parts = [f"{d['lat']:.4f},{d['lon']:.4f}" for d in active_drones[:12]]
-                _stn_str   = ";".join(_stn_parts)
-            except Exception:
-                _stn_str = ""
-
-            # Encode incident data compactly for mobile map (minimal sample to keep URL under QR version 40)
-            # Format: "lat1,lon1;lat2,lon2;..." (1 decimal place for ~10km accuracy)
-            _calls_str = ""
-            try:
-                _qr_df_calls = df_calls_full if (df_calls_full is not None and not df_calls_full.empty) else df_calls
-                if _qr_df_calls is not None and not _qr_df_calls.empty and 'lat' in _qr_df_calls.columns and 'lon' in _qr_df_calls.columns:
-                    # Sample up to 20 calls to keep URL under QR version 40 limit
-                    _call_sample = _qr_df_calls.sample(min(20, len(_qr_df_calls)), random_state=42)
-                    _call_parts = [f"{row['lat']:.1f},{row['lon']:.1f}" for _, row in _call_sample.iterrows()
-                                   if pd.notna(row.get('lat')) and pd.notna(row.get('lon'))]
-                    _calls_str = ";".join(_call_parts[:20])
-            except Exception:
-                pass
-
-            # Note: Boundary/shapefile outline removed from QR mobile map to avoid misleading simplified versions
-            # The main program renders the full detailed boundary; mobile map focuses on station locations and calls
-
-            _qr_params = _up.urlencode({
-                "city":  _get_document_jurisdiction_name(st.session_state, selected_names, fallback="").title(),
-                "state": st.session_state.get("active_state", ""),
-                "pop":   int(st.session_state.get("estimated_pop", 0) or 0),
-                "cov":   round(float(calls_covered_perc or 0), 1),
-                "resp":  round(float(avg_resp_time or 0), 2),
-                "saves": int(annual_savings or 0),
-                "capex": int(fleet_capex or 0),
-                "r":     int(actual_k_responder or 0),
-                "g":     int(actual_k_guardian or 0),
-                "calls": int(total_calls or 0),
-                "area":  _qr_area,
-                "tsav":  round(float(avg_time_saved or 0), 2),
-                "clat":  round(center_lat, 4),
-                "clon":  round(center_lon, 4),
-                "zoom":  round(dynamic_zoom, 1),
-                "s":     _stn_str,
-                "m_calls": _calls_str,
-            })
-            _fallback_qr_url = f"{_qr_base}/?view=mobile&{_qr_params}"
             _tracked_report_id = str(st.session_state.get("public_report_id", "")).strip()
             _stored_public_url = str(st.session_state.get("public_report_url", "")).strip()
             _public_report_url_error = str(st.session_state.get("public_report_url_error", "") or "").strip()
-            _tracked_qr_url = ""
+            _qr_url = ""
             if _tracked_report_id:
                 try:
-                    _tracked_qr_url = _build_public_report_url(_tracked_report_id)
+                    _qr_url = _build_public_report_url(_tracked_report_id)
                 except ValueError as _qr_link_err:
                     _public_report_url_error = str(_qr_link_err).strip() or _public_report_url_error
-            _qr_url = _tracked_qr_url or _stored_public_url
-            if not _qr_url and not _public_report_url_error:
-                _qr_url = _fallback_qr_url
+            if not _qr_url and _stored_public_url and "streamlit" not in _stored_public_url.lower():
+                _qr_url = _stored_public_url
             if not _qr_url and _public_report_url_error:
                 raise ValueError(_public_report_url_error)
 
