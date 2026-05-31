@@ -108,10 +108,22 @@ def _build_public_report_url(report_id):
     if not _public_webapp_url:
         _public_webapp_url = DEFAULT_PUBLIC_REPORT_WEBAPP_URL
     if _public_webapp_url:
+        _city = str(st.session_state.get("active_city", "") or "").strip()
+        _state = str(st.session_state.get("active_state", "") or "").strip()
+        _dept = str(st.session_state.get("active_dept_name", "") or "").strip()
+        _rep_name = str(st.session_state.get("google_user_name", "") or "").strip()
+        _rep_email = str(st.session_state.get("google_user_email", "") or "").strip()
+        _brinc_user = str(st.session_state.get("brinc_user", "") or "").strip()
         _query = urllib.parse.urlencode({
             "report_id": report_id,
             "public_report": report_id,
             "sig": _sig,
+            "city": _city,
+            "state": _state,
+            "department": _dept,
+            "rep_name": _rep_name,
+            "rep_email": _rep_email,
+            "brinc_user": _brinc_user,
         })
         _sep = "&" if "?" in _public_webapp_url else "?"
         return f"{_public_webapp_url}{_sep}{_query}"
