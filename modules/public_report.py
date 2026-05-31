@@ -27,39 +27,13 @@ def render_public_report(
     if not _report_id:
         return False
 
-    try:
-        _expected_sig = _sign_public_report_id(_report_id)
-        _html_path = _public_report_html_path(_report_id)
-        _meta_path = _public_report_metadata_path(_report_id)
-    except ValueError:
-        st.error("Invalid public report link.")
-        st.stop()
-
-    if not _sig or not hmac.compare_digest(_sig, _expected_sig):
-        st.error("Invalid public report link.")
-        st.stop()
-
-    if not _html_path.exists():
-        st.warning("This public report is not available yet.")
-        st.stop()
-
     _scan_meta = {}
-    if _meta_path.exists():
-        try:
+    try:
+        _meta_path = _public_report_metadata_path(_report_id)
+        if _meta_path.exists():
             _scan_meta = json.loads(_meta_path.read_text(encoding="utf-8"))
-        except Exception:
-            _scan_meta = {}
-
-    _qr_city = str(_scan_meta.get("city", "") or "").strip()
-    _qr_state = str(_scan_meta.get("state", "") or "").strip()
-    _qr_rep_name = str(_scan_meta.get("rep_name", "") or "").strip() or "BRINC Representative"
-    _qr_rep_email = str(_scan_meta.get("rep_email", "") or "").strip() or "sales@brincdrones.com"
-    _qr_loc = ", ".join([x for x in [_qr_city, _qr_state] if x]).strip() or "your jurisdiction"
-    _qr_lead_subject = urllib.parse.quote(f"DFR demo request - {_qr_loc}")
-    _qr_lead_body = urllib.parse.quote(
-        f"Hi {_qr_rep_name},\n\nI would like a custom DFR coverage analysis for {_qr_loc}.\n\nAgency:\nBest callback number:\n\nThanks,"
-    )
-    _qr_mailto = f"mailto:{_qr_rep_email}?subject={_qr_lead_subject}&body={_qr_lead_body}"
+    except Exception:
+        _scan_meta = {}
 
     try:
         _headers = dict(st.context.headers)
@@ -96,6 +70,32 @@ def render_public_report(
         language=_lang,
         ip=_ip,
     )
+
+    try:
+        _expected_sig = _sign_public_report_id(_report_id)
+        _html_path = _public_report_html_path(_report_id)
+    except ValueError:
+        st.error("Invalid public report link.")
+        st.stop()
+
+    if not _sig or not hmac.compare_digest(_sig, _expected_sig):
+        st.error("Invalid public report link.")
+        st.stop()
+
+    if not _html_path.exists():
+        st.warning("This public report is not available yet.")
+        st.stop()
+
+    _qr_city = str(_scan_meta.get("city", "") or "").strip()
+    _qr_state = str(_scan_meta.get("state", "") or "").strip()
+    _qr_rep_name = str(_scan_meta.get("rep_name", "") or "").strip() or "BRINC Representative"
+    _qr_rep_email = str(_scan_meta.get("rep_email", "") or "").strip() or "sales@brincdrones.com"
+    _qr_loc = ", ".join([x for x in [_qr_city, _qr_state] if x]).strip() or "your jurisdiction"
+    _qr_lead_subject = urllib.parse.quote(f"DFR demo request - {_qr_loc}")
+    _qr_lead_body = urllib.parse.quote(
+        f"Hi {_qr_rep_name},\n\nI would like a custom DFR coverage analysis for {_qr_loc}.\n\nAgency:\nBest callback number:\n\nThanks,"
+    )
+    _qr_mailto = f"mailto:{_qr_rep_email}?subject={_qr_lead_subject}&body={_qr_lead_body}"
 
     st.set_page_config(layout="wide", page_title="BRINC DFR", page_icon="https://brincdrones.com/favicon.ico")
     st.markdown("""
