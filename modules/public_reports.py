@@ -143,29 +143,25 @@ def _build_public_report_url(report_id):
     except Exception:
         _public_webapp_url = ""
     if _public_webapp_url:
-        _parsed_public_url = urllib.parse.urlsplit(_public_webapp_url)
-        _is_apps_script_url = (
-            (_parsed_public_url.hostname or "").endswith("script.google.com")
-            and "/macros/s/" in (_parsed_public_url.path or "")
-        )
-        # Apps Script URLs do not execute the Streamlit public-report route,
-        # so they bypass the QR scan logging path. Prefer the Streamlit URL
-        # for any public report link that needs to record scans in Sheets.
-        if not _is_apps_script_url:
-            _query = urllib.parse.urlencode({
-                "report_id": report_id,
-                "public_report": report_id,
-                "sig": _sig,
-            })
-            _sep = "&" if "?" in _public_webapp_url else "?"
-            return f"{_public_webapp_url}{_sep}{_query}"
-    _base_url = _get_request_base_url()
-    if _is_local_or_private_base_url(_base_url):
-        raise ValueError(
-            "Public report URL would point to a local or private host. "
-            "Set PUBLIC_REPORT_WEBAPP_URL to a public deployment URL."
-        )
-    return f"{_base_url}/?report_id={report_id}&public_report={report_id}&sig={_sig}"
+        _city = str(st.session_state.get("active_city", "") or "").strip()
+        _state = str(st.session_state.get("active_state", "") or "").strip()
+        _dept = str(st.session_state.get("active_dept_name", "") or "").strip()
+        _rep_name = str(st.session_state.get("google_user_name", "") or "").strip()
+        _rep_email = str(st.session_state.get("google_user_email", "") or "").strip()
+        _brinc_user = str(st.session_state.get("brinc_user", "") or "").strip()
+        _query = urllib.parse.urlencode({
+            "report_id": report_id,
+            "public_report": report_id,
+            "sig": _sig,
+            "city": _city,
+            "state": _state,
+            "department": _dept,
+            "rep_name": _rep_name,
+            "rep_email": _rep_email,
+            "brinc_user": _brinc_user,
+        })
+        _sep = "&" if "?" in _public_webapp_url else "?"
+        return f"{_public_webapp_url}{_sep}{_query}"
 
 
 def _public_report_html_path(report_id):
