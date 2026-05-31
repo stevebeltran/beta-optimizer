@@ -17,7 +17,7 @@ import streamlit as st
 APP_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_PUBLIC_REPORT_WEBAPP_URL = (
     "https://script.google.com/macros/s/"
-    "AKfycbzzSy7Uq0Vtxo-icB2Mgg_KFNvRJwRphEryRBSvU8cdJwNbbR6JSM62a6QMHXlf4ng/exec"
+    "AKfycbxrj2C6as_yDDSdIbUF17m9CDEaABlYAAGNeTY6EnnaCjxB2caoJtMqC44aLUNQV-lY/exec"
 )
 _PUBLIC_REPORT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
