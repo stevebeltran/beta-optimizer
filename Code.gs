@@ -202,12 +202,12 @@ function buildLandingPage_(data) {
   var repPhone = String(data.repPhone || "").trim();
   var repPhoneDigits = repPhone.replace(/[^\d+]/g, "");
   var repEmailHtml = repEmail ? '<a href="mailto:' + escapeHtml_(repEmail) + '">' + escapeHtml_(repEmail) + '</a>' : "&mdash;";
-  var location = [city, state].filter(Boolean).join(", ") || "your jurisdiction";
-  var reportId = escapeHtml_(data.reportId || "");
+  var location = [city, state].filter(Boolean).join(", ") || "Coverage overview";
+  var reportId = escapeHtml_(data.reportId || data.publicReport || "—");
   var publicReport = escapeHtml_(data.publicReport || "");
-  var device = escapeHtml_(data.device || "");
-  var timestamp = escapeHtml_(data.timestamp || "");
-  var sourceApp = escapeHtml_(data.sourceApp || "");
+  var device = escapeHtml_(data.device || "—");
+  var timestamp = escapeHtml_(data.timestamp || "—");
+  var sourceApp = escapeHtml_(data.sourceApp || "BRINC QR Web App");
   var sourceUrl = String(data.sourceUrl || "").trim();
   var mailtoSubject = encodeURIComponent("DFR summary follow-up - " + location);
   var mailtoBody = encodeURIComponent(
@@ -222,7 +222,7 @@ function buildLandingPage_(data) {
   var hasMap = !!mapUrl;
   var mapCaption = coords && coords.display_name
     ? escapeHtml_(coords.display_name)
-    : (location ? "Coverage preview centered on " + location : "Coverage preview");
+    : (city || state ? "Coverage preview centered on " + location : "Coverage preview");
   var summaryLine = location
     ? "Here is the customer-facing summary for " + location + "."
     : "Here is the customer-facing summary.";
@@ -269,7 +269,7 @@ function buildLandingPage_(data) {
     '    .section-title { color: var(--accent-soft); font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase; font-weight: 800; margin-bottom: 12px; }',
     '    .map-shell { position: relative; background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015)); border-radius: 22px; overflow: hidden; min-height: 280px; }',
     '    .map-shell img { width: 100%; height: 100%; display: block; object-fit: cover; }',
-    '    .map-fallback { min-height: 280px; display:flex; align-items:center; justify-content:center; padding: 24px; text-align:center; color: var(--muted); }',
+    '    .map-fallback { min-height: 180px; display:flex; align-items:center; justify-content:center; padding: 24px; text-align:center; color: var(--muted); }',
     '    .map-overlay { position:absolute; left:0; right:0; bottom:0; padding:14px 16px; background: linear-gradient(180deg, transparent, rgba(5,11,20,0.92) 38%); }',
     '    .map-overlay strong { display:block; color: var(--text); font-size: 16px; margin-bottom: 4px; }',
     '    .map-overlay span { color: var(--muted); font-size: 13px; line-height: 1.4; }',
@@ -309,9 +309,11 @@ function buildLandingPage_(data) {
     '        <div class="location">' + location + '</div>',
     '      </header>',
     '      <div class="body">',
-    '        <section class="panel flush">',
-    '          ' + (hasMap ? '<div class="map-shell"><img src="' + escapeHtml_(mapUrl) + '" alt="Map preview for ' + escapeHtml_(location) + '"><div class="map-overlay"><strong>Coverage preview</strong><span>' + mapCaption + '</span></div></div>' : '<div class="map-fallback"><div><div class="section-title">Coverage preview</div><div style="font-size:20px;font-weight:800;color:#eff6ff;margin-bottom:6px;">Map preview unavailable</div><div>We still logged the scan and can continue the conversation from the summary below.</div></div></div>'),
-    '        </section>',
+    (hasMap
+      ? '        <section class="panel flush">' +
+        '<div class="map-shell"><img src="' + escapeHtml_(mapUrl) + '" alt="Map preview for ' + escapeHtml_(location) + '"><div class="map-overlay"><strong>Coverage preview</strong><span>' + mapCaption + '</span></div></div>' +
+        '</section>'
+      : ''),
     '        <section class="panel">',
     '          <div class="section-title">Base information</div>',
     '          <div class="grid">',
@@ -322,7 +324,7 @@ function buildLandingPage_(data) {
     '            <div class="meta"><div class="label">Device</div><div class="value">' + (device || "&mdash;") + '</div></div>',
     '            <div class="meta"><div class="label">Scan Time</div><div class="value">' + (timestamp || "&mdash;") + '</div></div>',
     '          </div>',
-    '          <div class="tone">This scan has been recorded in Google Sheets. The map and summary are designed to give the customer a fast, mobile-friendly overview without overwhelming them with internal detail.</div>',
+    '          <div class="tone">This summary is designed to give the customer a fast, mobile-friendly overview without overwhelming them with internal detail.</div>',
     '        </section>',
         '        <section class="panel contact-card">',
     '          <div class="section-title">Next step</div>',
@@ -336,7 +338,7 @@ function buildLandingPage_(data) {
     '            <div class="mini-row"><div class="k">Location</div><div class="v">' + location + '</div></div>',
     '            <div class="mini-row"><div class="k">Prepared by</div><div class="v">' + sourceApp + '</div></div>',
     '          </div>',
-    '          <div class="fineprint">Logged at ' + timestamp + ' via ' + sourceApp + '. ' + (sourceUrl ? 'Source: ' + escapeHtml_(sourceUrl) : '') + '</div>',
+    '          <div class="fineprint">Prepared at ' + timestamp + '. ' + (sourceUrl ? 'Source: ' + escapeHtml_(sourceUrl) : '') + '</div>',
     '        </section>',
     '      </div>',
     '    </section>',
