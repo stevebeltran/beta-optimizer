@@ -7,6 +7,7 @@ import json
 import smtplib
 import html
 import re
+import threading
 from pathlib import Path
 import streamlit as st
 from email.mime.text import MIMEText
@@ -69,6 +70,10 @@ PUBLIC_REPORT_HEADERS = [
     "Stations JSON",
     "Public HTML",
 ]
+
+_LOGIN_WRITE_LOCK = threading.RLock()
+_LOGIN_WRITE_RECENT = {}
+_LOGIN_WRITE_SUPPRESSION_SECONDS = 5
 
 
 def _split_recipients(value):
@@ -576,27 +581,59 @@ def _write_crash_report(step, error_message, traceback_text, details=None):
         return ""
 
 
+def _should_skip_login_write(email):
+    """Check whether a recent successful login write already exists."""
+    normalized_email = str(email or "").strip().lower()
+    if not normalized_email:
+        return False
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cutoff = now - datetime.timedelta(seconds=_LOGIN_WRITE_SUPPRESSION_SECONDS)
+
+    with _LOGIN_WRITE_LOCK:
+        stale_keys = [
+            key for key, ts in _LOGIN_WRITE_RECENT.items()
+            if ts < cutoff
+        ]
+        for key in stale_keys:
+            _LOGIN_WRITE_RECENT.pop(key, None)
+
+        last_seen = _LOGIN_WRITE_RECENT.get(normalized_email)
+        if last_seen and (now - last_seen).total_seconds() < _LOGIN_WRITE_SUPPRESSION_SECONDS:
+            return True
+        return False
+
+
 def _log_login_to_sheets(email, name):
     """Log user login to Google Sheets (separate LOGIN sheet)."""
     try:
-        sheet_id = st.secrets.get("GOOGLE_SHEET_ID", "")
-        creds_dict = st.secrets.get("gcp_service_account", {})
-        if not sheet_id or not creds_dict:
+        normalized_email = str(email or "").strip().lower()
+        if not normalized_email:
             return
-        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(dict(creds_dict), scopes=scopes)
-        client = gspread.authorize(creds)
-        spreadsheet = client.open_by_key(sheet_id)
 
-        try:
-            sheet = spreadsheet.worksheet("Logins")
-        except gspread.exceptions.WorksheetNotFound:
-            sheet = spreadsheet.add_worksheet(title="Logins", rows=1000, cols=10)
-            sheet.append_row(["Timestamp", "Email", "Name", "Event"])
+        with _LOGIN_WRITE_LOCK:
+            if _should_skip_login_write(normalized_email):
+                return
 
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        sheet.append_row([timestamp, email, name, "LOGIN"])
-        _upsert_user(spreadsheet, email, name, increment_logins=True)
+            sheet_id = st.secrets.get("GOOGLE_SHEET_ID", "")
+            creds_dict = st.secrets.get("gcp_service_account", {})
+            if not sheet_id or not creds_dict:
+                return
+            scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+            creds = Credentials.from_service_account_info(dict(creds_dict), scopes=scopes)
+            client = gspread.authorize(creds)
+            spreadsheet = client.open_by_key(sheet_id)
+
+            try:
+                sheet = spreadsheet.worksheet("Logins")
+            except gspread.exceptions.WorksheetNotFound:
+                sheet = spreadsheet.add_worksheet(title="Logins", rows=1000, cols=10)
+                sheet.append_row(["Timestamp", "Email", "Name", "Event"])
+
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            sheet.append_row([timestamp, email, name, "LOGIN"])
+            _upsert_user(spreadsheet, email, name, increment_logins=True)
+            _LOGIN_WRITE_RECENT[normalized_email] = datetime.datetime.now(datetime.timezone.utc)
     except:
         pass
 
