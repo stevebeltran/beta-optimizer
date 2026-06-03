@@ -153,6 +153,15 @@ def _build_public_report_url(report_id):
         _rep_name = str(st.session_state.get("google_user_name", "") or "").strip()
         _rep_email = str(st.session_state.get("google_user_email", "") or "").strip()
         _brinc_user = str(st.session_state.get("brinc_user", "") or "").strip()
+        _summary_text = str(st.session_state.get("qr_summary_text", "") or "").strip()
+        _fleet_summary = str(st.session_state.get("qr_fleet_summary", "") or "").strip()
+        _annual_savings = str(st.session_state.get("qr_annual_savings", "") or "").strip()
+        _call_coverage = str(st.session_state.get("qr_call_coverage", "") or "").strip()
+        _avg_response = str(st.session_state.get("qr_avg_response", "") or "").strip()
+        _avg_time_saved = str(st.session_state.get("qr_avg_time_saved", "") or "").strip()
+        _covered_calls = str(st.session_state.get("qr_covered_calls", "") or "").strip()
+        _station_count = str(st.session_state.get("qr_station_count", "") or "").strip()
+        _stations_json = str(st.session_state.get("qr_stations_json", "") or "").strip()
         _query = urllib.parse.urlencode({
             "report_id": report_id,
             "public_report": report_id,
@@ -163,6 +172,15 @@ def _build_public_report_url(report_id):
             "rep_name": _rep_name,
             "rep_email": _rep_email,
             "brinc_user": _brinc_user,
+            "summary_text": _summary_text,
+            "fleet_summary": _fleet_summary,
+            "annual_savings": _annual_savings,
+            "call_coverage": _call_coverage,
+            "avg_response": _avg_response,
+            "avg_time_saved": _avg_time_saved,
+            "covered_calls": _covered_calls,
+            "station_count": _station_count,
+            "stations_json": _stations_json,
         })
         _sep = "&" if "?" in _public_webapp_url else "?"
         return f"{_public_webapp_url}{_sep}{_query}"

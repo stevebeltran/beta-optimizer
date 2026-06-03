@@ -9393,7 +9393,19 @@ body{{background:transparent;overflow:hidden}}
             _qr_dept = st.session_state.get('active_dept_name', '') or _qr_city or 'Jurisdiction'
             _qr_dept = str(_qr_dept).strip().title()
 
-            # ── Public QR summary page (expanded, no login) ─────────────────────────
+            _qr_city_slug = _slugify(_qr_city or st.session_state.get("active_city", "report") or "report")
+            _qr_state_clean = str(_qr_state or st.session_state.get("active_state", "") or "").strip().upper()
+            _stored_qr_slug = str(st.session_state.get("public_report_city_slug", "") or "").strip()
+            _stored_qr_state = str(st.session_state.get("public_report_state", "") or "").strip().upper()
+            if (
+                not st.session_state.get("public_report_id")
+                or _stored_qr_slug != _qr_city_slug
+                or _stored_qr_state != _qr_state_clean
+            ):
+                st.session_state["public_report_id"] = f"{_qr_city_slug}-{uuid.uuid4().hex[:16]}"
+                st.session_state["public_report_city_slug"] = _qr_city_slug
+                st.session_state["public_report_state"] = _qr_state_clean
+
             _qr_total_calls = int(full_total_calls or total_calls or 0)
             _qr_active_stns = len(active_drones)
             _qr_area_cov = round(float(area_covered_perc or 0), 1)
@@ -9409,6 +9421,27 @@ body{{background:transparent;overflow:hidden}}
                 f"response time by {_qr_time_saved:.1f} minutes, and improve aerial first-arrival consistency "
                 f"across the jurisdiction."
             )
+            _qr_station_cards = [
+                {
+                    "name": str(d.get("name", "Unnamed Station")),
+                    "type": str(d.get("type", "")),
+                    "avg_time_min": round(float(d.get("avg_time_min", 0) or 0), 1),
+                }
+                for d in active_drones[:6]
+            ]
+            _qr_fleet_summary = f"{actual_k_responder}R / {actual_k_guardian}G"
+            _qr_stations_json = json.dumps(_qr_station_cards, ensure_ascii=True)
+            st.session_state['qr_summary_text'] = _qr_summary_text
+            st.session_state['qr_fleet_summary'] = _qr_fleet_summary
+            st.session_state['qr_annual_savings'] = f"{float(annual_savings or 0):.0f}"
+            st.session_state['qr_call_coverage'] = f"{float(calls_covered_perc or 0):.1f}"
+            st.session_state['qr_avg_response'] = f"{_qr_avg_resp:.1f}"
+            st.session_state['qr_avg_time_saved'] = f"{_qr_time_saved:.1f}"
+            st.session_state['qr_covered_calls'] = str(_qr_covered_calls)
+            st.session_state['qr_station_count'] = str(_qr_active_stns)
+            st.session_state['qr_stations_json'] = _qr_stations_json
+
+            # ── Public QR summary page (expanded, no login) ─────────────────────────
 
             def _h(value):
                 return html.escape(str(value or ""))
