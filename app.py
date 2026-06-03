@@ -9469,6 +9469,8 @@ body{{background:transparent;overflow:hidden}}
                 return "Supporting"
 
             _visible_station_rows, _hidden_station_count = _get_visible_station_rows(active_drones)
+            _guardian_unit_cost = int(st.session_state.get('custom_guardian_cost', 159999) or 159999)
+            _responder_unit_cost = int(st.session_state.get('custom_responder_cost', 79999) or 79999)
             _station_table_rows_html = "".join(
                 f"<tr>"
                 f"<td>{idx + 1}</td>"
@@ -9562,171 +9564,401 @@ body{{background:transparent;overflow:hidden}}
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <title>BRINC DFR — {_qr_city}, {_qr_state}</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Executive Summary - {_qr_city}, {_qr_state}</title>
   <style>
-    :root{{
-      --bg:#050b14;
-      --hero-top:#16314f;
-      --hero-bottom:#091523;
-      --panel:#0d1827;
-      --panel-soft:#112337;
-      --line:rgba(255,255,255,.08);
-      --text:#f4f8ff;
-      --muted:#9ab0c7;
-      --cyan:#6ee7ff;
-      --green:#58f5a5;
-      --gold:#ffd76a;
-      --violet:#c2a9ff;
-      --red:#ff7b7b;
-      --ink:#06283a;
-      --cta:#dff8ff;
+    :root {{
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --border: #d9e2ec;
+      --text: #0f172a;
+      --muted: #5f6f82;
+      --cyan: #00d2ff;
+      --gold: #ffd54a;
+      --green: #16a34a;
+      --violet: #8b5cf6;
     }}
-    *{{box-sizing:border-box;margin:0;padding:0}}
-    html{{background:var(--bg)}}
-    body{{font-family:'Inter',sans-serif;background:linear-gradient(180deg,#12263d 0%,#08111d 34%,#050b14 100%);color:var(--text);min-height:100vh}}
-    .page{{width:100%;max-width:1120px;margin:0 auto;padding:12px 10px 28px}}
-    .hero{{background:linear-gradient(180deg,var(--hero-top) 0%,var(--hero-bottom) 100%);border:1px solid rgba(110,231,255,.18);border-radius:22px;padding:22px 18px 18px;margin-bottom:12px;box-shadow:0 18px 34px rgba(0,0,0,.28)}}
-    .eyebrow{{color:var(--cyan);font-size:13px;letter-spacing:.13em;text-transform:uppercase;font-weight:800;margin-bottom:10px}}
-    .headline{{font-size:clamp(34px,10vw,58px);font-weight:900;line-height:.96;letter-spacing:-.04em;max-width:12ch}}
-    .hero-copy{{font-size:17px;color:var(--muted);line-height:1.55;max-width:38rem;margin-top:12px}}
-    .hero-meta{{color:var(--cyan);font-size:15px;font-weight:700;margin-top:14px}}
-    .cta-row{{display:flex;gap:10px;margin-top:18px}}
-    .cta{{display:inline-flex;align-items:center;justify-content:center;flex:1 1 0;min-width:0;min-height:58px;padding:13px 16px;border-radius:16px;text-decoration:none;font-size:16px;font-weight:800;text-align:center}}
-    .cta-primary{{background:var(--cta);color:var(--ink)}}
-    .cta-secondary{{border:1px solid rgba(110,231,255,.22);background:rgba(110,231,255,.09);color:var(--cyan)}}
-    .metrics{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px}}
-    .metric{{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px 14px 20px;min-width:0;box-shadow:0 8px 18px rgba(0,0,0,.18)}}
-    .metric .k{{font-size:12px;text-transform:uppercase;letter-spacing:.1em;font-weight:800;margin-bottom:10px;opacity:.9}}
-    .metric .v{{font-size:clamp(22px,7.6vw,36px);font-weight:900;line-height:1.04;word-break:break-word}}
-    .m-resp .k,.m-resp .v{{color:var(--cyan)}}
-    .m-save .k,.m-save .v{{color:var(--gold)}}
-    .m-cov .k,.m-cov .v{{color:var(--green)}}
-    .m-calls .k,.m-calls .v{{color:var(--red)}}
-    .m-fleet .k,.m-fleet .v{{color:var(--violet)}}
-    .m-roi .k,.m-roi .v{{color:var(--gold)}}
-    .section{{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:18px 16px;box-shadow:0 10px 20px rgba(0,0,0,.14)}}
-    .section + .section{{margin-top:12px}}
-    .section-kicker{{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.13em;color:var(--cyan);margin-bottom:10px}}
-    .section-title{{font-size:32px;font-weight:900;line-height:1.02;letter-spacing:-.03em;margin-bottom:10px}}
-    .section-text{{font-size:18px;line-height:1.7;color:var(--muted)}}
-    .compare{{display:grid;grid-template-columns:1fr;gap:10px}}
-    .compare-card{{background:var(--panel-soft);border:1px solid rgba(255,255,255,.06);border-radius:18px;padding:18px}}
-    .compare-card.after{{border-color:rgba(110,231,255,.18)}}
-    .compare-card .label{{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px;color:var(--cyan)}}
-    .compare-card.after .label{{color:var(--gold)}}
-    .compare-card h4{{font-size:24px;font-weight:800;margin-bottom:10px}}
-    .compare-card p{{font-size:17px;color:var(--muted);line-height:1.7}}
-    .delta-grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:12px}}
-    .delta{{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:14px 12px}}
-    .delta .k{{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);margin-bottom:8px}}
-    .delta .v{{font-size:24px;font-weight:900}}
-    .bullet-list{{display:grid;gap:12px;margin-top:12px;padding-left:22px}}
-    .bullet-list li{{color:var(--muted);font-size:17px;line-height:1.7}}
-    .stations-table{{width:100%;border-collapse:collapse;font-size:18px;margin-top:12px}}
-    .stations-table th,.stations-table td{{padding:16px 12px;text-align:left;border-bottom:1px solid rgba(255,255,255,.06)}}
-    .stations-table th{{font-size:13px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);font-weight:800}}
-    .stations-table td{{color:var(--text)}}
-    .stations-table tbody tr:last-child td{{border-bottom:none}}
-    .split{{display:grid;grid-template-columns:1fr;gap:12px}}
-    .contact-card{{background:linear-gradient(180deg,var(--panel-soft) 0%,var(--panel) 100%);border:1px solid rgba(110,231,255,.12)}}
-    .contact-label{{font-size:13px;text-transform:uppercase;letter-spacing:.12em;color:var(--cyan);font-weight:800;margin-bottom:10px}}
-    .contact-name{{font-size:32px;font-weight:900;line-height:1.05;margin-bottom:12px}}
-    .contact-email{{display:block;width:100%;padding:18px 18px;border-radius:16px;background:var(--cta);color:var(--ink)!important;text-decoration:none;font-size:20px;font-weight:800;word-break:break-word;text-align:center}}
-    .assumptions{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}}
-    .assumption{{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:12px 12px}}
-    .assumption .k{{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted);font-weight:800;margin-bottom:7px}}
-    .assumption .v{{font-size:17px;font-weight:800}}
-    @media (min-width: 860px){{
-      .metrics{{grid-template-columns:repeat(3,minmax(0,1fr))}}
-      .compare{{grid-template-columns:1fr 1fr}}
+    * {{
+      box-sizing: border-box;
+    }}
+    html, body {{
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", Arial, sans-serif;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }}
+    body {{
+      background: linear-gradient(180deg, #f5f7fb 0%, #edf2f7 100%);
+    }}
+    .page {{
+      width: 100%;
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 18px 18px 28px;
+    }}
+    .header {{
+      background: linear-gradient(135deg, #081a2d 0%, #0d2744 100%);
+      color: #fff;
+      border-radius: 18px;
+      padding: 18px 20px 16px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: end;
+      box-shadow: 0 12px 30px rgba(8, 26, 45, 0.16);
+    }}
+    .eyebrow {{
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--cyan);
+      font-weight: 700;
+      margin-bottom: 6px;
+    }}
+    .header h1 {{
+      margin: 0;
+      font-size: 30px;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+    }}
+    .header p {{
+      margin: 8px 0 0;
+      color: rgba(255, 255, 255, 0.78);
+      font-size: 12.5px;
+      line-height: 1.45;
+      max-width: 66ch;
+    }}
+    .chip-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+      align-items: stretch;
+    }}
+    .chip {{
+      min-width: 124px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }}
+    .chip .k {{
+      font-size: 9px;
+      letter-spacing: 1.3px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.68);
+      margin-bottom: 4px;
+    }}
+    .chip .v {{
+      font-size: 16px;
+      font-weight: 800;
+      line-height: 1;
+      color: #fff;
+      white-space: nowrap;
+    }}
+    .chip.gold .v {{ color: var(--gold); }}
+    .chip.cyan .v {{ color: var(--cyan); }}
+    .chip.green .v {{ color: #8ef0b0; }}
+    .chip.violet .v {{ color: #d7c7ff; }}
+    .main {{
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: 0.95fr 1.15fr;
+      gap: 12px;
+    }}
+    .panel {{
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 14px 14px 12px;
+      box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
+      overflow: hidden;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }}
+    .section-eyebrow {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .pg-num {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(0, 210, 255, 0.28);
+      color: var(--cyan);
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      font-weight: 800;
+      background: rgba(0, 210, 255, 0.05);
+      flex-shrink: 0;
+    }}
+    .pg-title {{
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-weight: 700;
+    }}
+    .section-note {{
+      margin: 0 0 12px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+    }}
+    .fleet-split {{
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      flex: 1;
+      min-height: 0;
+    }}
+    .fleet-card {{
+      border-radius: 16px;
+      padding: 14px;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+    }}
+    .fleet-card.guardian {{
+      background: linear-gradient(180deg, #07111f 0%, #04070d 100%);
+      color: #fff;
+      border: 1px solid rgba(255, 213, 74, 0.14);
+    }}
+    .fleet-card.responder {{
+      background: linear-gradient(180deg, #00131d 0%, #030c13 100%);
+      color: #fff;
+      border: 1px solid rgba(0, 210, 255, 0.14);
+    }}
+    .fc-top {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }}
+    .fc-icon {{
+      width: 34px;
+      height: 34px;
+      border-radius: 11px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      flex: 0 0 auto;
+    }}
+    .fc-type {{
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      opacity: 0.8;
+      margin-bottom: 2px;
+      font-weight: 800;
+    }}
+    .fc-val {{
+      font-size: 22px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }}
+    .fc-sub {{
+      margin-top: 6px;
+      font-size: 11.5px;
+      color: rgba(255, 255, 255, 0.72);
+      line-height: 1.4;
+    }}
+    .fc-grid {{
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }}
+    .fc-row {{
+      padding: 8px 9px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }}
+    .fc-row .k {{
+      font-size: 9px;
+      letter-spacing: 1.1px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.6);
+      margin-bottom: 3px;
+      font-weight: 700;
+    }}
+    .fc-row .v {{
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.05;
+      color: #fff;
+    }}
+    .fleet-card.guardian .fc-val,
+    .fleet-card.guardian .fc-row .v {{
+      color: var(--gold);
+    }}
+    .fleet-card.responder .fc-val,
+    .fleet-card.responder .fc-row .v {{
+      color: var(--cyan);
+    }}
+    .map-panel {{
+      background: linear-gradient(180deg, #fff 0%, #fbfdff 100%);
+    }}
+    .map-shell {{
+      background: #0b1320;
+      border-radius: 16px;
+      padding: 10px;
+      min-height: 0;
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }}
+    .map-shell .plotly, .map-shell .js-plotly-plot {{
+      height: 100% !important;
+      width: 100% !important;
+    }}
+    .map-shell .plot-container, .map-shell .svg-container {{
+      height: 100% !important;
+      width: 100% !important;
+    }}
+    .map-shell .modebar {{
+      display: none !important;
+    }}
+    .map-scale {{
+      width: 108%;
+      height: 100%;
+      transform: scale(0.93);
+      transform-origin: top left;
+    }}
+    .map-note {{
+      margin-top: 9px;
+      font-size: 10.5px;
+      line-height: 1.45;
+      color: var(--muted);
+    }}
+    @media (max-width: 980px) {{
+      .main {{
+        grid-template-columns: 1fr;
+      }}
+      .header {{
+        grid-template-columns: 1fr;
+      }}
+      .chip-row {{
+        justify-content: flex-start;
+      }}
     }}
   </style>
 </head>
 <body>
-<div class="page">
-  <section class="hero">
-    <div class="eyebrow">BRINC DFR Deployment Analysis</div>
-    <div class="headline">Optimize DFR Coverage in Minutes</div>
-    <div class="hero-copy">Reduce response times, expand effective coverage, and justify deployment with jurisdiction-specific data.</div>
-    <div class="hero-meta">Built for {_h(_qr_dept)} in {_h(_qr_city)}, {_h(_qr_state)}</div>
-    <div class="cta-row">
-      <a class="cta cta-primary" href="mailto:{_qr_email}?subject=Full Deployment Analysis - {_h(_qr_loc)}">Request Full Analysis</a>
-      <a class="cta cta-secondary" href="mailto:{_qr_email}?subject=Book 15-Minute Demo - {_h(_qr_loc)}">Book 15-Min Demo</a>
-    </div>
-  </section>
-
-  <section class="metrics">
-    <div class="metric m-resp"><div class="k">Avg Drone Response Time</div><div class="v">{_qr_avg_resp:.1f} min</div></div>
-    <div class="metric m-save"><div class="k">Avg Time Saved</div><div class="v">{_qr_time_saved:.1f} min</div></div>
-    <div class="metric m-cov"><div class="k">Call Coverage</div><div class="v">{float(calls_covered_perc or 0):.1f}%</div></div>
-    <div class="metric m-calls"><div class="k">Annual Calls Covered</div><div class="v">{_qr_covered_calls:,}</div></div>
-    <div class="metric m-fleet"><div class="k">Recommended Fleet</div><div class="v">{actual_k_responder}R / {actual_k_guardian}G</div></div>
-    <div class="metric m-roi"><div class="k">Annual Savings</div><div class="v">${float(annual_savings or 0):,.0f}</div></div>
-  </section>
-
-  <section class="section">
-    <div class="section-kicker">Executive Summary</div>
-    <div class="section-title">Deployment recommendation for {_h(_qr_loc)}</div>
-    <div class="section-text">{_h(_qr_summary_text)}</div>
-  </section>
-
-  <section class="section">
-    <div class="section-kicker">Before / After</div>
-    <div class="section-title">Conventional response versus optimized DFR layout</div>
-    <div class="compare">
-      <div class="compare-card">
-        <div class="label">Before</div>
-        <h4>Conventional Response</h4>
-        <p>Ground-only response depends on unit availability, travel congestion, and uneven spatial coverage. Arrival times vary widely, and command staff receive limited scene intelligence before officers reach the call.</p>
+  <div class="page">
+    <header class="header">
+      <div>
+        <div class="eyebrow">Executive Summary</div>
+        <h1>{_qr_city}, {_qr_state}</h1>
+        <p>{_h(_qr_summary_text)}</p>
+        <p><strong>Department:</strong> {_h(_qr_dept)}</p>
       </div>
-      <div class="compare-card after">
-        <div class="label">After</div>
-        <h4>Optimized DFR Layout</h4>
-        <p>Recommended drone placement is tied to real call demand and jurisdiction geometry. Aircraft are positioned to improve first-arrival speed, expand aerial reach, and give command staff live scene awareness earlier in the response cycle.</p>
+      <div class="chip-row">
+        <div class="chip cyan">
+          <div class="k">Call coverage</div>
+          <div class="v">{float(calls_covered_perc or 0):.1f}%</div>
+        </div>
+        <div class="chip gold">
+          <div class="k">Area coverage</div>
+          <div class="v">{_qr_area_cov:.1f}%</div>
+        </div>
+        <div class="chip green">
+          <div class="k">Annual savings</div>
+          <div class="v">${float(annual_savings or 0):,.0f}</div>
+        </div>
+        <div class="chip violet">
+          <div class="k">Fleet size</div>
+          <div class="v">{_qr_fleet_total} units</div>
+        </div>
       </div>
-    </div>
-    <div class="delta-grid">
-      <div class="delta"><div class="k">Response Improvement</div><div class="v">{_qr_time_saved:.1f} min faster</div></div>
-      <div class="delta"><div class="k">Coverage Improvement</div><div class="v">{float(calls_covered_perc or 0):.1f}% modeled</div></div>
-      <div class="delta"><div class="k">Operational Posture</div><div class="v">{_qr_fleet_total} active aircraft</div></div>
-    </div>
-  </section>
+    </header>
 
-  <section class="section">
-    <div class="section-kicker">Why It Matters</div>
-    <div class="section-title">A quick operational teaser</div>
-    <ul class="bullet-list">{_impact_html}</ul>
-  </section>
+    <main class="main">
+      <section class="panel">
+        <div class="section-eyebrow">
+          <span class="pg-num">02</span>
+          <span class="pg-title">Fleet &amp; Coverage</span>
+        </div>
+        <p class="section-note">Two-fleet architecture, operational radius, and the modeled coverage split for the active deployment.</p>
+        <div class="fleet-split">
+          <div class="fleet-card guardian">
+            <div class="fc-top">
+              <div class="fc-icon">🦅</div>
+              <div>
+                <div class="fc-type">BRINC Guardian</div>
+                <div class="fc-val">{actual_k_guardian} Unit{'' if actual_k_guardian == 1 else 's'}</div>
+              </div>
+            </div>
+            <div class="fc-sub">{guard_radius_mi:g}-mile operational radius · {guard_strategy_raw}</div>
+            <div class="fc-grid">
+              <div class="fc-row">
+                <div class="k">Unit CapEx</div>
+                <div class="v">${guardian_unit_cost:,}</div>
+              </div>
+              <div class="fc-row">
+                <div class="k">Call Coverage</div>
+                <div class="v">{guard_calls_perc:.1f}%</div>
+              </div>
+              <div class="fc-row">
+                <div class="k">Area Coverage</div>
+                <div class="v">{guard_area_perc:.1f}%</div>
+              </div>
+            </div>
+          </div>
+          <div class="fleet-card responder">
+            <div class="fc-top">
+              <div class="fc-icon">🚁</div>
+              <div>
+                <div class="fc-type">BRINC Responder</div>
+                <div class="fc-val">{actual_k_responder} Unit{'' if actual_k_responder == 1 else 's'}</div>
+              </div>
+            </div>
+            <div class="fc-sub">{resp_radius_mi:g}-mile operational radius · {resp_strategy_raw}</div>
+            <div class="fc-grid">
+              <div class="fc-row">
+                <div class="k">Unit CapEx</div>
+                <div class="v">${responder_unit_cost:,}</div>
+              </div>
+              <div class="fc-row">
+                <div class="k">Call Coverage</div>
+                <div class="v">{resp_calls_perc:.1f}%</div>
+              </div>
+              <div class="fc-row">
+                <div class="k">Area Coverage</div>
+                <div class="v">{resp_area_perc:.1f}%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-  <section class="section">
-    <div class="section-kicker">Recommended Stations</div>
-    <div class="section-title">Top recommended station sites</div>
-    <table class="stations-table">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Station</th>
-          <th>Fleet Role</th>
-          <th>Avg Response Time</th>
-        </tr>
-      </thead>
-      <tbody>{_station_table_rows_html}</tbody>
-    </table>
-  </section>
-
-  <section class="section contact-card">
-    <div class="contact-label">Next Step</div>
-    <div class="contact-name">{_h(_qr_name)}</div>
-    <div class="section-text" style="margin-bottom:16px;">Email {_h(_qr_name)} to schedule a 15-minute walkthrough or request the full deployment analysis for {_h(_qr_loc)}.</div>
-    <div class="cta-row" style="margin-top:0;margin-bottom:14px;">
-      <a class="cta cta-primary" href="mailto:{_qr_email}?subject=Book 15-Minute Demo - {_h(_qr_loc)}">Book 15-Min Demo</a>
-      <a class="cta cta-secondary" href="mailto:{_qr_email}?subject=Full Deployment Analysis - {_h(_qr_loc)}">Request Full Analysis</a>
-    </div>
-    <a class="contact-email" href="mailto:{_qr_email}?subject=Book 15-Minute Demo - {_h(_qr_loc)}">{_h(_qr_email)}</a>
-  </section>
-</div>
+      <section class="panel map-panel">
+        <div class="section-eyebrow">
+          <span class="pg-num">03</span>
+          <span class="pg-title">Coverage Map</span>
+        </div>
+        <p class="section-note">Static export of the modeled coverage map. The layout is scaled to stay on one report page.</p>
+        {_map_visual_html}
+        <div class="map-note">Coverage rings are operational estimates. Map content is rendered statically for export.</div>
+      </section>
+    </main>
+  </div>
 </body>
 </html>"""
             _public_summary_html = (
@@ -9738,19 +9970,24 @@ body{{background:transparent;overflow:hidden}}
                 .replace("{_h(_qr_state)}", _h(_qr_state))
                 .replace("{_qr_email}", _qr_email)
                 .replace("{_h(_qr_loc)}", _h(_qr_loc))
-                .replace("{_qr_avg_resp:.1f}", f"{_qr_avg_resp:.1f}")
-                .replace("{_qr_time_saved:.1f}", f"{_qr_time_saved:.1f}")
+                .replace("{_h(_qr_summary_text)}", _h(_qr_summary_text))
+                .replace("{_qr_area_cov:.1f}", f"{_qr_area_cov:.1f}")
                 .replace("{float(calls_covered_perc or 0):.1f}", f"{float(calls_covered_perc or 0):.1f}")
-                .replace("{_qr_covered_calls:,}", f"{_qr_covered_calls:,}")
                 .replace("{actual_k_responder}", str(actual_k_responder))
                 .replace("{actual_k_guardian}", str(actual_k_guardian))
                 .replace("{float(annual_savings or 0):,.0f}", f"{float(annual_savings or 0):,.0f}")
-                .replace("{_h(_qr_summary_text)}", _h(_qr_summary_text))
                 .replace("{_qr_fleet_total}", str(_qr_fleet_total))
-                .replace("{_impact_html}", _impact_html)
-                .replace("{_station_table_rows_html}", _station_table_rows_html)
-                .replace("{_h(_qr_name)}", _h(_qr_name))
-                .replace("{_h(_qr_email)}", _h(_qr_email))
+                .replace("{_map_visual_html}", _map_visual_html)
+                .replace("{guardian_unit_cost:,}", f"{_guardian_unit_cost:,}")
+                .replace("{responder_unit_cost:,}", f"{_responder_unit_cost:,}")
+                .replace("{guard_radius_mi:g}", f"{guard_radius_mi:g}")
+                .replace("{resp_radius_mi:g}", f"{resp_radius_mi:g}")
+                .replace("{guard_strategy_raw}", _h(guard_strategy_raw))
+                .replace("{resp_strategy_raw}", _h(resp_strategy_raw))
+                .replace("{guard_calls_perc:.1f}", f"{guard_calls_perc:.1f}")
+                .replace("{guard_area_perc:.1f}", f"{guard_area_perc:.1f}")
+                .replace("{resp_calls_perc:.1f}", f"{resp_calls_perc:.1f}")
+                .replace("{resp_area_perc:.1f}", f"{resp_area_perc:.1f}")
                 .replace("{{", "{")
                 .replace("}}", "}")
             )
