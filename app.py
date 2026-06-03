@@ -151,6 +151,7 @@ _get_document_jurisdiction_name = _public_reports_mod._get_document_jurisdiction
 _get_public_report_secret = _public_reports_mod._get_public_report_secret
 _get_query_params_dict = _public_reports_mod._get_query_params_dict
 _publish_public_report_html = _public_reports_mod._publish_public_report_html
+_cleanup_public_reports = _public_reports_mod._cleanup_public_reports
 _public_report_metadata_path = _public_reports_mod._public_report_metadata_path
 _public_report_html_path = _public_reports_mod._public_report_html_path
 _resolve_public_reports_dir = _public_reports_mod._resolve_public_reports_dir
@@ -3824,6 +3825,10 @@ except Exception:
 # SESSION STATE INITIALIZATION
 # ============================================================
 # This MUST run before any st.session_state checks to prevent KeyError
+try:
+    _cleanup_public_reports()
+except Exception:
+    pass
 init_session_state(st.session_state, _slugify, _build_public_report_url)
 
 # ============================================================
@@ -10007,6 +10012,8 @@ body{{background:transparent;overflow:hidden}}
                 _public_summary_html,
                 metadata={
                     "report_id": _report_id,
+                    "session_id": st.session_state.get("session_id", ""),
+                    "session_start": st.session_state.get("session_start", ""),
                     "city": _qr_city,
                     "state": _qr_state,
                     "rep_name": _qr_name,

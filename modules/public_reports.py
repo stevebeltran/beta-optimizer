@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import hmac
 import json
@@ -19,6 +20,7 @@ DEFAULT_PUBLIC_REPORT_WEBAPP_URL = (
     "https://script.google.com/macros/s/"
     "AKfycbxrj2C6as_yDDSdIbUF17m9CDEaABlYAAGNeTY6EnnaCjxB2caoJtMqC44aLUNQV-lY/exec"
 )
+DEFAULT_PUBLIC_REPORT_RETENTION_HOURS = 0.5
 _PUBLIC_REPORT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
@@ -34,6 +36,108 @@ def _resolve_public_reports_dir():
 
 
 PUBLIC_REPORTS_DIR = _resolve_public_reports_dir()
+
+
+def _get_public_report_retention_hours():
+    try:
+        _raw = str(st.secrets.get("PUBLIC_REPORT_RETENTION_HOURS", "") or "").strip()
+    except Exception:
+        _raw = ""
+    if not _raw:
+        _raw = str(os.environ.get("PUBLIC_REPORT_RETENTION_HOURS", "")).strip()
+    try:
+        _hours = float(_raw) if _raw else DEFAULT_PUBLIC_REPORT_RETENTION_HOURS
+    except Exception:
+        _hours = DEFAULT_PUBLIC_REPORT_RETENTION_HOURS
+    return max(0.0, _hours)
+
+
+def _parse_public_report_timestamp(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    candidates = [raw, raw.replace("Z", "+00:00")]
+    for candidate in candidates:
+        try:
+            parsed = datetime.datetime.fromisoformat(candidate)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+            else:
+                parsed = parsed.astimezone(datetime.timezone.utc)
+            return parsed
+        except Exception:
+            continue
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            parsed = datetime.datetime.strptime(raw, fmt).replace(tzinfo=datetime.timezone.utc)
+            return parsed
+        except Exception:
+            continue
+    return None
+
+
+def _cleanup_public_reports(max_age_hours=None):
+    """Delete stale generated public report artifacts."""
+    if max_age_hours is None:
+        age_hours = _get_public_report_retention_hours()
+    else:
+        try:
+            age_hours = max(0.0, float(max_age_hours))
+        except Exception:
+            age_hours = _get_public_report_retention_hours()
+    if age_hours <= 0:
+        return 0
+
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=age_hours)
+    removed = 0
+    seen_stems = set()
+    candidates = list(PUBLIC_REPORTS_DIR.glob("*.json")) + list(PUBLIC_REPORTS_DIR.glob("*.html"))
+
+    for path in candidates:
+        stem = path.stem
+        if stem in seen_stems:
+            continue
+        seen_stems.add(stem)
+
+        try:
+            _validate_public_report_id(stem)
+        except ValueError:
+            continue
+
+        json_path = _public_report_metadata_path(stem)
+        html_path = _public_report_html_path(stem)
+        timestamp = None
+
+        try:
+            if json_path.exists():
+                metadata = json.loads(json_path.read_text(encoding="utf-8"))
+                if isinstance(metadata, dict):
+                    timestamp = _parse_public_report_timestamp(
+                        metadata.get("updated_at")
+                        or metadata.get("created_at")
+                        or metadata.get("session_start")
+                    )
+        except Exception:
+            timestamp = None
+
+        if timestamp is None:
+            try:
+                timestamp = datetime.datetime.fromtimestamp(path.stat().st_mtime, tz=datetime.timezone.utc)
+            except Exception:
+                continue
+
+        if timestamp >= cutoff:
+            continue
+
+        for stale_path in (html_path, json_path):
+            try:
+                if stale_path.exists():
+                    stale_path.unlink()
+                    removed += 1
+            except Exception:
+                pass
+
+    return removed
 
 
 def _get_query_params_dict():
@@ -133,6 +237,8 @@ def _build_public_report_url(report_id):
             "rep_name": _rep_name,
             "rep_email": _rep_email,
             "brinc_user": _brinc_user,
+            "session_id": str(st.session_state.get("session_id", "") or "").strip(),
+            "session_start": str(st.session_state.get("session_start", "") or "").strip(),
             "summary_text": _summary_text,
             "fleet_summary": _fleet_summary,
             "annual_savings": _annual_savings,
@@ -166,6 +272,7 @@ def _public_report_metadata_path(report_id):
 
 
 def _publish_public_report_html(report_id, html_text, metadata=None):
+    _cleanup_public_reports()
     _html_path = _public_report_html_path(report_id)
     _html_path.write_text(str(html_text or ""), encoding="utf-8")
     if metadata is not None:
