@@ -209,6 +209,93 @@ function buildLandingPage_(data) {
   var timestamp = escapeHtml_(data.timestamp || "—");
   var sourceApp = escapeHtml_(data.sourceApp || "BRINC QR Web App");
   var sourceUrl = String(data.sourceUrl || "").trim();
+  var summaryText = String(data.summaryText || data.summary_text || "").trim();
+  var fleetSummary = String(data.fleetSummary || data.fleet_summary || "").trim();
+  var annualSavings = String(data.annualSavings || data.annual_savings || "").trim();
+  var callCoverage = String(data.callCoverage || data.call_coverage || "").trim();
+  var avgResponse = String(data.avgResponse || data.avg_response || "").trim();
+  var avgTimeSaved = String(data.avgTimeSaved || data.avg_time_saved || "").trim();
+  var coveredCalls = String(data.coveredCalls || data.covered_calls || "").trim();
+  var stationCount = String(data.stationCount || data.station_count || "").trim();
+  var stationsJsonRaw = String(data.stationsJson || data.stations_json || "").trim();
+  var stations = [];
+  try {
+    if (stationsJsonRaw) {
+      stations = JSON.parse(stationsJsonRaw);
+      if (!Array.isArray(stations)) stations = [];
+    }
+  } catch (err) {
+    stations = [];
+  }
+  var metricItems = [];
+  function addMetric_(label, value, subtext) {
+    var cleanValue = String(value || "").trim();
+    if (!cleanValue) return;
+    metricItems.push({ label: label, value: cleanValue, subtext: subtext || "" });
+  }
+  function formatCurrency_(value) {
+    var num = Number(String(value || "").replace(/[^0-9.-]/g, ""));
+    if (!isFinite(num) || num === 0) return "";
+    return "$" + Math.round(num).toLocaleString();
+  }
+  function formatNumber_(value) {
+    var num = Number(String(value || "").replace(/[^0-9.-]/g, ""));
+    if (!isFinite(num) || num === 0) return "";
+    return Math.round(num).toLocaleString();
+  }
+  addMetric_("Coverage", callCoverage ? callCoverage + "%" : "", "modeled calls covered");
+  addMetric_("Annual savings", formatCurrency_(annualSavings), "estimated program value");
+  addMetric_("Avg response", avgResponse ? avgResponse + " min" : "", "aerial response time");
+  addMetric_("Time saved", avgTimeSaved ? avgTimeSaved + " min" : "", "versus patrol baseline");
+  addMetric_("Annual calls", coveredCalls ? formatNumber_(coveredCalls) : "", "calls covered annually");
+  addMetric_("Fleet", fleetSummary, "recommended mix");
+  addMetric_("Stations", stationCount ? formatNumber_(stationCount) : "", "planned deployment sites");
+  if (!metricItems.length) {
+    addMetric_("Prepared for", location, "customer-facing summary");
+  }
+  var metricCardsHtml = metricItems.map(function (item) {
+    return (
+      '<div class="metric-card">' +
+        '<div class="label">' + escapeHtml_(item.label) + '</div>' +
+        '<div class="value">' + escapeHtml_(item.value) + '</div>' +
+        '<div class="sub">' + escapeHtml_(item.subtext) + '</div>' +
+      '</div>'
+    );
+  }).join("");
+  var stationCardsHtml = stations.slice(0, 5).map(function (station, idx) {
+    var name = escapeHtml_(station && station.name ? station.name : 'Station ' + (idx + 1));
+    var type = String(station && station.type ? station.type : '').toUpperCase();
+    var role = type.indexOf('GUARD') >= 0 ? 'Guardian' : 'Responder';
+    var avgTime = station && station.avg_time_min !== undefined && station.avg_time_min !== null && station.avg_time_min !== ''
+      ? Number(station.avg_time_min).toFixed(1) + ' min'
+      : '';
+    return (
+      '<div class="station-card">' +
+        '<div class="station-top">' +
+          '<strong>' + name + '</strong>' +
+          '<span>' + escapeHtml_(role) + '</span>' +
+        '</div>' +
+        '<div class="station-bottom">' +
+          (avgTime ? '<span>Avg response</span><strong>' + escapeHtml_(avgTime) + '</strong>' : '<span>Avg response</span><strong>—</strong>') +
+        '</div>' +
+      '</div>'
+    );
+  }).join("");
+  if (!stationCardsHtml) {
+    stationCardsHtml = (
+      '<div class="station-empty">' +
+        '<strong>Station summary will appear here</strong>' +
+        '<span>Once a deployment is built, the top recommended stations will show up in this section.</span>' +
+      '</div>'
+    );
+  }
+  var keyPointsHtml = [
+    'Faster first-arrival aerial coverage in high-demand areas',
+    'Earlier live scene intelligence before ground units arrive',
+    'A clearer ROI story for leadership and budget review'
+  ].map(function (point) {
+    return '<li>' + escapeHtml_(point) + '</li>';
+  }).join("");
   var mailtoSubject = encodeURIComponent("DFR summary follow-up - " + location);
   var mailtoBody = encodeURIComponent(
     "Hi " + (data.repName || "BRINC Representative") + ",\n\n" +
@@ -217,15 +304,11 @@ function buildLandingPage_(data) {
   );
   var emailLink = repEmail ? 'mailto:' + repEmail + '?subject=' + mailtoSubject + '&body=' + mailtoBody : "";
   var phoneLink = repPhoneDigits ? 'tel:' + repPhoneDigits : "";
-  var coords = lookupCoordinates_(city, state);
-  var mapUrl = buildStaticMapUrl_(city, state, coords);
-  var hasMap = !!mapUrl;
-  var mapCaption = coords && coords.display_name
-    ? escapeHtml_(coords.display_name)
-    : (city || state ? "Coverage preview centered on " + location : "Coverage preview");
-  var summaryLine = location
-    ? "Here is the customer-facing summary for " + location + "."
-    : "Here is the customer-facing summary.";
+  var summaryLine = summaryText || ("Here is the customer-facing summary for " + location + ".");
+  var supportLink = 'mailto:sales@brincdrones.com?subject=' + encodeURIComponent('DFR follow-up - ' + location);
+  var hasMap = false;
+  var mapUrl = "";
+  var mapCaption = "";
 
   return [
     '<!doctype html>',
@@ -258,10 +341,27 @@ function buildLandingPage_(data) {
     '    h1 { margin: 0; font-size: clamp(32px, 5vw, 56px); line-height: 1.04; }',
     '    .subtitle { margin-top: 10px; color: var(--accent-soft); font-weight: 700; letter-spacing: 0.04em; font-size: 15px; line-height: 1.45; }',
     '    .location { margin-top: 8px; color: var(--muted); font-size: 15px; }',
-    '    .body { padding: 18px; display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 18px; }',
+    '    .body { padding: 18px; display: grid; grid-template-columns: 1fr; gap: 18px; }',
     '    .panel { background: var(--panel-soft); border: 1px solid rgba(255,255,255,0.05); border-radius: 22px; padding: 18px; }',
     '    .panel.flush { padding: 0; overflow: hidden; }',
     '    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }',
+    '    .metric-grid { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }',
+    '    .metric-card { padding: 14px 16px; border-radius: 18px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); }',
+    '    .metric-card .label { margin-bottom: 8px; }',
+    '    .metric-card .value { font-size: 20px; font-weight: 900; line-height: 1.12; color: var(--text); }',
+    '    .metric-card .sub { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.35; }',
+    '    .summary-box { display:grid; gap:14px; }',
+    '    .summary-text { color: var(--text); font-size: 16px; line-height: 1.75; }',
+    '    .highlight-list { margin: 0; padding-left: 18px; display:grid; gap: 10px; color: var(--text); }',
+    '    .highlight-list li { line-height: 1.55; color: var(--text); }',
+    '    .station-grid { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }',
+    '    .station-card { padding: 14px 16px; border-radius: 18px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); }',
+    '    .station-top { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom: 10px; }',
+    '    .station-top strong { font-size: 16px; line-height: 1.25; }',
+    '    .station-top span { color: var(--accent-soft); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 800; white-space: nowrap; }',
+    '    .station-bottom { display:flex; align-items:center; justify-content:space-between; gap:10px; color: var(--muted); font-size: 12px; }',
+    '    .station-bottom strong { color: var(--text); font-size: 14px; }',
+    '    .station-empty { padding: 18px; border-radius: 18px; border: 1px dashed rgba(255,255,255,0.12); color: var(--muted); display:grid; gap: 6px; }',
     '    .meta { padding: 14px 16px; border-radius: 16px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); }',
     '    .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 6px; }',
     '    .value { font-size: 15px; line-height: 1.45; word-break: break-word; }',
@@ -290,8 +390,7 @@ function buildLandingPage_(data) {
     '    @media (max-width: 720px) {',
     '      .shell { padding: 12px; }',
     '      .hero, .body { padding-left: 14px; padding-right: 14px; }',
-    '      .body { grid-template-columns: 1fr; }',
-    '      .grid { grid-template-columns: 1fr; }',
+    '      .metric-grid, .station-grid, .grid { grid-template-columns: 1fr; }',
     '      .btn { width: 100%; flex-basis: 100%; }',
     '    }',
     '  </style>',
@@ -309,11 +408,25 @@ function buildLandingPage_(data) {
     '        <div class="location">' + location + '</div>',
     '      </header>',
     '      <div class="body">',
-    (hasMap
-      ? '        <section class="panel flush">' +
-        '<div class="map-shell"><img src="' + escapeHtml_(mapUrl) + '" alt="Map preview for ' + escapeHtml_(location) + '"><div class="map-overlay"><strong>Coverage preview</strong><span>' + mapCaption + '</span></div></div>' +
-        '</section>'
-      : ''),
+    '        <section class="panel">',
+    '          <div class="section-title">Deployment at a glance</div>',
+    '          <div class="metric-grid">',
+    metricCardsHtml || '            <div class="station-empty"><strong>No metrics available</strong><span>Once the deployment is generated, the core performance metrics will appear here.</span></div>',
+    '          </div>',
+    '        </section>',
+    '        <section class="panel summary-box">',
+    '          <div class="section-title">Executive summary</div>',
+    '          <div class="summary-text">' + escapeHtml_(summaryLine) + '</div>',
+    '          <ul class="highlight-list">',
+    keyPointsHtml,
+    '          </ul>',
+    '        </section>',
+    '        <section class="panel">',
+    '          <div class="section-title">Recommended station plan</div>',
+    '          <div class="station-grid">',
+    stationCardsHtml,
+    '          </div>',
+    '        </section>',
     '        <section class="panel">',
     '          <div class="section-title">Base information</div>',
     '          <div class="grid">',
@@ -326,7 +439,7 @@ function buildLandingPage_(data) {
     '          </div>',
     '          <div class="tone">This summary is designed to give the customer a fast, mobile-friendly overview without overwhelming them with internal detail.</div>',
     '        </section>',
-        '        <section class="panel contact-card">',
+    '        <section class="panel contact-card">',
     '          <div class="section-title">Next step</div>',
     '          <div class="contact-name">' + repName + '</div>',
     '          <div class="contact-note">Tap a button to continue the conversation with the account executive. The primary action opens a prefilled email so the customer can request a walkthrough or reply with follow-up details.</div>',

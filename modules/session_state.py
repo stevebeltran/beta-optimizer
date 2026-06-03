@@ -33,6 +33,8 @@ DEFAULTS = {
     "public_report_id": "",
     "public_report_url": "",
     "public_report_url_error": "",
+    "public_report_city_slug": "",
+    "public_report_state": "",
     "data_source": "unknown",
     "map_build_logged": False,
     "boundary_kind": "place",
@@ -83,10 +85,20 @@ def init_session_state(session_state, slugify, build_public_report_url) -> None:
         if key not in session_state:
             session_state[key] = value
 
-    if not session_state.get("public_report_id"):
-        city_slug = slugify(session_state.get("active_city", "report"))
+    current_city_slug = slugify(session_state.get("active_city", "report"))
+    current_state = str(session_state.get("active_state", "") or "").strip().upper()
+    stored_city_slug = str(session_state.get("public_report_city_slug", "") or "").strip()
+    stored_state = str(session_state.get("public_report_state", "") or "").strip().upper()
+
+    if (
+        not session_state.get("public_report_id")
+        or stored_city_slug != current_city_slug
+        or stored_state != current_state
+    ):
         public_token = uuid.uuid4().hex[:16]
-        session_state["public_report_id"] = f"{city_slug}-{public_token}"
+        session_state["public_report_id"] = f"{current_city_slug}-{public_token}"
+        session_state["public_report_city_slug"] = current_city_slug
+        session_state["public_report_state"] = current_state
 
     _built_public_report_url = ""
     _build_error = ""
