@@ -18,6 +18,8 @@ function doGet(e) {
   var repName = String(params.rep_name || "");
   var repEmail = String(params.rep_email || "");
   var brincUser = String(params.brinc_user || "");
+  var sessionId = String(params.session_id || "");
+  var sessionStart = String(params.session_start || "");
   var userAgent = String(headers["User-Agent"] || headers["user-agent"] || "");
   var ipAddress = String(
     headers["X-Forwarded-For"] ||
@@ -104,6 +106,8 @@ function doGet(e) {
     repName: repName,
     repEmail: repEmail,
     brincUser: brincUser,
+    sessionId: sessionId,
+    sessionStart: sessionStart,
     device: device,
     sourceApp: SOURCE_APP,
     sourceUrl: requestUrl
@@ -205,6 +209,8 @@ function buildLandingPage_(data) {
   var location = [city, state].filter(Boolean).join(", ") || "Coverage overview";
   var reportId = escapeHtml_(data.reportId || data.publicReport || "—");
   var publicReport = escapeHtml_(data.publicReport || "");
+  var sessionId = escapeHtml_(data.sessionId || data.session_id || "");
+  var sessionStart = escapeHtml_(data.sessionStart || data.session_start || "");
   var device = escapeHtml_(data.device || "—");
   var timestamp = escapeHtml_(data.timestamp || "—");
   var sourceApp = escapeHtml_(data.sourceApp || "BRINC QR Web App");
@@ -249,7 +255,7 @@ function buildLandingPage_(data) {
   addMetric_("Time saved", avgTimeSaved ? avgTimeSaved + " min" : "", "versus patrol baseline");
   addMetric_("Annual calls", coveredCalls ? formatNumber_(coveredCalls) : "", "calls covered annually");
   addMetric_("Fleet", fleetSummary, "recommended mix");
-  addMetric_("Stations", stationCount ? formatNumber_(stationCount) : "", "planned deployment sites");
+  addMetric_("Stations", stationCount ? formatNumber_(stationCount) : (stations.length ? String(stations.length) : ""), "planned deployment sites");
   if (!metricItems.length) {
     addMetric_("Prepared for", location, "customer-facing summary");
   }
@@ -309,6 +315,22 @@ function buildLandingPage_(data) {
   var hasMap = false;
   var mapUrl = "";
   var mapCaption = "";
+  var sessionCardsHtml = [
+    { label: "Session ID", value: sessionId || "—", subtext: "unique build session" },
+    { label: "Session start", value: sessionStart || "—", subtext: "sales workspace start" },
+    { label: "Scan time", value: timestamp || "—", subtext: "viewer open time" },
+    { label: "Source app", value: sourceApp || "—", subtext: "generator" },
+    { label: "Report ID", value: reportId || publicReport || "—", subtext: "shared link key" },
+    { label: "Device", value: device || "—", subtext: "scanner type" }
+  ].map(function (item) {
+    return (
+      '<div class="session-card">' +
+        '<div class="label">' + escapeHtml_(item.label) + '</div>' +
+        '<div class="value">' + escapeHtml_(item.value) + '</div>' +
+        '<div class="sub">' + escapeHtml_(item.subtext) + '</div>' +
+      '</div>'
+    );
+  }).join("");
 
   return [
     '<!doctype html>',
@@ -350,6 +372,11 @@ function buildLandingPage_(data) {
     '    .metric-card .label { margin-bottom: 8px; }',
     '    .metric-card .value { font-size: 20px; font-weight: 900; line-height: 1.12; color: var(--text); }',
     '    .metric-card .sub { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.35; }',
+    '    .session-grid { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }',
+    '    .session-card { padding: 14px 16px; border-radius: 18px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); }',
+    '    .session-card .label { margin-bottom: 8px; }',
+    '    .session-card .value { font-size: 16px; font-weight: 900; line-height: 1.18; color: var(--text); word-break: break-word; }',
+    '    .session-card .sub { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.35; }',
     '    .summary-box { display:grid; gap:14px; }',
     '    .summary-text { color: var(--text); font-size: 16px; line-height: 1.75; }',
     '    .highlight-list { margin: 0; padding-left: 18px; display:grid; gap: 10px; color: var(--text); }',
@@ -390,7 +417,7 @@ function buildLandingPage_(data) {
     '    @media (max-width: 720px) {',
     '      .shell { padding: 12px; }',
     '      .hero, .body { padding-left: 14px; padding-right: 14px; }',
-    '      .metric-grid, .station-grid, .grid { grid-template-columns: 1fr; }',
+    '      .metric-grid, .session-grid, .station-grid, .grid { grid-template-columns: 1fr; }',
     '      .btn { width: 100%; flex-basis: 100%; }',
     '    }',
     '  </style>',
@@ -412,6 +439,12 @@ function buildLandingPage_(data) {
     '          <div class="section-title">Deployment at a glance</div>',
     '          <div class="metric-grid">',
     metricCardsHtml || '            <div class="station-empty"><strong>No metrics available</strong><span>Once the deployment is generated, the core performance metrics will appear here.</span></div>',
+    '          </div>',
+    '        </section>',
+    '        <section class="panel">',
+    '          <div class="section-title">Session snapshot</div>',
+    '          <div class="session-grid">',
+    sessionCardsHtml,
     '          </div>',
     '        </section>',
     '        <section class="panel summary-box">',
