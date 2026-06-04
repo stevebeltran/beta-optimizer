@@ -8225,16 +8225,19 @@ body{{background:transparent;overflow:hidden}}
 
             custom_station_df = st.session_state.get('custom_stations', pd.DataFrame())
             if not custom_station_df.empty:
-                _active_custom_keys = {
-                    (str(d.get('name', '')), str(d.get('type', '')))
+                # Custom stations that are already active in the fleet should not be
+                # drawn again in the separate "Custom Stations" overlay.
+                _active_custom_coords = {
+                    (round(float(d.get('lat', 0) or 0), 6), round(float(d.get('lon', 0) or 0), 6))
                     for d in active_drones
+                    if d.get('lat') is not None and d.get('lon') is not None
                 }
                 _inactive_custom = custom_station_df.copy()
                 _inactive_custom['_active_key'] = list(zip(
-                    _inactive_custom['name'].astype(str),
-                    _inactive_custom['type'].astype(str),
+                    _inactive_custom['lat'].astype(float).round(6),
+                    _inactive_custom['lon'].astype(float).round(6),
                 ))
-                _inactive_custom = _inactive_custom[~_inactive_custom['_active_key'].isin(_active_custom_keys)]
+                _inactive_custom = _inactive_custom[~_inactive_custom['_active_key'].isin(_active_custom_coords)]
                 if not _inactive_custom.empty:
                     _custom_lat = _inactive_custom['lat'].astype(float).tolist()
                     _custom_lon = _inactive_custom['lon'].astype(float).tolist()
