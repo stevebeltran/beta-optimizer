@@ -7141,6 +7141,7 @@ body{{background:transparent;overflow:hidden}}
             if idx not in chrono_r: ordered_deployments_raw.append((idx,'RESPONDER'))
         for idx in active_guard_idx:
             if idx not in chrono_g: ordered_deployments_raw.append((idx,'GUARDIAN'))
+        ordered_deployments_raw = list(dict.fromkeys(ordered_deployments_raw))
 
         guardian_color = "#FFD700"
         responder_color = "#00D2FF"
@@ -7309,6 +7310,19 @@ body{{background:transparent;overflow:hidden}}
             st.sidebar.info("👈 Set Responder/Guardian counts above to calculate budget impact.")
 
         # ── BUILD DRONE OBJECTS ───────────────────────────────────────────
+        _custom_station_df = st.session_state.get('custom_stations', pd.DataFrame())
+        _custom_station_names = []
+        if isinstance(_custom_station_df, pd.DataFrame) and not _custom_station_df.empty and {'name', 'type'}.issubset(_custom_station_df.columns):
+            _custom_station_names = [
+                f"[{str(row['type'])}] {str(row['name'])}"
+                for _, row in _custom_station_df.iterrows()
+            ]
+        _custom_station_name_set = set(_custom_station_names)
+        _custom_station_rank = {
+            station_name: rank
+            for rank, station_name in enumerate(reversed(_custom_station_names))
+        }
+
         active_drones = []
         cumulative_mask = np.zeros(total_calls, dtype=bool) if total_calls > 0 else None
         step = 1
@@ -7403,6 +7417,7 @@ body{{background:transparent;overflow:hidden}}
                 'lat': d_lat, 'lon': d_lon, 'type': d_type, 'cost': cost,
                 'cov_array': cov_array, 'color': map_color,
                 'pinned': _is_pinned,
+                'is_custom_station': station_metadata[idx]['name'] in _custom_station_name_set,
                 'source': station_metadata[idx].get('source', ''),
                 'deploy_step': step if (idx in chrono_r or idx in chrono_g) else "MANUAL",
                 'avg_time_min': avg_time_min, 'speed_mph': speed_mph, 'radius_m': radius_m,
@@ -7662,6 +7677,15 @@ body{{background:transparent;overflow:hidden}}
                           'zone_flights_annual':0})
             active_drones.append(d)
             step += 1
+
+        unit_card_drones = sorted(
+            active_drones,
+            key=lambda d: (
+                0 if d.get('is_custom_station') else 1,
+                _custom_station_rank.get(d.get('name', ''), 10**6),
+                d.get('deploy_step') if isinstance(d.get('deploy_step'), int) else 10**6,
+            ),
+        )[:10]
 
         # ── RECONCILE UNIT ECONOMICS TO FLEET HEADLINE ───────────────────────
         if active_drones and annual_savings >= 0:
@@ -8476,7 +8500,7 @@ body{{background:transparent;overflow:hidden}}
         if active_drones:
             st.markdown(
                 html_reports._build_unit_cards_html(
-                    active_drones, text_main, text_muted, card_bg, card_border,
+                    unit_card_drones, text_main, text_muted, card_bg, card_border,
                     card_title, accent_color, columns_per_row=4,
                     simple=simple_cards, deflection_rate=deflection_rate,
                     dfr_dispatch_rate=dfr_dispatch_rate,
@@ -8484,6 +8508,11 @@ body{{background:transparent;overflow:hidden}}
                 ),
                 unsafe_allow_html=True
             )
+            if len(active_drones) > len(unit_card_drones):
+                st.caption(
+                    f"Showing the first {len(unit_card_drones)} deployed units. "
+                    f"{len(active_drones) - len(unit_card_drones)} additional deployed unit(s) remain active but are hidden from the card display."
+                )
         else:
             st.markdown(
                 f"""
