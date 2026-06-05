@@ -881,10 +881,15 @@ def manage_custom_stations(
     n_selected_guardian = sum(1 for mode in suggestion_modes.values() if mode == 'Guardian')
     n_selected_total = sum(1 for mode in suggestion_modes.values() if mode != 'Off')
 
-    # Count custom stations by type
+    # Count custom stations by locked fleet role
     custom_stations = session_state.get('custom_stations', pd.DataFrame())
-    n_custom_responder = len(custom_stations[custom_stations.get('type', '') == 'Responder']) if not custom_stations.empty else 0
-    n_custom_guardian = len(custom_stations[custom_stations.get('type', '') == 'Guardian']) if not custom_stations.empty else 0
+    if not custom_stations.empty and 'lock_role' in custom_stations.columns:
+        _lock_roles = custom_stations['lock_role'].astype(str).str.strip()
+        n_custom_responder = int((_lock_roles == 'Responder').sum())
+        n_custom_guardian = int((_lock_roles == 'Guardian').sum())
+    else:
+        n_custom_responder = 0
+        n_custom_guardian = 0
 
     # Slider max = suggested stations + custom stations for each type (independent)
     # Guardian can use any uploaded station + custom stations
@@ -2077,13 +2082,18 @@ def station_suggestion_display_metrics(suggestion, mode):
     }
 
 
-def _ranked_suggestion_modes(suggestions, k_guardian=0, k_responder=0):
+def _ranked_suggestion_modes(suggestions, k_guardian=0, k_responder=0, forced_modes=None):
     """Assign visible suggestions from the slider counts in rank order."""
+    forced_modes = dict(forced_modes or {})
     guardian_left = max(0, int(k_guardian or 0))
     responder_left = max(0, int(k_responder or 0))
     modes = {}
     for s in suggestions:
         idx = s['station_idx']
+        forced_mode = forced_modes.get(idx)
+        if forced_mode in {'Guardian', 'Responder'}:
+            modes[idx] = forced_mode
+            continue
         if guardian_left > 0:
             modes[idx] = 'Guardian'
             guardian_left -= 1
@@ -2106,6 +2116,30 @@ def _suggestion_widget_key(session_state, idx):
     return f"suggest_mode_{_suggestion_widget_version(session_state)}_{idx}"
 
 
+def _forced_custom_suggestion_modes(session_state, suggestions):
+    forced_modes = {}
+    custom_stations = session_state.get('custom_stations', pd.DataFrame())
+    if custom_stations.empty or not {'name', 'type', 'lock_role'}.issubset(custom_stations.columns):
+        return forced_modes
+
+    pinned_guard = set(str(x) for x in (session_state.get('pinned_guard_names', []) or []))
+    pinned_resp = set(str(x) for x in (session_state.get('pinned_resp_names', []) or []))
+    custom_role_by_name = {}
+    for _, row in custom_stations[['name', 'type', 'lock_role']].dropna().iterrows():
+        prefixed_name = f"[{row['type']}] {row['name']}"
+        lock_role = str(row['lock_role']).strip()
+        if lock_role == 'Guardian' and prefixed_name in pinned_guard:
+            custom_role_by_name[prefixed_name] = 'Guardian'
+        elif lock_role == 'Responder' and prefixed_name in pinned_resp:
+            custom_role_by_name[prefixed_name] = 'Responder'
+
+    for suggestion in suggestions:
+        forced_mode = custom_role_by_name.get(str(suggestion.get('name', '')))
+        if forced_mode in {'Guardian', 'Responder'}:
+            forced_modes[int(suggestion['station_idx'])] = forced_mode
+    return forced_modes
+
+
 def sync_station_suggestion_modes(session_state, suggestions, k_guardian=None, k_responder=None):
     """Keep suggestion mode state aligned with either cards or slider counts."""
     if not suggestions:
@@ -2118,12 +2152,17 @@ def sync_station_suggestion_modes(session_state, suggestions, k_guardian=None, k
     prior_rank_by = str(session_state.get('_suggestion_rank_by', '') or '').strip().lower()
     rank_by_changed = bool(prior_rank_by) and prior_rank_by != current_rank_by
     session_state['_suggestion_rank_by'] = current_rank_by
+    forced_custom_modes = _forced_custom_suggestion_modes(session_state, suggestions)
+    forced_guard = sum(1 for mode in forced_custom_modes.values() if mode == 'Guardian')
+    forced_resp = sum(1 for mode in forced_custom_modes.values() if mode == 'Responder')
 
     existing_modes = session_state.get('suggestion_modes', {}) or {}
     normalized_existing = {}
     for s in suggestions:
         idx = s['station_idx']
         mode = existing_modes.get(idx, 'Off')
+        if idx in forced_custom_modes:
+            mode = forced_custom_modes[idx]
         normalized_existing[idx] = mode if mode in valid_modes else 'Off'
 
     widget_changed = False
@@ -2148,16 +2187,23 @@ def sync_station_suggestion_modes(session_state, suggestions, k_guardian=None, k
         return synced_modes
 
     if (k_guardian is not None) or (k_responder is not None):
-        current_guard = sum(1 for mode in normalized_existing.values() if mode == 'Guardian')
-        current_resp = sum(1 for mode in normalized_existing.values() if mode == 'Responder')
-        requested_guard = max(0, int(k_guardian or 0))
-        requested_resp = max(0, int(k_responder or 0))
+        current_guard = sum(
+            1 for idx, mode in normalized_existing.items()
+            if idx not in forced_custom_modes and mode == 'Guardian'
+        )
+        current_resp = sum(
+            1 for idx, mode in normalized_existing.items()
+            if idx not in forced_custom_modes and mode == 'Responder'
+        )
+        requested_guard = max(0, int(k_guardian or 0) - forced_guard)
+        requested_resp = max(0, int(k_responder or 0) - forced_resp)
 
         if not existing_modes or current_guard != requested_guard or current_resp != requested_resp:
             synced_modes = _ranked_suggestion_modes(
                 suggestions,
                 k_guardian=requested_guard,
                 k_responder=requested_resp,
+                forced_modes=forced_custom_modes,
             )
             session_state['_suggestion_sync_source'] = 'slider'
             session_state['_suggestion_widget_version'] = _suggestion_widget_version(session_state) + 1
