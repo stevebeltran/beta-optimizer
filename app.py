@@ -7053,10 +7053,7 @@ body{{background:transparent;overflow:hidden}}
             _city_area_for_suggest = city_m.area if (city_m and not city_m.is_empty) else 1.0
             _custom_station_df = st.session_state.get('custom_stations', pd.DataFrame())
             _has_custom_stations = isinstance(_custom_station_df, pd.DataFrame) and not _custom_station_df.empty
-            if st.session_state.get('stations_user_uploaded', False) or _has_custom_stations:
-                _max_suggestions = len(station_metadata)
-            else:
-                _max_suggestions = 10
+            _max_suggestions = len(station_metadata) if st.session_state.get('stations_user_uploaded', False) else 10
             _station_rank_by = 'land' if resp_strategy_raw == 'Land Coverage' else 'call'
             st.session_state['_station_suggestion_rank_by'] = _station_rank_by
             _suggestions = compute_station_suggestions(
@@ -7064,6 +7061,55 @@ body{{background:transparent;overflow:hidden}}
                 total_calls, _city_area_for_suggest, max_suggestions=_max_suggestions,
                 rank_by=_station_rank_by,
             )
+            if _has_custom_stations and {'name', 'type'}.issubset(_custom_station_df.columns):
+                _latest_custom = _custom_station_df.iloc[-1]
+                _latest_custom_name = f"[{str(_latest_custom['type'])}] {str(_latest_custom['name'])}"
+                _latest_custom_role = str(_latest_custom.get('lock_role', '') or '').strip() or 'Guardian'
+                _station_idx_by_name = {
+                    str(meta.get('name', '')): idx
+                    for idx, meta in enumerate(station_metadata)
+                }
+                _latest_custom_idx = _station_idx_by_name.get(_latest_custom_name)
+                if _latest_custom_idx is not None:
+                    _existing_custom = next(
+                        (s for s in _suggestions if int(s.get('station_idx', -1)) == int(_latest_custom_idx)),
+                        None,
+                    )
+                    if _existing_custom is None:
+                        _custom_meta = station_metadata[_latest_custom_idx]
+                        _raw_calls_r = int(_custom_meta.get('raw_calls_r', np.sum(resp_matrix[_latest_custom_idx])))
+                        _raw_calls_g = int(_custom_meta.get('raw_calls_g', _raw_calls_r))
+                        _resp_call_pct = (_raw_calls_r / total_calls * 100) if total_calls > 0 else 0.0
+                        _guard_call_pct = (_raw_calls_g / total_calls * 100) if total_calls > 0 else 0.0
+                        _resp_land_pct = (_custom_meta['clipped_2m'].area / _city_area_for_suggest * 100) if _city_area_for_suggest > 0 else 0.0
+                        _guard_land_pct = (_custom_meta['clipped_guard'].area / _city_area_for_suggest * 100) if _city_area_for_suggest > 0 else 0.0
+                        _existing_custom = {
+                            'station_idx': _latest_custom_idx,
+                            'name': _custom_meta['name'],
+                            'address': _custom_meta.get('address', ''),
+                            'lat': _custom_meta['lat'],
+                            'lon': _custom_meta['lon'],
+                            'call_count': _raw_calls_r,
+                            'call_count_responder': _raw_calls_r,
+                            'call_count_guardian': _raw_calls_g,
+                            'call_pct': round(_resp_call_pct, 1),
+                            'call_pct_responder': round(_resp_call_pct, 1),
+                            'call_pct_guardian': round(_guard_call_pct, 1),
+                            'land_pct': round(_resp_land_pct, 1),
+                            'land_pct_responder': round(_resp_land_pct, 1),
+                            'land_pct_guardian': round(_guard_land_pct, 1),
+                            'marginal_calls': _raw_calls_r,
+                            'role': _latest_custom_role,
+                        }
+                    _suggestions = [_existing_custom] + [
+                        s for s in _suggestions
+                        if int(s.get('station_idx', -1)) != int(_latest_custom_idx)
+                    ]
+                    _suggestions = _suggestions[:_max_suggestions]
+                    for _rank, _suggestion in enumerate(_suggestions, start=1):
+                        _suggestion['rank'] = _rank
+                        if _rank == 1:
+                            _suggestion['role'] = _latest_custom_role
             st.session_state['_station_suggestions'] = _suggestions
             _current_modes = sync_station_suggestion_modes(
                 st.session_state,
