@@ -1639,6 +1639,7 @@ def optimize_fleet_selection(
     active_resp_idx, active_guard_idx = [], []
     chrono_r, chrono_g = [], []
     best_combo = None
+    guard_claims_by_idx = {}
 
     if n <= 0:
         st.error(
@@ -1865,15 +1866,19 @@ def optimize_fleet_selection(
                     g_best, chrono_g = [], []
 
                 set_stage(70, 'Optimising Responder fleet…')
+                if complement_mode and g_best and total_calls > 0:
+                    guard_claimed, guard_claims_by_idx = build_guard_serviceable_claims(g_best)
+                else:
+                    guard_claimed = None
+                    guard_claims_by_idx = {}
+
                 if k_responder > 0:
-                    if complement_mode and g_best and total_calls > 0:
-                        guard_claimed, guard_claims_by_idx = build_guard_serviceable_claims(g_best)
+                    if guard_claimed is not None:
                         resp_matrix_eff = resp_matrix.copy()
                         resp_matrix_eff[:, guard_claimed] = False
                         dist_matrix_r_eff = dist_matrix_r.copy()
                         forbidden_resp = build_forbidden_candidates(cross_overlap_pairs, g_best, locked_r_pins)
                     else:
-                        guard_claims_by_idx = {}
                         resp_matrix_eff = resp_matrix
                         dist_matrix_r_eff = dist_matrix_r
                         forbidden_resp = set()
@@ -1927,10 +1932,12 @@ def optimize_fleet_selection(
             session_state['_opt_best_combo'] = best_combo
             session_state['_opt_chrono_r'] = chrono_r
             session_state['_opt_chrono_g'] = chrono_g
+            session_state['_opt_guard_claims_by_idx'] = guard_claims_by_idx
         else:
             best_combo = session_state.get('_opt_best_combo')
             chrono_r = session_state.get('_opt_chrono_r', [])
             chrono_g = session_state.get('_opt_chrono_g', [])
+            guard_claims_by_idx = session_state.get('_opt_guard_claims_by_idx', {}) or {}
 
         if best_combo is not None:
             r_best, g_best = best_combo
