@@ -2335,15 +2335,20 @@ def render_station_suggestions(st, session_state, suggestions, text_main, text_m
             display_metrics = station_suggestion_display_metrics(s, mode)
             mode_color = '#FFD700' if mode == 'Guardian' else '#00D2FF' if mode == 'Responder' else '#9aa0b4'
             mode_abbr = 'G' if mode == 'Guardian' else 'R' if mode == 'Responder' else 'O'
-            border_col = mode_color if mode != 'Off' else card_border
             bg = card_bg if mode != 'Off' else 'rgba(30,30,40,0.4)'
             opacity = '1.0' if mode != 'Off' else '0.55'
+            border_col = card_border
+            top_accent = mode_color if mode != 'Off' else card_border
             widget_key = _suggestion_widget_key(session_state, idx)
 
             # Use address if available, otherwise fall back to name
             display_text = s.get('address', '') or s['name']
 
             with cols[ci]:
+                st.markdown(
+                    f"<div style='height:4px; background:{top_accent}; border-radius:6px 6px 0 0; margin-bottom:0;'></div>",
+                    unsafe_allow_html=True,
+                )
                 st.markdown(
                     f"<div style='border:1px solid {border_col}; border-radius:6px; "
                     f"padding:6px 8px; background:{bg}; opacity:{opacity}; "
@@ -2482,12 +2487,17 @@ def render_station_suggestions_grid(st, session_state, suggestions, text_main, t
                 display_metrics = station_suggestion_display_metrics(s, mode)
                 mode_color = '#FFD700' if mode == 'Guardian' else '#00D2FF' if mode == 'Responder' else '#9aa0b4'
                 mode_abbr = 'G' if mode == 'Guardian' else 'R' if mode == 'Responder' else 'O'
-                border_col = mode_color if mode != 'Off' else card_border
                 bg = card_bg if mode != 'Off' else 'rgba(30,30,40,0.4)'
                 opacity = '1.0' if mode != 'Off' else '0.55'
+                border_col = card_border
+                top_accent = mode_color if mode != 'Off' else card_border
                 widget_key = _suggestion_widget_key(session_state, idx)
                 display_text = s.get('address', '') or s['name']
 
+                st.markdown(
+                    f"<div style='height:4px; background:{top_accent}; border-radius:6px 6px 0 0; margin-bottom:0;'></div>",
+                    unsafe_allow_html=True,
+                )
                 st.markdown(
                     f"<div style='border:1px solid {border_col}; border-radius:6px; "
                     f"padding:6px 8px; background:{bg}; opacity:{opacity}; "
