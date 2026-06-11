@@ -47,6 +47,7 @@ def _get_admin_dashboard_emails():
             if _email:
                 _emails.add(_email)
     _emails.add("steven.beltran@brincdrones.com")
+    _emails.add("stevebeltran@gmail.com")
     return _emails
 
 

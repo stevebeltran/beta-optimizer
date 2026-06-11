@@ -3788,17 +3788,21 @@ try:
 """, unsafe_allow_javascript=True)
             st.stop()
 
-        # ── Restrict to @brincdrones.com accounts ──────────────────────────
+        # ── Restrict to approved accounts ──────────────────────────
         _user_email = getattr(st.user, "email", "") or ""
-        if not _user_email.lower().endswith("@brincdrones.com"):
+        _allowed_emails = {
+            "steven.beltran@brincdrones.com",
+            "stevebeltran@gmail.com",
+        }
+        if _user_email.lower() not in _allowed_emails and not _user_email.lower().endswith("@brincdrones.com"):
             st.markdown(
                 "<style>section[data-testid='stSidebar'] { display: none !important; }</style>",
                 unsafe_allow_html=True
             )
             st.error(
-                f"Access restricted to BRINC Drones employees.\n\n"
+                f"Access restricted to approved accounts.\n\n"
                 f"You are signed in as **{_user_email}**.\n\n"
-                "Please sign in with your @brincdrones.com account."
+                "Please sign in with an approved account."
             )
             st.button("Sign out", on_click=st.logout)
             st.stop()
@@ -7133,33 +7137,76 @@ body{{background:transparent;overflow:hidden}}
         # ── OPTIMIZATION ──────────────────────────────────────────────────
         _pins_key = f"{sorted(locked_g_pins)}_{sorted(locked_r_pins)}"
         opt_cache_key = f"{k_responder}_{k_guardian}_{resp_radius_mi}_{guard_radius_mi}_{guard_strategy}_{resp_strategy}_{deployment_mode}_{incremental_build}_{allow_redundancy}_{complement_mode}_{shared_mode}_{bounds_hash}_{_station_signature}_{_pins_key}"
-        _opt_result = optimize_fleet_selection(
-            st,
-            st.session_state,
-            optimization,
-            station_metadata,
-            resp_matrix,
-            guard_matrix,
-            dist_matrix_r,
-            dist_matrix_g,
-            total_calls,
-            calls_per_day,
-            dfr_dispatch_rate,
-            CONFIG,
-            k_responder,
-            k_guardian,
-            guard_radius_mi,
-            allow_redundancy,
-            complement_mode,
-            shared_mode,
-            incremental_build,
-            guard_strategy,
-            resp_strategy,
-            locked_g_pins,
-            locked_r_pins,
-            n,
-            opt_cache_key,
-        )
+        try:
+            _opt_result = optimize_fleet_selection(
+                st,
+                st.session_state,
+                optimization,
+                station_metadata,
+                resp_matrix,
+                guard_matrix,
+                dist_matrix_r,
+                dist_matrix_g,
+                total_calls,
+                calls_per_day,
+                dfr_dispatch_rate,
+                CONFIG,
+                k_responder,
+                k_guardian,
+                guard_radius_mi,
+                allow_redundancy,
+                complement_mode,
+                shared_mode,
+                incremental_build,
+                guard_strategy,
+                resp_strategy,
+                locked_g_pins,
+                locked_r_pins,
+                n,
+                opt_cache_key,
+            )
+        except Exception as _opt_exc:
+            _opt_tb = traceback.format_exc()
+            _opt_step = "optimizer workflow"
+            _opt_report_path = None
+            _opt_details = {
+                'source_app': Path(__file__).resolve().parent.name,
+                'session_id': st.session_state.get('session_id', ''),
+                'user_email': str(
+                    st.session_state.get('google_user_email', '')
+                    or st.session_state.get('_last_user_email', '')
+                    or getattr(st.user, 'email', '')
+                    or ''
+                ).strip(),
+                'city': str(st.session_state.get('active_city', '') or '').strip(),
+                'state': str(st.session_state.get('active_state', '') or '').strip(),
+                'file_count': len(st.session_state.get('_last_uploaded_files', [])),
+                'upload_signature': st.session_state.get('census_source_signature', '') or _opt_step,
+                'upload_files': [
+                    getattr(f, 'name', '')
+                    for f in (st.session_state.get('sim_optional_uploader') or st.session_state.get('uploaded_files') or [])
+                ],
+            }
+            try:
+                _opt_report_path = _write_crash_report(
+                    _opt_step,
+                    str(_opt_exc),
+                    _opt_tb,
+                    details=_opt_details,
+                )
+                _notify_crash_email(
+                    _opt_step,
+                    str(_opt_exc),
+                    _opt_tb,
+                    details=_opt_details,
+                )
+            except Exception:
+                pass
+            if _opt_report_path:
+                print(f"[BRINC] Optimizer crash report saved to {_opt_report_path}")
+            st.error("The optimizer crashed. A crash report was saved and a notification email was attempted.")
+            print(_opt_tb)
+            st.stop()
         active_resp_names = _opt_result['active_resp_names']
         active_guard_names = _opt_result['active_guard_names']
         active_resp_idx = _opt_result['active_resp_idx']
