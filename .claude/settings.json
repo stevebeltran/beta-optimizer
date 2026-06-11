@@ -2,5 +2,7 @@
   "statusLine": {
     "type": "command",
     "command": "pwsh -NoProfile -NonInteractive -File C:/Users/4070/.claude/statusline-command.ps1"
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": ["pytest", "ruff", "git"]
 }

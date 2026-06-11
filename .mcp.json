@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "pytest": {
+      "command": "python",
+      "args": ["-m", "mcp.server.pytest"],
+      "description": "Python pytest testing framework for running and analyzing tests"
+    },
+    "ruff": {
+      "command": "ruff",
+      "args": ["server"],
+      "description": "Ruff Python linter and formatter for code quality checks"
+    },
+    "git": {
+      "command": "git",
+      "args": [],
+      "description": "Git version control MCP server for repository operations"
+    }
+  }
+}
