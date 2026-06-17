@@ -8448,9 +8448,26 @@ body{{background:transparent;overflow:hidden}}
             map_cfg = dict(center=dict(lat=_map_center_lat, lon=_map_center_lon), zoom=_map_zoom, style=map_style)
             if show_satellite:
                 map_cfg["style"] = "carto-positron"
-                map_cfg["layers"] = [{"below":"traces","sourcetype":"raster",
-                    "sourceattribution":"Esri, Maxar, Earthstar Geographics",
-                    "source":["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"]}]
+                map_cfg["layers"] = [
+                    {
+                        "below": "traces",
+                        "sourcetype": "raster",
+                        "opacity": 0.62,
+                        "sourceattribution": "Esri, Maxar, Earthstar Geographics",
+                        "source": [
+                            "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                        ],
+                    },
+                    {
+                        "below": "traces",
+                        "sourcetype": "raster",
+                        "opacity": 0.95,
+                        "sourceattribution": "Esri, HERE, Garmin, OpenStreetMap contributors",
+                        "source": [
+                            "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"
+                        ],
+                    },
+                ]
 
             _pin_drop_active = st.session_state.get('pin_drop_mode', False)
             _layout_extra = {}
