@@ -71,6 +71,25 @@ PUBLIC_REPORT_HEADERS = [
     "Public HTML",
 ]
 
+CRASH_REPORT_HEADERS = [
+    "Timestamp",
+    "Source App",
+    "Event",
+    "Step",
+    "Error",
+    "Email Status",
+    "Email Detail",
+    "Session ID",
+    "User Email",
+    "City",
+    "State",
+    "File Count",
+    "Upload Signature",
+    "Crash Report Path",
+    "Uploaded Files",
+    "Traceback",
+]
+
 _LOGIN_WRITE_LOCK = threading.RLock()
 _LOGIN_WRITE_RECENT = {}
 _LOGIN_WRITE_SUPPRESSION_SECONDS = 5
@@ -99,6 +118,84 @@ def _sheet_col_label(index):
         index, remainder = divmod(index - 1, 26)
         label = chr(65 + remainder) + label
     return label
+
+
+def _truncate_sheet_cell(value, limit=49000):
+    """Keep large traceback/details values under Google Sheets cell limits."""
+    text = "" if value is None else str(value)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n...[truncated]"
+
+
+def _log_crash_to_sheets(
+    step,
+    error_message,
+    traceback_text,
+    details=None,
+    *,
+    event_type="CRASH",
+    email_status="",
+    email_detail="",
+    crash_report_path="",
+):
+    """Best-effort durable crash log in the configured Google Sheet."""
+    try:
+        sheet_id = st.secrets.get("GOOGLE_SHEET_ID", "")
+        creds_dict = st.secrets.get("gcp_service_account", {})
+        if not sheet_id or not creds_dict:
+            return False
+
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(dict(creds_dict), scopes=scopes)
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(sheet_id)
+
+        try:
+            sheet = spreadsheet.worksheet("Crash Reports")
+        except gspread.exceptions.WorksheetNotFound:
+            sheet = spreadsheet.add_worksheet(title="Crash Reports", rows=1000, cols=len(CRASH_REPORT_HEADERS))
+            sheet.append_row(CRASH_REPORT_HEADERS)
+
+        first_row = sheet.row_values(1)
+        if [str(v).strip() for v in first_row] != CRASH_REPORT_HEADERS:
+            end_col = _sheet_col_label(len(CRASH_REPORT_HEADERS))
+            sheet.update(f"A1:{end_col}1", [CRASH_REPORT_HEADERS])
+
+        d = details or {}
+        try:
+            source_app = d.get("source_app", "") or st.secrets.get("SOURCE_APP", "") or Path(__file__).resolve().parent.parent.name
+        except Exception:
+            source_app = d.get("source_app", "") or ""
+
+        uploaded_files = d.get("upload_files", [])
+        try:
+            uploaded_files_text = json.dumps(uploaded_files, default=str)
+        except Exception:
+            uploaded_files_text = str(uploaded_files)
+
+        sheet.append_row([
+            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            source_app,
+            event_type,
+            str(step or ""),
+            _truncate_sheet_cell(error_message, 5000),
+            str(email_status or ""),
+            _truncate_sheet_cell(email_detail, 5000),
+            d.get("session_id", ""),
+            d.get("user_email", ""),
+            d.get("city", ""),
+            d.get("state", ""),
+            d.get("file_count", ""),
+            d.get("upload_signature", ""),
+            str(crash_report_path or d.get("crash_report_path", "") or ""),
+            _truncate_sheet_cell(uploaded_files_text, 10000),
+            _truncate_sheet_cell(traceback_text),
+        ])
+        return True
+    except Exception as exc:
+        print(f"[BRINC] Crash Sheets log failed: {type(exc).__name__}: {exc}")
+        return False
 
 
 def _build_details_html(details):
@@ -265,7 +362,29 @@ def _notify_crash_email(step, error_message, traceback_text, details=None):
         notify_address = st.secrets.get("NOTIFY_EMAIL", gmail_address)
         sms_address = st.secrets.get("NOTIFY_SMS_EMAIL", "")
         recipients = _split_recipients([notify_address, sms_address])
-        if not gmail_address or not app_password or not recipients:
+        if not gmail_address:
+            reason = "missing GMAIL_ADDRESS secret"
+            print(f"[BRINC] Crash email skipped: {reason}.")
+            _log_crash_to_sheets(
+                step, error_message, traceback_text, details,
+                event_type="CRASH_EMAIL", email_status="SKIPPED", email_detail=reason,
+            )
+            return
+        if not app_password:
+            reason = "missing GMAIL_APP_PASSWORD secret"
+            print(f"[BRINC] Crash email skipped: {reason}.")
+            _log_crash_to_sheets(
+                step, error_message, traceback_text, details,
+                event_type="CRASH_EMAIL", email_status="SKIPPED", email_detail=reason,
+            )
+            return
+        if not recipients:
+            reason = "no NOTIFY_EMAIL or NOTIFY_SMS_EMAIL recipients configured"
+            print(f"[BRINC] Crash email skipped: {reason}.")
+            _log_crash_to_sheets(
+                step, error_message, traceback_text, details,
+                event_type="CRASH_EMAIL", email_status="SKIPPED", email_detail=reason,
+            )
             return
 
         d = details or {}
@@ -328,7 +447,17 @@ def _notify_crash_email(step, error_message, traceback_text, details=None):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=8) as server:
             server.login(gmail_address, app_password)
             server.sendmail(gmail_address, recipients, msg.as_string())
-    except:
+        _log_crash_to_sheets(
+            step, error_message, traceback_text, details,
+            event_type="CRASH_EMAIL", email_status="SENT", email_detail=f"{len(recipients)} recipient(s)",
+        )
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        print(f"[BRINC] Crash email failed: {detail}")
+        _log_crash_to_sheets(
+            step, error_message, traceback_text, details,
+            event_type="CRASH_EMAIL", email_status="FAILED", email_detail=detail,
+        )
         pass
 
 
@@ -576,6 +705,14 @@ def _write_crash_report(step, error_message, traceback_text, details=None):
             "",
         ]
         report_path.write_text("\n".join(lines), encoding="utf-8")
+        _log_crash_to_sheets(
+            step,
+            error_message,
+            traceback_text,
+            details,
+            event_type="CRASH_REPORT",
+            crash_report_path=str(report_path),
+        )
         return str(report_path)
     except Exception:
         return ""
