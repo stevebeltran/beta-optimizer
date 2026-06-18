@@ -988,6 +988,8 @@ def manage_custom_stations(
 
     k_responder = st.sidebar.slider('🚁 Responder Count', 0, max(1, max_resp_calc), value=val_r, help='Short-range tactical drones (2-3mi radius).')
     k_guardian = st.sidebar.slider('🦅 Guardian Count', 0, max(1, max_guard_calc), value=val_g, help='Long-range overwatch drones (5-8mi radius).')
+    if int(k_responder or 0) != int(val_r) or int(k_guardian or 0) != int(val_g):
+        session_state['_suggestion_apply_fleet_counts'] = True
     _set_fleet_counts(resp_value=k_responder or 0, guard_value=k_guardian or 0)
 
     station_names = df_stations_all['name'].tolist() if not df_stations_all.empty else []
@@ -2156,8 +2158,6 @@ def sync_station_suggestion_modes(session_state, suggestions, k_guardian=None, k
     current_rank_by = str(session_state.get('_station_suggestion_rank_by', 'call') or 'call').strip().lower()
     if current_rank_by not in {'call', 'land'}:
         current_rank_by = 'call'
-    prior_rank_by = str(session_state.get('_suggestion_rank_by', '') or '').strip().lower()
-    rank_by_changed = bool(prior_rank_by) and prior_rank_by != current_rank_by
     session_state['_suggestion_rank_by'] = current_rank_by
     forced_custom_modes = _forced_custom_suggestion_modes(session_state, suggestions)
     forced_guard = sum(1 for mode in forced_custom_modes.values() if mode == 'Guardian')
@@ -2194,18 +2194,11 @@ def sync_station_suggestion_modes(session_state, suggestions, k_guardian=None, k
         return synced_modes
 
     if (k_guardian is not None) or (k_responder is not None):
-        current_guard = sum(
-            1 for idx, mode in normalized_existing.items()
-            if idx not in forced_custom_modes and mode == 'Guardian'
-        )
-        current_resp = sum(
-            1 for idx, mode in normalized_existing.items()
-            if idx not in forced_custom_modes and mode == 'Responder'
-        )
+        apply_fleet_counts = bool(session_state.pop('_suggestion_apply_fleet_counts', False))
         requested_guard = max(0, int(k_guardian or 0) - forced_guard)
         requested_resp = max(0, int(k_responder or 0) - forced_resp)
 
-        if not existing_modes or current_guard != requested_guard or current_resp != requested_resp:
+        if not existing_modes or apply_fleet_counts:
             synced_modes = _ranked_suggestion_modes(
                 suggestions,
                 k_guardian=requested_guard,
@@ -2400,7 +2393,7 @@ def render_station_suggestions(st, session_state, suggestions, text_main, text_m
 
 def render_station_suggestions_grid(st, session_state, suggestions, text_main, text_muted,
                                     card_bg, card_border, accent_color, source_label='public data',
-                                    k_guardian=None, k_responder=None):
+                                    k_guardian=None, k_responder=None, suggestion_color_map=None):
     """Render station suggestions with synced widget state and a fixed 5-column grid."""
     if not suggestions:
         return False
@@ -2430,6 +2423,7 @@ def render_station_suggestions_grid(st, session_state, suggestions, text_main, t
     if 'show_suggestion_markers' not in session_state:
         session_state['show_suggestion_markers'] = True
     source_label = session_state.get('station_suggestions_source', source_label)
+    suggestion_color_map = dict(suggestion_color_map or {})
 
     # Use the live widget/session state for rendering so a user edit is not
     # immediately overwritten by the current slider assignment.
@@ -2487,12 +2481,20 @@ def render_station_suggestions_grid(st, session_state, suggestions, text_main, t
                 display_metrics = station_suggestion_display_metrics(s, mode)
                 mode_color = '#FFD700' if mode == 'Guardian' else '#00D2FF' if mode == 'Responder' else '#9aa0b4'
                 mode_abbr = 'G' if mode == 'Guardian' else 'R' if mode == 'Responder' else 'O'
+                role_key = 'GUARDIAN' if mode == 'Guardian' else 'RESPONDER' if mode == 'Responder' else 'OFF'
+                ring_color = suggestion_color_map.get((int(idx), role_key)) or suggestion_color_map.get(str(idx))
                 bg = card_bg if mode != 'Off' else 'rgba(30,30,40,0.4)'
                 opacity = '1.0' if mode != 'Off' else '0.55'
                 border_col = card_border
-                top_accent = mode_color if mode != 'Off' else card_border
+                top_accent = ring_color if mode != 'Off' and ring_color else card_border
                 widget_key = _suggestion_widget_key(session_state, idx)
-                display_text = s.get('address', '') or s['name']
+                station_name = str(s.get('name', '') or 'Unnamed Station')
+                station_address = str(s.get('address', '') or '').strip()
+                address_html = (
+                    f"<div style='color:{text_muted}; font-size:0.58rem; margin-bottom:2px; "
+                    f"word-wrap:break-word; white-space:normal;'>{station_address}</div>"
+                    if station_address else ''
+                )
 
                 st.markdown(
                     f"<div style='height:4px; background:{top_accent}; border-radius:6px 6px 0 0; margin-bottom:0;'></div>",
@@ -2507,7 +2509,8 @@ def render_station_suggestions_grid(st, session_state, suggestions, text_main, t
                     f"<span style='background:{mode_color}; color:#000; font-size:0.55rem; "
                     f"font-weight:800; padding:1px 5px; border-radius:3px;'>{mode_abbr}</span></div>"
                     f"<div style='color:{text_main}; font-weight:600; margin:2px 0; word-wrap:break-word; white-space:normal;'>"
-                    f"{display_text}</div>"
+                    f"{station_name}</div>"
+                    f"{address_html}"
                     f"<div style='color:{text_muted}; font-size:0.62rem;'>"
                     f"Calls {display_metrics['call_count']:,} · "
                     f"City {display_metrics['call_pct']}% · Land {display_metrics['land_pct']}%</div>"

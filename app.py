@@ -5220,28 +5220,6 @@ def main():
                         st.session_state['census_download_notice'] = True
                         st.rerun()
 
-            @st.cache_resource
-            def _get_app_boot_time():
-                return datetime.datetime.now(datetime.timezone.utc)
-
-
-            def _format_app_uptime():
-                elapsed = datetime.datetime.now(datetime.timezone.utc) - _get_app_boot_time()
-                total_seconds = max(0, int(elapsed.total_seconds()))
-                days, rem = divmod(total_seconds, 86400)
-                hours, rem = divmod(rem, 3600)
-                minutes, seconds = divmod(rem, 60)
-                parts = []
-                if days:
-                    parts.append(f"{days}d")
-                if hours or days:
-                    parts.append(f"{hours}h")
-                if minutes or hours or days:
-                    parts.append(f"{minutes}m")
-                parts.append(f"{seconds}s")
-                return " ".join(parts)
-
-
             if uploaded_files and len(uploaded_files) >= 1 and not (
                 st.session_state.get('census_pending') and
                 current_upload_signature == st.session_state.get('census_source_signature') and
@@ -5269,7 +5247,6 @@ def main():
     +'#brinc-flo .fl-city{{font-size:20px;font-weight:900;letter-spacing:3px;color:#fff}}'
     +'#brinc-flo .fl-stline{{font-size:10px;letter-spacing:2px;color:rgba(0,210,255,0.7);text-transform:uppercase;margin-top:7px}}'
     +'#brinc-flo .fl-made{{margin-top:12px;font-size:11px;font-weight:800;letter-spacing:2.6px;color:rgba(255,255,255,0.92);text-transform:uppercase}}'
-    +'#brinc-flo .fl-uptime{{margin-top:7px;font-size:10px;letter-spacing:1.4px;color:rgba(255,255,255,0.58);text-transform:uppercase}}'
     +'#brinc-flo .fl-copy{{margin-top:8px;font-size:11px;line-height:1.55;color:rgba(255,255,255,0.62)}}'
     +'#brinc-flo .fl-prog-wrap{{margin:14px auto 0;max-width:520px}}'
     +'#brinc-flo .fl-prog-meta{{display:flex;justify-content:space-between;gap:12px;font-size:10px;letter-spacing:1.6px;color:rgba(255,255,255,0.62);text-transform:uppercase}}'
@@ -5304,7 +5281,6 @@ def main():
     + '<div class="fl-city">CAD UPLOAD</div>'
     + '<div class="fl-stline" id="fl-stl">INGESTING INCIDENT DATA<span class="fl-dots"></span></div>'
     + '<div class="fl-made">MADE IN THE USA</div>'
-    + '<div class="fl-uptime">UPTIME SINCE REBOOT: {_upload_uptime}</div>'
     + '<div class="fl-copy">Parsing calls, resolving boundaries, and preparing deployment analysis.</div>'
     + '<div class="fl-prog-wrap"><div class="fl-prog-meta"><span id="fl-prog-label">Progress</span><span id="fl-prog-pct">0%</span></div><div class="fl-prog"><div class="fl-prog-bar" id="fl-prog-bar"></div></div></div>'
     + '<div class="fl-log" id="fl-log">Preparing upload details…</div>'
@@ -5325,7 +5301,6 @@ def main():
                     _upload_overlay_html
                     .replace("{_upload_logo_b64}", _upload_logo_b64)
                     .replace("{_upload_gigs_b64}", _upload_gigs_b64)
-                    .replace("{_upload_uptime}", _format_app_uptime())
                     .replace("{{", "{")
                     .replace("}}", "}")
                 )
@@ -8575,11 +8550,17 @@ body{{background:transparent;overflow:hidden}}
 
         # ── STATION SUGGESTIONS PANEL ────────────────────────────────────────────
         if _suggestions and show_station_suggestions:
+            _suggestion_color_map = {
+                (int(d.get('idx')), str(d.get('type', '')).upper()): d.get('color')
+                for d in active_drones
+                if d.get('idx') is not None and d.get('color')
+            }
             _sug_changed = render_station_suggestions_grid(
                 st, st.session_state, _suggestions,
                 text_main, text_muted, card_bg, card_border, accent_color,
                 k_guardian=k_guardian,
                 k_responder=k_responder,
+                suggestion_color_map=_suggestion_color_map,
             )
 
         # ── UNIT ECONOMICS CARDS (directly below map, no toggle) ─────────────────
