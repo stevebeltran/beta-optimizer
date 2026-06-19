@@ -1,7 +1,6 @@
 import os
 import json
 import io
-from google.auth.transport.requests import Request
 from google.oauth2.service_account import Credentials
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -39,7 +38,8 @@ class GoogleDriveManager:
         Returns:
             Folder ID (string)
         """
-        query = f"'{parent_folder_id}' in parents and name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        escaped_name = folder_name.replace("'", "\\'")
+        query = f"'{parent_folder_id}' in parents and name='{escaped_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
 
         results = self.service.files().list(
             q=query,
@@ -47,6 +47,9 @@ class GoogleDriveManager:
             fields='files(id, name)',
             pageSize=1
         ).execute()
+
+        if 'error' in results:
+            raise ValueError(f"Failed to list folders: {results['error']}")
 
         files = results.get('files', [])
         if files:
@@ -62,6 +65,9 @@ class GoogleDriveManager:
             body=file_metadata,
             fields='id'
         ).execute()
+
+        if 'error' in folder:
+            raise ValueError(f"Failed to create folder: {folder['error']}")
 
         return folder.get('id')
 
@@ -94,6 +100,9 @@ class GoogleDriveManager:
             fields='id'
         ).execute()
 
+        if 'error' in file_obj:
+            raise ValueError(f"Failed to upload file: {file_obj['error']}")
+
         return file_obj.get('id')
 
     def upload_bytes(self, file_bytes, folder_id, file_name, mime_type='application/octet-stream'):
@@ -121,6 +130,9 @@ class GoogleDriveManager:
             fields='id'
         ).execute()
 
+        if 'error' in file_obj:
+            raise ValueError(f"Failed to upload file: {file_obj['error']}")
+
         return file_obj.get('id')
 
     def download_file(self, file_id, local_path):
@@ -131,15 +143,17 @@ class GoogleDriveManager:
             file_id: Google Drive file ID
             local_path: Local destination path
         """
-        request = self.service.files().get_media(fileId=file_id)
-        with open(local_path, 'wb') as f:
-            while True:
-                try:
+        try:
+            request = self.service.files().get_media(fileId=file_id)
+            with open(local_path, 'wb') as f:
+                while True:
                     status, done = request.next_chunk()
                     if done:
                         break
-                except Exception as e:
-                    raise IOError(f"Failed to download file: {e}")
+        except Exception as e:
+            if os.path.exists(local_path):
+                os.remove(local_path)
+            raise IOError(f"Failed to download file: {e}")
 
         return local_path
 
@@ -168,16 +182,14 @@ class GoogleDriveManager:
             pageSize=100
         ).execute()
 
+        if 'error' in results:
+            raise ValueError(f"Failed to list files: {results['error']}")
+
         return results.get('files', [])
 
 def get_drive_manager():
     """Get authenticated Drive manager from Streamlit secrets."""
-    try:
-        credentials_json = st.secrets.get('GOOGLE_DRIVE_CREDENTIALS')
-        if not credentials_json:
-            st.error("Google Drive credentials not configured in Streamlit secrets.")
-            st.stop()
-        return GoogleDriveManager(credentials_json)
-    except Exception as e:
-        st.error(f"Failed to authenticate with Google Drive: {e}")
-        st.stop()
+    credentials_json = st.secrets.get('GOOGLE_DRIVE_CREDENTIALS')
+    if not credentials_json:
+        raise ValueError("Google Drive credentials not configured in Streamlit secrets.")
+    return GoogleDriveManager(credentials_json)
