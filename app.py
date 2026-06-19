@@ -2110,11 +2110,11 @@ def search_public_facility_candidates(query_str, facility_type, limit=6, preferr
         pass
     return matches
 
-def forward_geocode(address_str):
+def forward_geocode(address_str, preferred_city='', preferred_state=''):
     return forward_geocode_with_context(
         address_str,
-        st.session_state.get('active_city', ''),
-        st.session_state.get('active_state', ''),
+        preferred_city,
+        preferred_state,
     )
 
 

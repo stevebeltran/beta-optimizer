@@ -721,6 +721,11 @@ def prepare_station_candidates(
     city_boundary_geom = None
     try:
         active_utm = active_gdf.to_crs(epsg=epsg_code)
+        active_utm['geometry'] = active_utm.geometry.apply(
+            lambda geom: geom.buffer(0)
+            if geom is not None and not geom.is_empty and not geom.is_valid
+            else geom
+        )
         raw_union = active_utm.geometry.union_all() if hasattr(active_utm.geometry, 'union_all') else active_utm.geometry.unary_union
         clean_geom = raw_union.buffer(1.0).buffer(-1.0)
         if clean_geom.is_empty or not clean_geom.is_valid:
