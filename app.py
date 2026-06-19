@@ -10051,6 +10051,7 @@ body{{background:transparent;overflow:hidden}}
         _report_notice_slot = st.sidebar.empty()
         _brinc_export_slot = st.sidebar.empty()
         _html_export_slot = st.sidebar.empty()
+        _pdf_export_slot = st.sidebar.empty()
         _fernandina_export_slot = st.sidebar.empty()
         _kml_export_slot = st.sidebar.empty()
 
@@ -10069,6 +10070,17 @@ body{{background:transparent;overflow:hidden}}
             help=(
                 "Deploy at least one drone to generate the executive summary."
                 if fleet_capex <= 0
+                else _report_wait_note
+            ),
+        )
+        _pdf_export_slot.button(
+            f"📑 {prop_city}, {prop_state} — Executive Summary PDF",
+            disabled=True,
+            width="stretch",
+            key="pdf_export_wait_btn",
+            help=(
+                "Deploy at least one drone to generate the executive summary PDF."
+                if not active_drones
                 else _report_wait_note
             ),
         )
@@ -12411,6 +12423,18 @@ body{{background:transparent;overflow:hidden}}
                            prop_name, prop_email, details=export_details)
         # 2. Executive Summary / proposal HTML export
         _export_html_ready = isinstance(export_html, str) and export_html.lstrip().lower().startswith("<!doctype html")
+        _executive_pdf_bytes = None
+        if fleet_capex > 0 and _export_html_ready:
+            try:
+                _executive_pdf_bytes = html_reports.render_executive_html_to_pdf(
+                    export_html,
+                    map_png_bytes=map_png_bytes,
+                    prepared_by_name=prop_name,
+                    prepared_by_email=prop_email,
+                )
+            except Exception as _pdf_full_exc:
+                _executive_pdf_bytes = None
+                print(f"[BRINC] Executive HTML-to-PDF render failed: {_pdf_full_exc}")
         if fleet_capex > 0:
             if _export_html_ready and _html_export_slot.download_button(f"📄 {prop_city}, {prop_state} — Executive Summary",
                                                                         data=export_html,
@@ -12434,6 +12458,28 @@ body{{background:transparent;overflow:hidden}}
                     key="html_export_not_ready_btn",
                     help="Executive summary data is not ready for this run.",
                 )
+            if _executive_pdf_bytes:
+                if _pdf_export_slot.download_button(f"📑 {prop_city}, {prop_state} — Executive Summary PDF",
+                                                    data=_executive_pdf_bytes,
+                                                    file_name=f"BRINC_Executive_Summary_{_safe_city}_{_version_slug}_{_ts}.pdf",
+                                                    mime="application/pdf",
+                                                    width="stretch"):
+                    st.session_state['export_event_log'] = st.session_state.get('export_event_log', []) + ['PDF']
+                    st.session_state['export_count'] = st.session_state.get('export_count', 0) + 1
+                    _notify_email(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                                  "PDF", k_responder, k_guardian, calls_covered_perc,
+                                  prop_name, prop_email, details=export_details)
+                    _log_to_sheets(st.session_state.get('active_city',''), st.session_state.get('active_state',''),
+                                   "PDF", k_responder, k_guardian, calls_covered_perc,
+                                   prop_name, prop_email, details=export_details)
+            else:
+                _pdf_export_slot.button(
+                    f"📑 {prop_city}, {prop_state} — Executive Summary PDF",
+                    disabled=True,
+                    width="stretch",
+                    key="pdf_export_not_ready_btn",
+                    help="Executive summary PDF data is not ready for this run.",
+                )
         else:
             _html_export_slot.button(
                 f"📄 {prop_city}, {prop_state} — Executive Summary",
@@ -12441,6 +12487,13 @@ body{{background:transparent;overflow:hidden}}
                 width="stretch",
                 key="html_export_no_drones_btn",
                 help="Deploy at least one drone to generate the executive summary.",
+            )
+            _pdf_export_slot.button(
+                f"📑 {prop_city}, {prop_state} — Executive Summary PDF",
+                disabled=True,
+                width="stretch",
+                key="pdf_export_no_drones_btn",
+                help="Deploy at least one drone to generate the executive summary PDF.",
             )
 
         # 3. Google Earth KML — only when drones are placed
