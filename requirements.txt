@@ -9,6 +9,9 @@ pulp==3.3.0
 pyproj==3.7.2
 gspread==6.2.1
 google-auth==2.49.1
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+googleapiclient>=1.12.0
 pyarrow==23.0.0
 openpyxl==3.1.5
 xlrd==2.0.2
