@@ -628,7 +628,7 @@ def _deduplicate_columns(df):
 def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
     all_calls_list = []
     CV = {
-        'date': ['received date','incident date','call date','call creation date','calldatetime','call datetime','calltime','timestamp','date','datetime','date time','dispatch date','time received','incdate','date_rept','date_occu','createdtime','created_time','receivedtime','received_time','eventtime','event_time','incidenttime','incident_time','reportedtime','reported_time','entrytime','entry_time','time_central','time_stamp','created'],
+        'date': ['received date','incident date','call date','call creation date','calldatetime','call datetime','calltime','timestamp','date','datetime','date time','dispatch date','time received','incdate','date_rept','date_occu','createdtime','created_time','receivedtime','received_time','eventtime','event_time','incidenttime','incident_time','reportedtime','reported_time','entrytime','entry_time','time_central','time_stamp','created','timedispatched','time dispatched','dispatch datetime','timearrived','time arrived'],
         'time': ['call creation time','call time','dispatch time','received time','time', 'hour', 'hour_rept','hour_occu'],
         'priority': ['call priority', 'priority level', 'priority', 'pri', 'urgency'],
         'lat': ['latitude','lat','y coord','ycoord','ycoor','addressy','geoy','y_coord','map_y',
@@ -1295,7 +1295,13 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                         dt_source = None
                         for _candidate in [
                             c for c in raw_df.columns
-                            if c == 'date time_call create' or 'date time' in c or 'datetime' in c or 'created' in c
+                            if (
+                                c == 'date time_call create'
+                                or 'date time' in c
+                                or 'datetime' in c
+                                or 'created' in c
+                                or c in ('timedispatched', 'time dispatched', 'dispatch datetime', 'timearrived', 'time arrived')
+                            )
                         ]:
                             dt_source = _candidate
                             break
@@ -1319,7 +1325,12 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                                     pass
                             if time_cols:
                                 res['time'] = raw_df[time_cols[0]].fillna('').astype(str).str.strip()
-                        desc_col = next((c for c in raw_df.columns if 'call type description' in c or c in ('call_type_desc', 'call type', 'nature')), None)
+                        desc_col = next((
+                            c for c in raw_df.columns
+                            if 'call type description' in c or c in (
+                                'call_type_desc', 'call type', 'nature', 'finalcallcode', 'origcallcode'
+                            )
+                        ), None)
                         if desc_col is not None:
                             res['call_type_desc'] = raw_df[desc_col].fillna('').astype(str).str.strip()
                         dept_col = next((c for c in raw_df.columns if c in ('department name', 'department', 'dept', 'agency', 'agency name')), None)
@@ -1338,7 +1349,17 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                         inferred_state = _infer_state_from_text(raw_df, top_city_name)
                         if inferred_state:
                             res['_csv_state'] = inferred_state
-                        res['priority'] = 3
+                        _direct_p_col = _choose_priority_column(raw_df)
+                        if _direct_p_col:
+                            _direct_priority = raw_df[_direct_p_col].apply(parse_priority)
+                            _direct_priority = pd.to_numeric(_direct_priority, errors='coerce')
+                            _direct_priority = _direct_priority.where(_direct_priority.isin([1, 2, 3, 4, 5, 6, 7, 8, 9]))
+                            if _direct_priority.dropna().empty:
+                                res['priority'] = 3
+                            else:
+                                res['priority'] = _direct_priority.fillna(3).astype(int)
+                        else:
+                            res['priority'] = 3
                         res['_source_row_id'] = source_ids.reindex(res.index).values
                         res['_source_file'] = cfile.name
                         try:
@@ -1394,6 +1415,9 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
                 continue
 
             res = pd.DataFrame()
+            for _raw_keep_col in ['timedispatched', 'timearrived', 'finalcallcode', 'origcallcode', 'displayaddrs', 'district', 'neighborhood']:
+                if _raw_keep_col in raw_df.columns:
+                    res[_raw_keep_col] = raw_df[_raw_keep_col]
             exact_coord_names = {
                 'lat': ['latitude', 'lat', 'gps_lat', 'gps_latitude', 'y'],
                 'lon': ['longitude', 'lon', 'long', 'gps_lon', 'gps_longitude', 'x']

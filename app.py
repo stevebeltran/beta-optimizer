@@ -3646,6 +3646,107 @@ def build_display_calls(df_calls_full, _city_m, epsg_code, max_points=300000, se
     display_calls = display_calls.drop(columns=['_gx', '_gy', '_cell'], errors='ignore')
     return display_calls.to_crs(epsg=4326)
 
+
+def _find_response_metric_column(df: pd.DataFrame, target_name: str):
+    """Find a response-metric source column with case-insensitive matching."""
+    if df is None or df.empty:
+        return None
+    target_key = re.sub(r'[^a-z0-9]+', '', str(target_name).lower())
+    for col in df.columns:
+        col_key = re.sub(r'[^a-z0-9]+', '', str(col).lower())
+        if col_key == target_key:
+            return col
+    return None
+
+
+def _format_minutes_label(minutes_value, include_seconds=False):
+    minutes_value = float(minutes_value or 0.0)
+    total_seconds = int(round(minutes_value * 60.0))
+    mins, secs = divmod(max(total_seconds, 0), 60)
+    if include_seconds:
+        return f"{mins}m {secs:02d}s"
+    return f"{mins} min"
+
+
+def _build_historical_response_time_summary(df: pd.DataFrame):
+    """Summarize dispatch-to-arrival response times from uploaded CAD rows."""
+    if df is None or df.empty:
+        return None
+
+    dispatched_col = _find_response_metric_column(df, 'TimeDispatched')
+    arrived_col = _find_response_metric_column(df, 'TimeArrived')
+    if not dispatched_col or not arrived_col:
+        return None
+
+    source_df = df.copy()
+    source_df[dispatched_col] = pd.to_datetime(source_df[dispatched_col], errors='coerce')
+    source_df[arrived_col] = pd.to_datetime(source_df[arrived_col], errors='coerce')
+    source_df['_response_min'] = (source_df[arrived_col] - source_df[dispatched_col]).dt.total_seconds() / 60.0
+
+    missing_arrived = int(source_df[arrived_col].isna().sum())
+    response_df = source_df[source_df['_response_min'].notna()].copy()
+    if response_df.empty:
+        return None
+
+    negative_count = int((response_df['_response_min'] < 0).sum())
+    response_df = response_df[response_df['_response_min'] >= 0].copy()
+    if response_df.empty:
+        return None
+
+    priority_col = _find_response_metric_column(response_df, 'Priority')
+    district_col = _find_response_metric_column(response_df, 'District')
+    call_type_col = (
+        _find_response_metric_column(response_df, 'FinalCallCode')
+        or _find_response_metric_column(response_df, 'CallType')
+        or _find_response_metric_column(response_df, 'OrigCallCode')
+    )
+
+    def _build_group_table(group_col, *, top_n=None, exclude_values=None):
+        if not group_col or group_col not in response_df.columns:
+            return None
+        grouped = response_df[[group_col, '_response_min']].copy()
+        grouped[group_col] = grouped[group_col].astype(str).str.strip()
+        grouped = grouped[grouped[group_col] != '']
+        if exclude_values:
+            exclude_set = {str(v).strip() for v in exclude_values}
+            grouped = grouped[~grouped[group_col].isin(exclude_set)]
+        if grouped.empty:
+            return None
+        summary = (
+            grouped.groupby(group_col)['_response_min']
+            .agg(['count', 'median', 'mean'])
+            .reset_index()
+            .rename(columns={group_col: 'Label', 'count': 'Calls', 'median': 'MedianMin', 'mean': 'AverageMin'})
+        )
+        if top_n is not None:
+            summary = summary.sort_values(['Calls', 'MedianMin'], ascending=[False, True]).head(int(top_n))
+        return summary.reset_index(drop=True)
+
+    priority_summary = _build_group_table(priority_col, exclude_values={'', 'nan'})
+    if priority_summary is not None and not priority_summary.empty:
+        def _priority_sort_key(value):
+            try:
+                return (0, int(str(value)))
+            except Exception:
+                return (1, str(value))
+        priority_summary = priority_summary.assign(
+            _sort_key=priority_summary['Label'].map(_priority_sort_key)
+        ).sort_values('_sort_key').drop(columns=['_sort_key']).reset_index(drop=True)
+
+    district_summary = _build_group_table(district_col, top_n=8, exclude_values={'', '0', 'nan'})
+    call_type_summary = _build_group_table(call_type_col, top_n=10, exclude_values={'', 'nan'})
+
+    return {
+        'calls_analyzed': int(len(response_df)),
+        'median_minutes': float(response_df['_response_min'].median()),
+        'average_minutes': float(response_df['_response_min'].mean()),
+        'missing_arrived': missing_arrived,
+        'negative_count': negative_count,
+        'priority_summary': priority_summary,
+        'district_summary': district_summary,
+        'call_type_summary': call_type_summary,
+    }
+
 # ============================================================
 # PAGE CONFIG — must be the first Streamlit command
 # ============================================================
@@ -9019,6 +9120,90 @@ body{{background:transparent;overflow:hidden}}
                 _fixed_px = 460
                 _analytics_height = _fixed_px + _cal_px
             components.html(analytics_html_block, height=_analytics_height, scrolling=False)
+
+            _historical_response_summary = _build_historical_response_time_summary(_analytics_df)
+            st.session_state['historical_response_time_summary'] = _historical_response_summary or {}
+            if _historical_response_summary:
+                st.markdown(
+                    f"<div style='margin:14px 0 8px; padding-top:10px; border-top:1px solid {card_border};'>"
+                    f"<div style='font-size:0.98rem; font-weight:700; color:{text_main};'>Historical Ground Response Time</div>"
+                    f"<div style='font-size:0.72rem; color:{text_muted}; margin-top:4px;'>"
+                    f"Computed from dispatch-to-arrival timestamps on completed CAD calls only."
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
+
+                _hist_cols = st.columns(3, gap="small")
+                _hist_metrics = [
+                    ("Median", _format_minutes_label(_historical_response_summary['median_minutes']), "Typical completed-call response"),
+                    ("Average", _format_minutes_label(_historical_response_summary['average_minutes'], include_seconds=True), "Sensitive to long-delay outliers"),
+                    ("Calls analyzed", f"{_historical_response_summary['calls_analyzed']:,}", "Rows with both timestamps and non-negative duration"),
+                ]
+                for _col, (_label, _value, _subtext) in zip(_hist_cols, _hist_metrics):
+                    _col.markdown(
+                        f"<div style='background:{card_bg}; border:1px solid {card_border}; border-radius:10px; "
+                        f"padding:12px 14px; min-height:92px;'>"
+                        f"<div style='font-size:0.68rem; text-transform:uppercase; letter-spacing:0.06em; color:{text_muted};'>{_label}</div>"
+                        f"<div style='font-size:1.55rem; font-weight:800; color:{accent_color}; font-family:\"IBM Plex Mono\", monospace; margin-top:6px;'>{_value}</div>"
+                        f"<div style='font-size:0.68rem; color:{text_muted}; margin-top:6px; line-height:1.35;'>{_subtext}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                _priority_summary = _historical_response_summary.get('priority_summary')
+                if isinstance(_priority_summary, pd.DataFrame) and not _priority_summary.empty:
+                    _priority_fig = go.Figure()
+                    _priority_fig.add_trace(go.Bar(
+                        x=[str(v) for v in _priority_summary['Label'].tolist()],
+                        y=_priority_summary['MedianMin'].tolist(),
+                        marker=dict(color=accent_color),
+                        text=[_format_minutes_label(v) for v in _priority_summary['MedianMin'].tolist()],
+                        textposition='outside',
+                        hovertemplate=(
+                            "Priority %{x}<br>"
+                            "Median: %{y:.1f} min<br>"
+                            "Calls: %{customdata:,}<extra></extra>"
+                        ),
+                        customdata=_priority_summary['Calls'].tolist(),
+                    ))
+                    _priority_fig.update_layout(
+                        title=dict(text="Median Response Time by Priority", x=0, font=dict(size=14, color=text_main)),
+                        margin=dict(l=20, r=10, t=40, b=20),
+                        height=300,
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        font=dict(color=text_main, size=11),
+                        xaxis=dict(title=None, showgrid=False, zeroline=False),
+                        yaxis=dict(title='Minutes', gridcolor='rgba(255,255,255,0.08)', zeroline=False),
+                    )
+                    st.plotly_chart(_priority_fig, use_container_width=True, config={'displayModeBar': False})
+
+                _detail_cols = st.columns(2, gap="medium")
+                _district_summary = _historical_response_summary.get('district_summary')
+                if isinstance(_district_summary, pd.DataFrame) and not _district_summary.empty:
+                    _district_display = _district_summary.copy()
+                    _district_display['Median'] = _district_display['MedianMin'].map(_format_minutes_label)
+                    _district_display['Average'] = _district_display['AverageMin'].map(lambda v: _format_minutes_label(v, include_seconds=True))
+                    _district_display = _district_display[['Label', 'Calls', 'Median', 'Average']].rename(columns={'Label': 'District'})
+                    _detail_cols[0].markdown(f"<div style='font-size:0.78rem; font-weight:700; color:{text_main}; margin:4px 0 8px;'>Response Time by District</div>", unsafe_allow_html=True)
+                    _detail_cols[0].dataframe(_district_display, hide_index=True, use_container_width=True)
+
+                _call_type_summary = _historical_response_summary.get('call_type_summary')
+                if isinstance(_call_type_summary, pd.DataFrame) and not _call_type_summary.empty:
+                    _call_type_display = _call_type_summary.copy()
+                    _call_type_display['Median'] = _call_type_display['MedianMin'].map(_format_minutes_label)
+                    _call_type_display['Average'] = _call_type_display['AverageMin'].map(lambda v: _format_minutes_label(v, include_seconds=True))
+                    _call_type_display = _call_type_display[['Label', 'Calls', 'Median', 'Average']].rename(columns={'Label': 'Call Type'})
+                    _detail_cols[1].markdown(f"<div style='font-size:0.78rem; font-weight:700; color:{text_main}; margin:4px 0 8px;'>Most Common Call Types</div>", unsafe_allow_html=True)
+                    _detail_cols[1].dataframe(_call_type_display, hide_index=True, use_container_width=True)
+
+                _foot_parts = [
+                    f"{_historical_response_summary['calls_analyzed']:,} completed calls included",
+                    f"{int(_historical_response_summary.get('missing_arrived', 0) or 0):,} rows missing arrival timestamps",
+                ]
+                if int(_historical_response_summary.get('negative_count', 0) or 0) > 0:
+                    _foot_parts.append(f"{int(_historical_response_summary['negative_count']):,} negative durations excluded")
+                st.caption(" | ".join(_foot_parts) + ". Averages can be pulled upward by long-delay outliers.")
 
             if _analytics_unavailable:
                 # Remove the dead gap when the analytics component only contains a short fallback message.

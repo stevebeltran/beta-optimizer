@@ -101,7 +101,9 @@ def _detect_datetime_series_for_labels(df):
 
             'timestamp', 'datetime', 'incident datetime', 'received time', 'time received',
 
-            'dispatch datetime', 'event time', 'event datetime'
+            'dispatch datetime', 'timedispatched', 'time dispatched',
+
+            'event time', 'event datetime', 'timearrived', 'time arrived'
 
         ]
 
@@ -619,7 +621,9 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False):
 
             'timestamp', 'datetime', 'incident datetime', 'received time', 'time received',
 
-            'dispatch datetime', 'event time', 'event datetime'
+            'dispatch datetime', 'timedispatched', 'time dispatched',
+
+            'event time', 'event datetime', 'timearrived', 'time arrived'
 
         ]
 
@@ -650,7 +654,9 @@ def generate_command_center_html(df, total_orig_calls, export_mode=False):
 
             'timestamp', 'datetime', 'incident datetime', 'received time', 'time received',
 
-            'dispatch datetime', 'event time', 'event datetime'
+            'dispatch datetime', 'timedispatched', 'time dispatched',
+
+            'event time', 'event datetime', 'timearrived', 'time arrived'
 
         ]:
 

@@ -2400,7 +2400,7 @@ def render_station_suggestions(st, session_state, suggestions, text_main, text_m
 
 def render_station_suggestions_grid(st, session_state, suggestions, text_main, text_muted,
                                     card_bg, card_border, accent_color, source_label='public data',
-                                    k_guardian=None, k_responder=None):
+                                    k_guardian=None, k_responder=None, suggestion_color_map=None):
     """Render station suggestions with synced widget state and a fixed 5-column grid."""
     if not suggestions:
         return False
@@ -2430,6 +2430,7 @@ def render_station_suggestions_grid(st, session_state, suggestions, text_main, t
     if 'show_suggestion_markers' not in session_state:
         session_state['show_suggestion_markers'] = True
     source_label = session_state.get('station_suggestions_source', source_label)
+    suggestion_color_map = dict(suggestion_color_map or {})
 
     # Use the live widget/session state for rendering so a user edit is not
     # immediately overwritten by the current slider assignment.
@@ -2487,20 +2488,33 @@ def render_station_suggestions_grid(st, session_state, suggestions, text_main, t
                 display_metrics = station_suggestion_display_metrics(s, mode)
                 mode_color = '#FFD700' if mode == 'Guardian' else '#00D2FF' if mode == 'Responder' else '#9aa0b4'
                 mode_abbr = 'G' if mode == 'Guardian' else 'R' if mode == 'Responder' else 'O'
-                border_col = mode_color if mode != 'Off' else card_border
                 bg = card_bg if mode != 'Off' else 'rgba(30,30,40,0.4)'
                 opacity = '1.0' if mode != 'Off' else '0.55'
+                border_col = card_border
+                role_key = 'GUARDIAN' if mode == 'Guardian' else 'RESPONDER' if mode == 'Responder' else 'OFF'
+                ring_color = suggestion_color_map.get((int(idx), role_key)) or suggestion_color_map.get(str(idx))
+                indicator_color = ring_color if mode != 'Off' and ring_color else card_border
+                badge_color = ring_color if mode != 'Off' and ring_color else mode_color
                 widget_key = _suggestion_widget_key(session_state, idx)
                 display_text = s.get('address', '') or s['name']
 
+                st.markdown(
+                    f"<div style='height:8px; background:{indicator_color}; border-radius:6px 6px 0 0; margin-bottom:0;'></div>",
+                    unsafe_allow_html=True,
+                )
                 st.markdown(
                     f"<div style='border:1px solid {border_col}; border-radius:6px; "
                     f"padding:6px 8px; background:{bg}; opacity:{opacity}; "
                     f"min-height:72px; font-size:0.7rem; line-height:1.3;'>"
                     f"<div style='display:flex; justify-content:space-between; align-items:center;'>"
                     f"<span style='font-weight:700; color:{text_main};'>#{s['rank']}</span>"
-                    f"<span style='background:{mode_color}; color:#000; font-size:0.55rem; "
+                    f"<span style='background:{badge_color}; color:#000; font-size:0.55rem; "
                     f"font-weight:800; padding:1px 5px; border-radius:3px;'>{mode_abbr}</span></div>"
+                    f"<div style='display:flex; align-items:center; gap:6px; margin:4px 0 2px;'>"
+                    f"<span style='width:10px; height:10px; border-radius:2px; background:{indicator_color}; "
+                    f"border:1px solid rgba(255,255,255,0.2); flex:0 0 auto;'></span>"
+                    f"<span style='color:{text_muted}; font-size:0.56rem; letter-spacing:0.04em; text-transform:uppercase;'>"
+                    f"Map Ring</span></div>"
                     f"<div style='color:{text_main}; font-weight:600; margin:2px 0; word-wrap:break-word; white-space:normal;'>"
                     f"{display_text}</div>"
                     f"<div style='color:{text_muted}; font-size:0.62rem;'>"
