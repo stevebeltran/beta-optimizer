@@ -1410,6 +1410,9 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
 
             if 'lat' not in res.columns or 'lon' not in res.columns:
                 for c in raw_df.columns:
+                    c_norm = str(c).strip().lower()
+                    if any(token in c_norm for token in ('zip', 'postal')):
+                        continue
                     lon_series, lat_series, valid_rate = _extract_lonlat_pair(raw_df[c])
                     if valid_rate >= 0.50:
                         res['lon'] = lon_series
@@ -1421,6 +1424,9 @@ def aggressive_parse_calls(uploaded_files, require_valid_coordinates=True):
             if 'lat' not in res.columns or 'lon' not in res.columns:
                 numeric_cols = []
                 for c in raw_df.columns:
+                    c_norm = str(c).strip().lower()
+                    if any(token in c_norm for token in ('zip', 'postal')):
+                        continue
                     series = pd.to_numeric(raw_df[c], errors='coerce').dropna()
                     if len(series) > 10:
                         numeric_cols.append((c, series))

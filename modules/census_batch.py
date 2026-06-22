@@ -545,8 +545,7 @@ def build_census_staging(uploaded_files) -> tuple[pd.DataFrame, pd.DataFrame, di
         part['has_required_address'] = (
             part['street'].ne('') &
             part['city'].ne('') &
-            part['state'].isin(_STATE_ABBRS) &
-            part['zip'].str.match(r'^\d{5}$')
+            part['state'].isin(_STATE_ABBRS)
         )
         part['census_preview'] = part.apply(
             lambda row: ', '.join([v for v in [row['street'], row['city'], row['state'], row['zip']] if v]),
