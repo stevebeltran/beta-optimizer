@@ -2299,9 +2299,9 @@ def _match_local_boundary_rows(gdf, state_fips, search_name):
 @st.cache_data
 def fetch_place_boundary_local(state_abbr, place_name_input):
     """Look up a city/town/CDP boundary from local parquet caches.
-    Connecticut towns fall back to county-subdivision data when needed."""
+    Connecticut and Rhode Island towns fall back to county-subdivision data when needed."""
     local_files = ["places_lite.parquet"]
-    if str(state_abbr or '').strip().upper() == "CT":
+    if str(state_abbr or '').strip().upper() in {"CT", "RI"}:
         local_files.append("county_subdivisions_lite.parquet")
 
     state_fips = STATE_FIPS.get(state_abbr)
@@ -2317,6 +2317,11 @@ def fetch_place_boundary_local(state_abbr, place_name_input):
             match = _match_local_boundary_rows(gdf, state_fips, search_name)
             if match is not None and not match.empty:
                 return True, match
+
+        if str(state_abbr or '').strip().upper() in {"CT", "RI"}:
+            tiger_success, tiger_gdf = fetch_tiger_county_subdivision_shapefile(state_fips, search_name, SHAPEFILE_DIR)
+            if tiger_success and tiger_gdf is not None and not tiger_gdf.empty:
+                return True, tiger_gdf
 
     except Exception:
         return False, None
@@ -2703,6 +2708,56 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         return True, city_gdf
     except Exception as e:
         print(f"[BRINC] fetch_tiger_city_shapefile failed for {city_name}: {e}")
+        return False, None
+
+@st.cache_data
+def fetch_tiger_county_subdivision_shapefile(state_fips, subdivision_name, output_dir):
+    # Rhode Island and Connecticut towns often live in county-subdivision TIGER files.
+    temp_dir = os.path.join(output_dir, f"temp_tiger_{state_fips}_cousub")
+    cached_shp = os.path.join(temp_dir, f"tl_2023_{state_fips}_cousub.shp")
+    gdf = None
+
+    if os.path.exists(cached_shp):
+        try:
+            gdf = gpd.read_file(cached_shp)
+        except Exception:
+            gdf = None
+
+    if gdf is None:
+        for year in ["2023", "2022"]:
+            url = f"https://www2.census.gov/geo/tiger/TIGER{year}/COUSUB/tl_{year}_{state_fips}_cousub.zip"
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "BRINC_COS_Optimizer/1.0"})
+                with urllib.request.urlopen(req, timeout=45) as resp:
+                    zip_data = resp.read()
+                zip_file = zipfile.ZipFile(io.BytesIO(zip_data))
+                os.makedirs(temp_dir, exist_ok=True)
+                zip_file.extractall(temp_dir)
+                shp_files = glob.glob(os.path.join(temp_dir, "*.shp"))
+                if shp_files:
+                    gdf = gpd.read_file(shp_files[0])
+                    break
+            except Exception:
+                continue
+
+    if gdf is None:
+        return False, None
+
+    try:
+        search_name = normalize_jurisdiction_name(subdivision_name)
+        match = _match_local_boundary_rows(gdf, state_fips, search_name)
+        if match is None or match.empty:
+            return False, None
+
+        county_sub_gdf = match.copy()
+        if county_sub_gdf.crs is None:
+            county_sub_gdf = county_sub_gdf.set_crs(epsg=4269)
+        county_sub_gdf = county_sub_gdf.to_crs(epsg=4326)
+        save_path = os.path.join(output_dir, f"{subdivision_name.replace(' ', '_')}_{state_fips}_cousub.shp")
+        county_sub_gdf.to_file(save_path)
+        return True, county_sub_gdf
+    except Exception as e:
+        print(f"[BRINC] fetch_tiger_county_subdivision_shapefile failed for {subdivision_name}: {e}")
         return False, None
 
 def add_cell_towers_layer_to_plotly(fig, state_abbr, minx, miny, maxx, maxy):
