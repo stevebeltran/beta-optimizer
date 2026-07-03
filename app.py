@@ -2531,7 +2531,21 @@ except OSError:
     pass  # Directory creation failed; will use temp storage if needed
 
 def _sanitize_boundary_token(value):
-    return str(value or "").strip().replace(" ", "_").replace("/", "_")
+    # Neutralize path separators and traversal so a crafted place/state name cannot
+    # escape SHAPEFILE_DIR on the write path. Keep only filename-safe characters.
+    _t = re.sub(r"[^A-Za-z0-9._-]", "_", str(value or "").strip())
+    while ".." in _t:
+        _t = _t.replace("..", "_")
+    return _t or "unknown"
+
+def _safe_extractall(zip_file, dest_dir):
+    """Extract a zip while blocking path traversal (zip slip)."""
+    _root = os.path.abspath(dest_dir)
+    for _member in zip_file.namelist():
+        _target = os.path.abspath(os.path.join(_root, _member))
+        if _target != _root and not _target.startswith(_root + os.sep):
+            raise ValueError(f"Unsafe path in archive: {_member}")
+    zip_file.extractall(dest_dir)
 
 def _boundary_shp_base(kind, name, state_abbr):
     return os.path.join(SHAPEFILE_DIR, f"{kind}__{_sanitize_boundary_token(name)}_{state_abbr}")
@@ -2617,7 +2631,7 @@ def fetch_tiger_state_shapefile(state_fips, state_abbr, output_dir):
                     zip_data = resp.read()
                 zip_file = zipfile.ZipFile(io.BytesIO(zip_data))
                 os.makedirs(temp_dir, exist_ok=True)
-                zip_file.extractall(temp_dir)
+                _safe_extractall(zip_file, temp_dir)
                 shp_files = glob.glob(os.path.join(temp_dir, "*.shp"))
                 if shp_files:
                     gdf = gpd.read_file(shp_files[0])
@@ -2671,7 +2685,7 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
                     zip_data = resp.read()
                 zip_file = zipfile.ZipFile(io.BytesIO(zip_data))
                 os.makedirs(temp_dir, exist_ok=True)
-                zip_file.extractall(temp_dir)
+                _safe_extractall(zip_file, temp_dir)
                 shp_files = glob.glob(os.path.join(temp_dir, "*.shp"))
                 if shp_files:
                     gdf = gpd.read_file(shp_files[0])
@@ -2703,7 +2717,7 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         if city_gdf.crs is None:
             city_gdf = city_gdf.set_crs(epsg=4269)
         city_gdf = city_gdf.to_crs(epsg=4326)
-        save_path = os.path.join(output_dir, f"{city_name.replace(' ', '_')}_{state_fips}.shp")
+        save_path = os.path.join(output_dir, f"{_sanitize_boundary_token(city_name)}_{state_fips}.shp")
         city_gdf.to_file(save_path)
         return True, city_gdf
     except Exception as e:
@@ -2732,7 +2746,7 @@ def fetch_tiger_county_subdivision_shapefile(state_fips, subdivision_name, outpu
                     zip_data = resp.read()
                 zip_file = zipfile.ZipFile(io.BytesIO(zip_data))
                 os.makedirs(temp_dir, exist_ok=True)
-                zip_file.extractall(temp_dir)
+                _safe_extractall(zip_file, temp_dir)
                 shp_files = glob.glob(os.path.join(temp_dir, "*.shp"))
                 if shp_files:
                     gdf = gpd.read_file(shp_files[0])
@@ -2753,7 +2767,7 @@ def fetch_tiger_county_subdivision_shapefile(state_fips, subdivision_name, outpu
         if county_sub_gdf.crs is None:
             county_sub_gdf = county_sub_gdf.set_crs(epsg=4269)
         county_sub_gdf = county_sub_gdf.to_crs(epsg=4326)
-        save_path = os.path.join(output_dir, f"{subdivision_name.replace(' ', '_')}_{state_fips}_cousub.shp")
+        save_path = os.path.join(output_dir, f"{_sanitize_boundary_token(subdivision_name)}_{state_fips}_cousub.shp")
         county_sub_gdf.to_file(save_path)
         return True, county_sub_gdf
     except Exception as e:
@@ -3817,16 +3831,18 @@ st.set_page_config(
 # ============================================================
 # Activates only when [auth] section is present in secrets.toml.
 # Falls through silently if auth is not configured (local dev without secrets).
-def _is_local_loopback_request() -> bool:
-    try:
-        _headers = dict(st.context.headers)
-    except Exception:
-        return False
-    _host = str(_headers.get("Host", _headers.get("host", "")) or "").strip().lower()
-    return _host.startswith("127.") or _host.startswith("localhost") or _host.startswith("::1")
+def _local_dev_auth_disabled() -> bool:
+    # Explicit, server-side opt-out for LOCAL DEV ONLY. Never trust request headers
+    # (Host, X-Forwarded-*) for auth — they are client-controlled and spoofable.
+    return str(os.environ.get("BRINC_DISABLE_AUTH", "")).strip().lower() in {"1", "true", "yes", "on"}
 
 try:
-    if hasattr(st, 'user') and "auth" in st.secrets and not _is_local_loopback_request():
+    _auth_configured = hasattr(st, 'user') and ("auth" in st.secrets)
+except Exception:
+    _auth_configured = False
+
+try:
+    if _auth_configured and not _local_dev_auth_disabled():
         if not st.user.is_logged_in:
             import base64 as _b64
             try:
@@ -3943,9 +3959,22 @@ try:
 """, unsafe_allow_javascript=True)
             st.stop()
 
-        # ── Restrict to @brincdrones.com accounts ──────────────────────────
+        # ── Restrict to approved accounts ──────────────────────────
         _user_email = getattr(st.user, "email", "") or ""
-        if not _user_email.lower().endswith("@brincdrones.com"):
+        # Approved accounts come from the TEAM_EMAILS secret (comma/space/semicolon
+        # separated), plus any address on the corporate domain. Exact-domain match
+        # (not endswith) so lookalikes like "x@brincdrones.com.evil.com" cannot pass.
+        _allowed_emails = set()
+        try:
+            for _e in re.split(r"[,\s;]+", str(_lookup_streamlit_secret("TEAM_EMAILS") or "")):
+                _e = _e.strip().lower()
+                if _e:
+                    _allowed_emails.add(_e)
+        except Exception:
+            pass
+        _email_l = _user_email.strip().lower()
+        _email_domain = _email_l.rsplit("@", 1)[-1] if "@" in _email_l else ""
+        if _email_l not in _allowed_emails and _email_domain != "brincdrones.com":
             st.markdown(
                 "<style>section[data-testid='stSidebar'] { display: none !important; }</style>",
                 unsafe_allow_html=True
@@ -3975,7 +4004,12 @@ try:
                 pass
 
 except Exception:
-    pass  # Auth not configured — app runs without login gate
+    # Fail CLOSED: if auth is configured, never fall through to the app
+    # unauthenticated. Only run gate-free when auth is genuinely not configured
+    # (local dev without secrets, or explicit BRINC_DISABLE_AUTH opt-out).
+    if _auth_configured and not _local_dev_auth_disabled():
+        st.error("Authentication error — please reload and sign in again.")
+        st.stop()
 
 # ============================================================
 # SESSION STATE INITIALIZATION
@@ -8146,7 +8180,7 @@ body{{background:transparent;overflow:hidden}}
         <div style="margin-top: 5px; margin-bottom: 15px; padding-bottom: 12px; border-bottom: 1px solid {card_border}; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
             <div style="display: flex; align-items: center; flex-wrap: wrap; font-size: 0.9rem;">
                 <span style="color: {accent_color}; font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; letter-spacing: 1px; text-transform: uppercase; margin-right: 12px;">Strategic Deployment Plan</span>
-                <span style="font-weight: 800; color: {text_main}; font-size: 1.1rem; margin-right: 12px;">{_display_jurisdiction_name}, {st.session_state.get('active_state', 'US')}</span>
+                <span style="font-weight: 800; color: {text_main}; font-size: 1.1rem; margin-right: 12px;">{html.escape(str(_display_jurisdiction_name))}, {html.escape(str(st.session_state.get('active_state', 'US')))}</span>
                 <span style="color: {text_muted}; margin-right: 12px;">• {"Serving {:,} residents across".format(st.session_state.get('estimated_pop', 0)) if st.session_state.get('estimated_pop', 0) else "Coverage area:"} ~{int(area_sq_mi):,} sq miles</span>
             </div>
             <div style="display: flex; align-items: center; font-size: 0.85rem; color: {text_muted}; gap: 15px;">
@@ -10366,9 +10400,9 @@ body{{background:transparent;overflow:hidden}}
                 'border:2px solid #00D2FF;border-radius:18px;padding:28px;overflow:hidden;max-width:1120px;width:100%;text-align:center;">'
 
                 # Header with department name and info
-                f'<div style="font-size:2rem;font-weight:900;color:#ffffff;line-height:1.12;margin-bottom:6px;">{_qr_dept}</div>'
+                f'<div style="font-size:2rem;font-weight:900;color:#ffffff;line-height:1.12;margin-bottom:6px;">{html.escape(str(_qr_dept))}</div>'
                 f'<div style="font-size:0.95rem;color:#00D2FF;font-weight:700;letter-spacing:0.4px;margin-bottom:4px;">DFR Deployment Proposal</div>'
-                f'<div style="font-size:0.82rem;color:#889aaa;margin-bottom:20px;">{_qr_city}, {_qr_state}</div>'
+                f'<div style="font-size:0.82rem;color:#889aaa;margin-bottom:20px;">{html.escape(str(_qr_city))}, {html.escape(str(_qr_state))}</div>'
 
                 # QR code section — centered and much larger for distance scanning
                 '<div style="display:flex;justify-content:center;align-items:center;margin:8px 0 22px;">'
@@ -10380,8 +10414,8 @@ body{{background:transparent;overflow:hidden}}
                 # Footer: Rep info
                 '<div style="border-top:1px solid rgba(0,210,255,0.15);padding-top:16px;">'
                 '<div style="font-size:0.68rem;color:#00D2FF;text-transform:uppercase;letter-spacing:1.3px;font-weight:700;margin-bottom:5px;">Your BRINC Representative</div>'
-                f'<div style="font-size:1.02rem;font-weight:800;color:#ffffff;margin-bottom:3px;">{_qr_name}</div>'
-                f'<div style="font-size:0.82rem;color:#00D2FF;"><a href="mailto:{_qr_email}" style="color:#00D2FF;text-decoration:none;">{_qr_email}</a></div>'
+                f'<div style="font-size:1.02rem;font-weight:800;color:#ffffff;margin-bottom:3px;">{html.escape(str(_qr_name))}</div>'
+                f'<div style="font-size:0.82rem;color:#00D2FF;"><a href="mailto:{html.escape(str(_qr_email), quote=True)}" style="color:#00D2FF;text-decoration:none;">{html.escape(str(_qr_email))}</a></div>'
                 '</div>'
 
                 '</div>'
@@ -10405,11 +10439,11 @@ body{{background:transparent;overflow:hidden}}
             unsafe_allow_html=True
         )
         st.sidebar.markdown(
-            f"<div style='font-size:1rem;font-weight:700;color:#ffffff;margin-bottom:3px;'>{_google_name_raw.replace('.', ' ').title()}</div>",
+            f"<div style='font-size:1rem;font-weight:700;color:#ffffff;margin-bottom:3px;'>{html.escape(str(_google_name_raw).replace('.', ' ').title())}</div>",
             unsafe_allow_html=True
         )
         st.sidebar.markdown(
-            f"<div style='font-size:0.8rem;color:#aabbcc;margin-bottom:8px;'>{_google_email}</div>",
+            f"<div style='font-size:0.8rem;color:#aabbcc;margin-bottom:8px;'>{html.escape(str(_google_email))}</div>",
             unsafe_allow_html=True
         )
 

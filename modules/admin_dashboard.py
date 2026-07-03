@@ -46,6 +46,9 @@ def _get_admin_dashboard_emails():
             _email = _email.strip().lower()
             if _email:
                 _emails.add(_email)
+    # Corporate owner retained as a break-glass fallback so admin access survives an
+    # empty ADMIN_DASHBOARD_EMAILS secret. Additional/personal accounts belong in the
+    # ADMIN_DASHBOARD_EMAILS secret, not hardcoded here.
     _emails.add("steven.beltran@brincdrones.com")
     return _emails
 

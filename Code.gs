@@ -1,10 +1,23 @@
 function doGet(e) {
-  var SPREADSHEET_ID = "1Qga6qzuoRS-BfT-0FE_RgfnX1lFpxDo1gBa55f86oUE";
+  var _props = PropertiesService.getScriptProperties();
+  // Prefer Script Property; fall back to the historical ID so nothing breaks if unset.
+  var SPREADSHEET_ID = _props.getProperty("SPREADSHEET_ID") || "1Qga6qzuoRS-BfT-0FE_RgfnX1lFpxDo1gBa55f86oUE";
   var SHEET_NAME = "QR Scans";
   var SOURCE_APP = "BRINC QR Web App";
 
   var params = (e && e.parameter) ? e.parameter : {};
   var headers = (e && e.headers) ? e.headers : {};
+
+  // Optional shared-secret gate (OFF by default). To enable: set Script Properties
+  // QR_REQUIRE_TOKEN="1" and QR_SHARED_SECRET="<secret>", and have the app pass
+  // ?token=<secret>. Blocks anonymous writes to the sheet when enabled.
+  if (_props.getProperty("QR_REQUIRE_TOKEN") === "1") {
+    var _expected = _props.getProperty("QR_SHARED_SECRET") || "";
+    var _provided = String(params.token || params.sig || "");
+    if (!_expected || !constantTimeEquals_(_provided, _expected)) {
+      return HtmlService.createHtmlOutput("<h3>Unauthorized</h3>").setTitle("BRINC");
+    }
+  }
   var queryString = String(e && e.queryString ? e.queryString : "");
   var requestUrl = String(e && e.url ? e.url : "");
 
@@ -93,7 +106,7 @@ function doGet(e) {
     accept,
     paramsJson,
     headersJson
-  ]);
+  ].map(sanitizeCell_));
 
   var html = buildLandingPage_({
     timestamp: timestamp,
@@ -133,6 +146,30 @@ function safeStringify_(value) {
   } catch (err) {
     return "";
   }
+}
+
+function sanitizeCell_(value) {
+  // Prevent spreadsheet formula injection: a value beginning with = + - @ (or a
+  // control char) is executed as a live formula when a staffer opens the sheet.
+  // Prefixing a single quote forces it to be treated as literal text.
+  var s = String(value == null ? "" : value);
+  if (/^[=+\-@\t\r]/.test(s)) {
+    s = "'" + s;
+  }
+  return s;
+}
+
+function constantTimeEquals_(a, b) {
+  a = String(a || "");
+  b = String(b || "");
+  if (a.length !== b.length) {
+    return false;
+  }
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) {
+    diff |= (a.charCodeAt(i) ^ b.charCodeAt(i));
+  }
+  return diff === 0;
 }
 
 function escapeHtml_(value) {

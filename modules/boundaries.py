@@ -13,6 +13,22 @@ from shapely.geometry import Point
 from modules.config import STATE_FIPS, KNOWN_POPULATIONS
 from modules.geocoding import forward_geocode
 
+def _safe_extractall(zip_file, dest_dir):
+    """Extract a zip while blocking path traversal (zip slip)."""
+    _root = os.path.abspath(dest_dir)
+    for _member in zip_file.namelist():
+        _target = os.path.abspath(os.path.join(_root, _member))
+        if _target != _root and not _target.startswith(_root + os.sep):
+            raise ValueError(f"Unsafe path in archive: {_member}")
+    zip_file.extractall(dest_dir)
+
+def _safe_name_token(value):
+    """Neutralize path separators/traversal in a user-derived filename component."""
+    _t = re.sub(r"[^A-Za-z0-9._-]", "_", str(value or "").strip())
+    while ".." in _t:
+        _t = _t.replace("..", "_")
+    return _t or "unknown"
+
 def lookup_zip_code(zip_code: str):
     """
     Look up a US ZIP code and return (city, state_abbr, county) using the free
@@ -464,7 +480,7 @@ def fetch_tiger_state_shapefile(state_fips, state_abbr, output_dir):
                     zip_data = resp.read()
                 zip_file = zipfile.ZipFile(io.BytesIO(zip_data))
                 os.makedirs(temp_dir, exist_ok=True)
-                zip_file.extractall(temp_dir)
+                _safe_extractall(zip_file, temp_dir)
                 shp_files = glob.glob(os.path.join(temp_dir, "*.shp"))
                 if shp_files:
                     gdf = gpd.read_file(shp_files[0])
@@ -518,7 +534,7 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
                     zip_data = resp.read()
                 zip_file = zipfile.ZipFile(io.BytesIO(zip_data))
                 os.makedirs(temp_dir, exist_ok=True)
-                zip_file.extractall(temp_dir)
+                _safe_extractall(zip_file, temp_dir)
                 shp_files = glob.glob(os.path.join(temp_dir, "*.shp"))
                 if shp_files:
                     gdf = gpd.read_file(shp_files[0])
@@ -550,7 +566,7 @@ def fetch_tiger_city_shapefile(state_fips, city_name, output_dir):
         if city_gdf.crs is None:
             city_gdf = city_gdf.set_crs(epsg=4269)
         city_gdf = city_gdf.to_crs(epsg=4326)
-        save_path = os.path.join(output_dir, f"{city_name.replace(' ', '_')}_{state_fips}.shp")
+        save_path = os.path.join(output_dir, f"{_safe_name_token(city_name)}_{state_fips}.shp")
         city_gdf.to_file(save_path)
         return True, city_gdf
     except Exception as e:
@@ -579,7 +595,7 @@ def fetch_tiger_county_subdivision_shapefile(state_fips, subdivision_name, outpu
                     zip_data = resp.read()
                 zip_file = zipfile.ZipFile(io.BytesIO(zip_data))
                 os.makedirs(temp_dir, exist_ok=True)
-                zip_file.extractall(temp_dir)
+                _safe_extractall(zip_file, temp_dir)
                 shp_files = glob.glob(os.path.join(temp_dir, "*.shp"))
                 if shp_files:
                     gdf = gpd.read_file(shp_files[0])
@@ -600,7 +616,7 @@ def fetch_tiger_county_subdivision_shapefile(state_fips, subdivision_name, outpu
         if county_sub_gdf.crs is None:
             county_sub_gdf = county_sub_gdf.set_crs(epsg=4269)
         county_sub_gdf = county_sub_gdf.to_crs(epsg=4326)
-        save_path = os.path.join(output_dir, f"{subdivision_name.replace(' ', '_')}_{state_fips}_cousub.shp")
+        save_path = os.path.join(output_dir, f"{_safe_name_token(subdivision_name)}_{state_fips}_cousub.shp")
         county_sub_gdf.to_file(save_path)
         return True, county_sub_gdf
     except Exception as e:
