@@ -11087,47 +11087,6 @@ body{{background:transparent;overflow:hidden}}
                     )
                 )
                 map_html_str = fig_for_export.to_html(full_html=False, include_plotlyjs='inline', default_height='500px', default_width='100%')
-                fig_for_pdf_export = go.Figure(fig_for_export)
-                _pdf_zoom = round(max(5, float(dynamic_zoom or 0) - 1.1), 2)
-                fig_for_pdf_export.update_layout(
-                    map=dict(center=dict(lat=center_lat, lon=center_lon), zoom=_pdf_zoom, style="carto-darkmatter"),
-                    margin=dict(l=0, r=0, t=0, b=0), height=720, showlegend=True,
-                    legend=dict(
-                        yanchor="top", y=0.98, xanchor="left", x=0.02,
-                        bgcolor=legend_bg, bordercolor="#444444", borderwidth=1,
-                        font=dict(color=legend_text, size=11)
-                    )
-                )
-                def _ensure_kaleido_browser():
-                    browser_path = os.environ.get("BROWSER_PATH", "").strip()
-                    if browser_path and Path(browser_path).is_file():
-                        return browser_path
-                    for candidate in (
-                        shutil.which("chromium"),
-                        shutil.which("chromium-browser"),
-                        shutil.which("google-chrome"),
-                        shutil.which("google-chrome-stable"),
-                    ):
-                        if candidate and Path(candidate).is_file():
-                            os.environ["BROWSER_PATH"] = candidate
-                            browser_dir = str(Path(candidate).parent)
-                            os.environ["PATH"] = browser_dir + os.pathsep + os.environ.get("PATH", "")
-                            return candidate
-                    return None
-
-                try:
-                    map_png_bytes = fig_for_pdf_export.to_image(format='png', width=1400, height=900, scale=2)
-                except Exception as _png_exc:
-                    _chrome_path = _ensure_kaleido_browser()
-                    if _chrome_path:
-                        try:
-                            map_png_bytes = fig_for_pdf_export.to_image(format='png', width=1400, height=900, scale=2)
-                        except Exception as _retry_exc:
-                            print(f"[BRINC] Executive summary map PNG retry failed: {_retry_exc}")
-                            map_png_bytes = None
-                    else:
-                        print(f"[BRINC] Executive summary map PNG render unavailable: {_png_exc}")
-                        map_png_bytes = None
                 _visible_export_rows = [d for d in active_drones if not _is_call_density_station(d)]
                 station_rows = "".join(
                     f"<tr><td>{d['name']}</td><td>{d['type']}</td><td>{d['avg_time_min']:.1f} min</td><td>{d['faa_ceiling']}</td><td>${d['cost']:,}</td></tr>"
